@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 비밀 (API 키 절대 커밋 금지)
+.env
+*.key
+
+# SQLite DB (시드에서 자동 재생성)
+*.db
+*.sqlite3
+
+# macOS
+.DS_Store
