@@ -83,8 +83,17 @@ def _tune_threshold(y_true, proba, target_recall: float) -> float:
 
 
 def train(texts: list[str], labels: list[str], test_size: float = 0.2,
-          seed: int = 42, save: bool = True) -> TrainReport:
-    """의도 분류기 + 긴급 이진분류기를 학습한다."""
+          seed: int = 42, save: bool = True,
+          aux_texts: list[str] | None = None,
+          aux_labels: list[str] | None = None) -> TrainReport:
+    """의도 분류기 + 긴급 이진분류기를 학습한다.
+
+    aux_*: 학습에만 쓰고 평가에서는 제외할 보조 데이터(합성 문장 등).
+        합성 데이터는 템플릿이라 거의 100% 맞힌다. 평가셋에 섞으면 성능이
+        부풀려지고, 특히 긴급 임계값이 실제보다 느슨하게 잡힌다.
+        (실측: 합성 포함 평가 재현율 0.978 → 실데이터만 평가 0.775)
+        따라서 임계값 튜닝과 성능 보고는 **실데이터 홀드아웃**으로만 한다.
+    """
     import joblib
     import numpy as np
     from sklearn.metrics import classification_report, accuracy_score, f1_score
@@ -92,6 +101,9 @@ def train(texts: list[str], labels: list[str], test_size: float = 0.2,
 
     X_tr, X_te, y_tr, y_te = train_test_split(
         texts, labels, test_size=test_size, random_state=seed, stratify=labels)
+    if aux_texts:
+        X_tr = X_tr + list(aux_texts)
+        y_tr = y_tr + list(aux_labels or [])
 
     # 1) 의도 4분류
     intent_clf = _build_pipeline()

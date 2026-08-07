@@ -73,15 +73,18 @@ def main() -> None:
         from . import cds01
         Xr, yr, rep = cds01.load_sessions(args.data, opening=args.opening)
         Xs, ys = synthetic(_COUNTS_SUPPLEMENT, args.seed)
-        X, y = Xr + Xs, yr + ys
+        X, y = Xr, yr          # 평가는 실데이터로만
+        AUX = (Xs, ys)         # 합성은 학습에만 투입
         real = collections.Counter(yr)
         for lab in intent_model.INTENTS:
             sources[lab] = f"실데이터 {real.get(lab,0):,} + 합성 {_COUNTS_SUPPLEMENT[lab]:,}" \
                 if real.get(lab) else f"합성 {_COUNTS_SUPPLEMENT[lab]:,} (C-DS01에 대응 카테고리 없음)"
-        head = (f"C-DS01 세션 {len(Xr):,}건(도입부 {args.opening}발화) + 합성 {len(Xs):,}건")
+        head = (f"C-DS01 세션 {len(Xr):,}건(도입부 {args.opening}발화) 평가 기준 "
+                f"+ 합성 {len(Xs):,}건(학습 전용)")
         detail = rep.summary()
     else:
         X, y = synthetic(_COUNTS_STANDALONE, args.seed)
+        AUX = (None, None)
         for lab in intent_model.INTENTS:
             sources[lab] = f"합성 {_COUNTS_STANDALONE[lab]:,}"
         head = "합성 데이터만 — 파이프라인 검증용, 실제 성능 아님"
@@ -97,7 +100,8 @@ def main() -> None:
         print(f"  {lab:<8} {src}")
     print()
 
-    report = intent_model.train(X, y, save=not args.no_save)
+    report = intent_model.train(X, y, save=not args.no_save,
+                                aux_texts=AUX[0], aux_labels=AUX[1])
     print(report.summary())
     if not args.no_save:
         print()
