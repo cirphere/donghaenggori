@@ -222,6 +222,42 @@ def flywheel(phone: str = Body(...), date: str = Body(...), hospital: str = Body
     return {"ok": True}
 
 
+@app.post("/api/warmup", tags=["시스템"])
+def warmup() -> dict:
+    """시연 직전 예열 — 외부 API 응답을 캐시에 채우고 모델을 로드한다.
+
+    기상·대기 API는 첫 호출이 수 초 걸린다. 발표 중 접수카드가 멈춰 보이지 않도록
+    시작 전에 미리 불러 캐시에 올려둔다(실측: 예열 전 13.3s → 예열 후 즉시).
+    """
+    import time
+    from ..core import geo
+    from ..services import airquality, intent_model, weather
+
+    t0 = time.time()
+    done: dict[str, str] = {}
+
+    # 학습 모델 로드
+    done["intent_model"] = "loaded" if intent_model.available() else "미학습"
+
+    # 시연에 쓰이는 지역만 예열
+    for region in ("전남 고흥군", "전남 보성군", "광주광역시 서구"):
+        latlon = geo.coords_of(region)
+        if not latlon:
+            continue
+        try:
+            w = weather.forecast(latlon[0], latlon[1])
+            done[f"weather:{region}"] = "ok" if w.ok else (w.reason or "실패")
+        except Exception as e:
+            done[f"weather:{region}"] = type(e).__name__
+        try:
+            a = airquality.realtime(region)
+            done[f"air:{region}"] = "ok" if a.ok else (a.reason or "실패")
+        except Exception as e:
+            done[f"air:{region}"] = type(e).__name__
+
+    return {"elapsed": round(time.time() - t0, 1), "warmed": done}
+
+
 @app.post("/api/reset", tags=["시스템"])
 def reset() -> dict:
     db.reset_db()
