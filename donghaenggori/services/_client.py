@@ -18,6 +18,13 @@ TIMEOUT = settings.public_api_timeout        # 초 — 접수 응답성을 위�
 CACHE_TTL = settings.public_api_cache_ttl    # 초
 _cache: dict[str, tuple[float, Any]] = {}
 
+# 공공데이터포털 게이트웨이는 간헐적으로 요청을 구버전 엔드포인트로 302 리다이렉트한다
+# (실측: 같은 키·같은 URL이 어떤 구간엔 5/5 실패, 다른 구간엔 10/10 성공).
+# 리다이렉트를 따라가면 폐기된 v1이라 400이 나므로, 따라가지 않고 재시도한다.
+RETRY_STATUS = {302, 429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 3
+RETRY_BACKOFF = 0.6                          # 초 — 시도마다 곱해서 대기
+
 
 @dataclass
 class ApiResult:
@@ -59,21 +66,34 @@ def get_json(url: str, params: dict, *, cache_key: str | None = None,
     q["serviceKey"] = _key()
     q.setdefault("_type", "json")
 
-    try:
-        with httpx.Client(timeout=timeout) as cli:
-            resp = cli.get(url, params=q)
-        if resp.status_code != 200:
-            return ApiResult(False, reason=f"HTTP {resp.status_code}")
+    last_reason = "알 수 없는 오류"
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            data = resp.json()
-        except Exception:
-            # 공공데이터 API는 오류 시 XML을 반환하는 경우가 많다
-            return ApiResult(False, reason=f"JSON 아님 (응답 {resp.text[:80]})")
-    except Exception as e:
-        return ApiResult(False, reason=f"{type(e).__name__} — 타임아웃/네트워크")
+            with httpx.Client(timeout=timeout) as cli:
+                resp = cli.get(url, params=q)   # 리다이렉트는 따라가지 않는다(폐기 엔드포인트)
+        except Exception as e:
+            # 타임아웃·네트워크 오류는 재시도하지 않는다.
+            # 이미 timeout만큼 시간을 썼고, 재시도해도 같은 시간을 또 쓴다.
+            # 재시도가 의미 있는 건 즉시 돌아오는 302/429/5xx뿐이다.
+            return ApiResult(False, reason=f"{type(e).__name__} — 타임아웃/네트워크")
+        else:
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except Exception:
+                    # 공공데이터 API는 오류 시 XML을 반환하는 경우가 많다
+                    return ApiResult(False, reason=f"JSON 아님 (응답 {resp.text[:80]})")
+                _cache[ck] = (time.time(), data)
+                return ApiResult(True, data)
 
-    _cache[ck] = (time.time(), data)
-    return ApiResult(True, data)
+            last_reason = f"HTTP {resp.status_code}"
+            if resp.status_code not in RETRY_STATUS:
+                return ApiResult(False, reason=last_reason)
+
+        if attempt < MAX_ATTEMPTS:
+            time.sleep(RETRY_BACKOFF * attempt)
+
+    return ApiResult(False, reason=f"{last_reason} ({MAX_ATTEMPTS}회 재시도 실패)")
 
 
 def items_of(data: Any) -> list[dict]:
