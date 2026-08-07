@@ -1,18 +1,31 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
+# 비밀 — API 키 절대 커밋 금지
+.env
+*.key
+
+# 가상환경
 .venv/
 venv/
 env/
 
-# 비밀 (API 키 절대 커밋 금지)
-.env
-*.key
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 
-# SQLite DB (시드에서 자동 재생성)
-*.db
-*.sqlite3
+# 런타임 생성물 (시드에서 재생성됨)
+donghaenggori/data/*.db
+donghaenggori/data/*.sqlite3
 
 # macOS
 .DS_Store
+
+# 문서·발표자료는 이 저장소에 포함하지 않는다 (코드 전용)
+*.docx
+*.xlsx
+*.pptx
+*.hwp
+*.hwpx
+
+# 학습 산출물 — train_intent.py 로 재생성
+donghaenggori/data/models/

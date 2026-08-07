@@ -34,6 +34,35 @@ class Card:
     guardian_contact: bool
     manager_notes: list[str]
     flags: list[str] = field(default_factory=list)   # ⚠ 필수 확인 배지 등
+    # 대리 접수 — 보호자·기관이 어르신 대신 요청한 경우
+    requester: str = "본인"                          # 본인 | 대리
+    proxy_relation: str | None = None                # 어머니 | 아버지 | ...
+    target_candidates: list[dict] = field(default_factory=list)  # 보호자 번호 역조회 결과
+
+    def to_dict(self) -> dict:
+        """API 응답용 — 프론트가 그대로 렌더링할 수 있는 형태."""
+        return {
+            "target": self.target,
+            "phone_masked": self.phone_masked,
+            "raw_utterance": self.raw_utterance,
+            "summary": self.summary,
+            "intent": self.intent,
+            "hospital": self.hospital,
+            "hospital_status": self.hospital_status,   # 확인됨 | 추정 | 확인 필요
+            "dept": self.dept,
+            "date_label": self.date_label,
+            "date_value": self.date_value,
+            "reasons": self.reasons,
+            "confirm_questions": self.confirm_questions,
+            "need_level": self.need_level,
+            "need_reasons": self.need_reasons,
+            "guardian_contact": self.guardian_contact,
+            "manager_notes": self.manager_notes,
+            "flags": self.flags,
+            "requester": self.requester,
+            "proxy_relation": self.proxy_relation,
+            "target_candidates": self.target_candidates,
+        }
 
     def to_text(self) -> str:
         L = []

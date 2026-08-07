@@ -32,6 +32,26 @@ class Analysis:
     source: str = "규칙"             # "규칙" 또는 "규칙+LLM"
     raw: str = ""
     notes: list[str] = field(default_factory=list)
+    # 대리 접수 — 보호자·기관이 어르신 대신 전화한 경우
+    requester: str = "본인"          # 본인 | 대리
+    proxy_relation: str | None = None  # 어머니 | 아버지 | 조부모 | 배우자 | 기타
+
+
+def detect_proxy(text: str) -> tuple[str, str | None]:
+    """대리 요청 여부와 추정 관계를 판별한다.
+
+    "느그 어매 병원 좀 델꼬 가야 쓰겄는디" → ("대리", "어머니")
+    관계 호칭만 있어도 대리로 본다. 대상자 확정은 사회복지사가 한다.
+    """
+    pk = TERMS.get("proxy_keywords") or {}
+    for relation, words in (pk.get("relation") or {}).items():
+        if relation.startswith("_"):
+            continue
+        if any(w in text for w in words):
+            return "대리", relation
+    if any(v in text for v in (pk.get("proxy_verbs") or [])):
+        return "대리", None
+    return "본인", None
 
 
 # ---------------------------------------------------------------- 규칙 기반 ----
@@ -64,6 +84,9 @@ def _rule_based(text: str) -> Analysis:
         if any(kw in text for kw in kws):
             a.intent = intent
             break
+
+    # 대리 접수 판별 (긴급 다음으로 중요 — 대상자 확정에 영향)
+    a.requester, a.proxy_relation = detect_proxy(text)
 
     # 날짜(결정적)
     a.date = dateparse.parse_date(text)
