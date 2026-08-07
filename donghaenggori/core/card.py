@@ -40,6 +40,8 @@ class Card:
     target_candidates: list[dict] = field(default_factory=list)  # 보호자 번호 역조회 결과
     # 외출 전 체크리스트 — 기상·대기 참고 정보. 방문 가부는 AI가 결정하지 않는다.
     outing_checklist: list[str] = field(default_factory=list)
+    # 이력이 없을 때만 채운다 — 거리 기준 '참고 후보'. 확정 후보가 아니다(화면 04 4-A).
+    reference_candidates: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """API 응답용 — 프론트가 그대로 렌더링할 수 있는 형태."""
@@ -65,6 +67,7 @@ class Card:
             "proxy_relation": self.proxy_relation,
             "target_candidates": self.target_candidates,
             "outing_checklist": self.outing_checklist,
+            "reference_candidates": self.reference_candidates,
         }
 
     def to_text(self) -> str:

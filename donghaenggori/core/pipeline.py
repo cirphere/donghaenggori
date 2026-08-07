@@ -96,6 +96,8 @@ def run(phone: str, utterance: str, channel: str = "전화",
 
     c = _build_card(phone, utterance, a, prof, hres, nres)         # ⑧
     c.outing_checklist = _outing_checklist(prof, a)
+    if hres.status == "확인 필요" and not (prof or {}).get("history"):
+        c.reference_candidates = _reference_candidates(prof, a)
     return Result(urgent=False, card=c, analysis=a, profile=prof, channel=channel,
                   intent_source=source, intent_confidence=conf, facilities=facilities)
 
@@ -105,6 +107,42 @@ _REGION_LATLON = {
     "광주": (35.1601, 126.8514),
     "전남": (34.8161, 126.4630),
 }
+
+
+def _reference_candidates(prof: dict | None, a) -> list[dict]:
+    """화면 04 4-A — 이력이 없을 때 거리 기준 '참고 후보'.
+
+    확정 후보가 아니다. 근거가 거리뿐임을 각 항목에 명시하고, 사회복지사가
+    확인전화로 확정하도록 남겨둔다. 외부 API가 없으면 빈 목록으로 폴백한다.
+    """
+    if not prof:
+        return []
+    from . import geo
+    latlon = geo.coords_of(prof.get("region"))
+    if latlon is None:
+        return []
+    try:
+        from ..services import hira
+        res = hira.nearby(latlon[0], latlon[1], dept=a.dept, radius_m=6000, rows=3)
+    except Exception:
+        return []
+    if res.unavailable:
+        return []
+    precise = geo.is_precise(prof.get("region"))
+    # 진료과 필터는 '해당 과목 보유 기관'을 뜻한다. 내과의원이 정형외과를 겸하는 등
+    # 기관 이름과 과목이 달라 보일 수 있으므로 어떤 기준으로 걸렀는지 함께 표시한다.
+    dept_note = f"{a.dept} 진료과목 보유" if a.dept else "진료과 미지정"
+    out = []
+    for h in res.data or []:
+        out.append({
+            "name": h["name"], "kind": h["kind"], "address": h["address"],
+            "phone": h["phone"],
+            "distance_m": h.get("distance_m"),
+            "matched_by": dept_note,
+            "basis": h["basis"] + ("" if precise else " (지역 대표 좌표 기준 근사)"),
+            "source": h["source"],
+        })
+    return out
 
 
 def _outing_checklist(prof: dict | None, a) -> list[str]:
