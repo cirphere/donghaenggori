@@ -16,14 +16,17 @@
 """
 from __future__ import annotations
 
+import argparse
 import datetime
 import sys
 import time
 
 BASE = "http://localhost:8000"
-PHONE = "010-1234-5678"        # 박순자
+PHONE = "010-1234-5678"        # 박순자 — 정형외과 2회 → 확인됨
 PHONE_NEW = "010-0000-0000"    # 미등록
 GUARDIAN = "010-9876-5432"     # 박순자의 딸
+PHONE_FLYWHEEL = "010-2222-3333"   # 김수남 — 정형외과 1회 → 추정 (플라이휠 시연용)
+FULL = False                   # True면 본선 Day2 8분판
 
 results: list[tuple[str, bool, str]] = []
 _t0 = 0.0
@@ -47,6 +50,11 @@ def mark(ok: bool) -> str:
     return "\033[32m✔\033[0m" if ok else "\033[31m✘\033[0m"
 
 
+def win(three: str, eight: str) -> str:
+    """모드별 시간 창. 3분판은 제출 문서 기준, 8분판은 본선 Day2 Demo 기준."""
+    return eight if FULL else three
+
+
 def api(method: str, path: str, **kw):
     import httpx
     t = time.time()
@@ -54,7 +62,9 @@ def api(method: str, path: str, **kw):
     return r, time.time() - t
 
 
-def main() -> int:
+def main(full: bool = False) -> int:
+    global FULL
+    FULL = full
     try:
         import httpx
     except ImportError:
@@ -70,7 +80,8 @@ def main() -> int:
         return 1
 
     today = datetime.date.today()
-    say("\033[1m동행고리 AI — 시연 리허설\033[0m  (파일2 대표 시나리오 3분판)")
+    span = "본선 Day2 Demo 8분판" if full else "파일2 대표 시나리오 3분판"
+    say(f"\033[1m동행고리 AI — 시연 리허설\033[0m  ({span})")
     say(f"오늘 {today} · 대상자 박순자 · 시드 초기화 후 시작")
     say("=" * 74)
 
@@ -82,16 +93,16 @@ def main() -> int:
     say(f"   예열 완료 {elw:.1f}s · {sum(1 for v in warmed.get('warmed',{}).values() if v=='ok')}개 캐시 적재")
 
     # ══════════════════════ 시나리오 A — 정상 흐름 ══════════════════════
-    head("시나리오 A — 정상 흐름", "목표 0:00 ~ 2:00")
+    head("시나리오 A — 정상 흐름", "목표 " + win("0:00 ~ 2:00", "0:00 ~ 5:20"))
 
     # STEP 1~2 : 발화 → 대상자 조회 → 접수카드
-    say("\033[1mSTEP 1\033[0m  어르신의 짧고 모호한 전화                      (0:00~0:15)")
+    say("\033[1mSTEP 1\033[0m  어르신의 짧고 모호한 전화                      (" + win("0:00~0:15","0:00~0:30") + ")")
     utt = "모레 정형외과 가야겄어. 저번에 무릎 봐준 데."
     say(f'   발화: "{utt}"')
     say("   멘트: 어르신은 앱을 설치하지 않았고, 챗봇과 대화하지도 않습니다.")
 
     say()
-    say("\033[1mSTEP 2~4\033[0m  대상자 조회 → 이력 소환 → 접수카드 생성        (0:15~1:30)")
+    say("\033[1mSTEP 2~4\033[0m  대상자 조회 → 이력 소환 → 접수카드 생성        (" + win("0:15~1:30","0:30~3:10") + ")")
     r, el = api("POST", "/api/intakes",
                 json={"phone": PHONE, "utterance": utt, "channel": "전화"})
     ok = r.status_code == 200
@@ -120,7 +131,7 @@ def main() -> int:
 
     # STEP 5 : 확정
     say()
-    say("\033[1mSTEP 5\033[0m  사회복지사 확인전화 → 확정·배정                 (1:30~1:45)")
+    say("\033[1mSTEP 5\033[0m  사회복지사 확인전화 → 확정·배정                 (" + win("1:30~1:45","3:10~3:50") + ")")
     for q in c["confirm_questions"] or ["(확인 질문 없음 — 단골+날짜 확실)"]:
         say(f"   콜백: {q}")
     r2, el2 = api("POST", f"/api/intakes/{iid}/confirm",
@@ -139,7 +150,7 @@ def main() -> int:
 
     # STEP 6 : 사후기록
     say()
-    say("\033[1mSTEP 6\033[0m  동행 후 사후기록 자동 초안                      (1:45~2:00)")
+    say("\033[1mSTEP 6\033[0m  동행 후 사후기록 자동 초안                      (" + win("1:45~2:00","3:50~4:40") + ")")
     memo = "오늘 무릎 주사 맞았고, 다음 진료는 2주 뒤. 약국 들러서 약 받았어요. 계단 힘들어하셨습니다."
     say(f'   매니저 음성 메모: "{memo}"')
     r4, el4 = api("POST", "/api/post-records",
@@ -159,11 +170,35 @@ def main() -> int:
         check("프로필 업데이트 승인", r5.status_code == 200, f"HTTP {r5.status_code}")
         say(f"   {mark(r5.status_code == 200)} 사회복지사 승인 → 프로필 반영 + 감사 로그")
 
+    # ═══════════════ STEP 7 — 플라이휠 (8분판 전용) ═══════════════
+    if full:
+        say()
+        say("\033[1mSTEP 7\033[0m  다음 접수에서 달라지는 것 — 플라이휠           (4:40~5:20)")
+        u = "허리가 아파서 정형외과 가야 하는디"
+        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u})
+        c1 = r.json()["card"]
+        say(f'   1차 접수: "{u}"')
+        say(f"   {mark(True)} {c1['hospital']}  [{c1['hospital_status']}]  ← 1회 방문이라 '추정'")
+
+        today = datetime.date.today().isoformat()
+        api("POST", "/api/flywheel", json={"phone": PHONE_FLYWHEEL, "date": today,
+                                           "hospital": c1["hospital"], "dept": "정형외과"})
+        say(f"   {mark(True)} 동행 완료 → 이력에 누적")
+
+        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u})
+        c2 = r.json()["card"]
+        rose = c1["hospital_status"] == "추정" and c2["hospital_status"] == "확인됨"
+        check("STEP 7 플라이휠 — 상태 상승", rose,
+              f"{c1['hospital_status']} → {c2['hospital_status']}")
+        say(f"   {mark(rose)} 2차 접수: {c2['hospital']}  [{c2['hospital_status']}]  ← 2회가 되어 '확인됨'")
+        say(f"                근거: {c2['reasons'][0]}")
+        say("   멘트: 쓸수록 확인 질문이 줄어듭니다. 기록이 다음 접수의 재료가 됩니다.")
+
     # ══════════════════════ 시나리오 B — 실패 대응 ══════════════════════
-    head("시나리오 B — 실패·저확신 대응", "목표 2:00 ~ 2:45")
+    head("시나리오 B — 실패·저확신 대응", "목표 " + win("2:00 ~ 2:45","5:20 ~ 7:00"))
 
     # B-1 정보 부족
-    say("\033[1mB-1\033[0m  이력에 없는 요청                                 (2:00~2:15)")
+    say("\033[1mB-1\033[0m  이력에 없는 요청                                 (" + win("2:00~2:15","5:20~5:55") + ")")
     r, el = api("POST", "/api/intakes",
                 json={"phone": "010-7777-8888", "utterance": "내일 그 큰 병원 좀 가야 쓰겄는디"})
     b1 = r.json()["card"] if r.status_code == 200 else {}
@@ -178,7 +213,7 @@ def main() -> int:
 
     # B-2 대상자 미확인
     say()
-    say("\033[1mB-2\033[0m  대상자 식별 실패                                 (2:15~2:30)")
+    say("\033[1mB-2\033[0m  대상자 식별 실패                                 (" + win("2:15~2:30","5:55~6:30") + ")")
     r, _ = api("POST", "/api/intakes",
                json={"phone": PHONE_NEW, "utterance": "병원 좀 가야 해"})
     b2 = r.json()["card"] if r.status_code == 200 else {}
@@ -198,7 +233,7 @@ def main() -> int:
 
     # B-3 긴급
     say()
-    say("\033[1mB-3\033[0m  긴급 신호 감지                                   (2:30~2:45)")
+    say("\033[1mB-3\033[0m  긴급 신호 감지                                   (" + win("2:30~2:45","6:30~7:00") + ")")
     r, _ = api("POST", "/api/intakes",
                json={"phone": PHONE, "utterance": "가슴이 답답하고 숨이 차"})
     b3 = r.json() if r.status_code == 200 else {}
@@ -208,8 +243,25 @@ def main() -> int:
     say(f"   {b3.get('urgent_message','')}")
     say("   멘트: 동행고리 AI는 응급 여부를 판단하지 않습니다.")
 
+    # ═══════════════ 시나리오 C — 데이터 활용 (8분판 전용) ═══════════════
+    if full:
+        head("시나리오 C — 데이터 활용 근거 확인", "목표 7:00 ~ 7:40")
+        say("   AI가 지어낸 정보가 아니라 공공데이터에 근거한 결과임을 화면에서 확인시킨다.")
+        r, _ = api("GET", "/api/facilities", params={"region": "광주광역시 서구", "limit": 3})
+        fac = r.json() if r.status_code == 200 else []
+        check("데이터 활용 — 복지자원 검색", len(fac) > 0, f"{len(fac)}건")
+        for f in fac[:3]:
+            say(f"   {mark(True)} {f['name']} | {f['region']} | 출처 {f['source']}")
+        r, _ = api("GET", "/api/status")
+        st = r.json() if r.status_code == 200 else {}
+        say(f"   {mark(True)} 적재 현황: {st.get('facilities')}")
+        say(f"   {mark(True)} 의도 분류기: {'학습 완료' if st.get('intent_model_loaded') else '미학습'}"
+            "  (AI-Hub C-DS01 실데이터 학습)")
+        say("   멘트: 후보마다 근거 데이터의 출처를 함께 표시합니다.")
+        say("        검증할 수 없는 출력은 내보내지 않는다는 원칙입니다.")
+
     # ══════════════════════ 마무리 ══════════════════════
-    head("마무리", "목표 2:45 ~ 3:00")
+    head("마무리", "목표 " + win("2:45 ~ 3:00","7:40 ~ 8:00"))
     r, _ = api("GET", "/api/dashboard")
     counts = r.json()["counts"] if r.status_code == 200 else {}
     say(f"   대시보드: {counts}")
@@ -236,4 +288,7 @@ def _report() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    ap = argparse.ArgumentParser(description="시연 리허설")
+    ap.add_argument("--full", action="store_true",
+                    help="본선 Day2 Demo 8분판 (STEP 7 플라이휠 + 시나리오 C 데이터 활용 포함)")
+    sys.exit(main(ap.parse_args().full))
