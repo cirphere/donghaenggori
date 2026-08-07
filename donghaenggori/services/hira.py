@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from . import _client
 
-BASE = "http://apis.data.go.kr/B551182/hospInfoServicev2"
+# https가 http보다 2배 빠르다(실측 8s vs 16s). 심평원 API는 원래 느리므로
+# 접수 흐름에서 직접 호출하지 말고 보강 단계에서만 쓰고, 결과는 캐시한다.
+BASE = "https://apis.data.go.kr/B551182/hospInfoServicev2"
 LIST_URL = f"{BASE}/getHospBasisList"
 
 # 진료과 → 심평원 진료과목코드

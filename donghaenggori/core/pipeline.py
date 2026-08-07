@@ -95,8 +95,44 @@ def run(phone: str, utterance: str, channel: str = "전화",
             facilities = []
 
     c = _build_card(phone, utterance, a, prof, hres, nres)         # ⑧
+    c.outing_checklist = _outing_checklist(prof, a)
     return Result(urgent=False, card=c, analysis=a, profile=prof, channel=channel,
                   intent_source=source, intent_confidence=conf, facilities=facilities)
+
+
+# 시도별 대표 좌표 — 기상 격자 변환용. 읍면동 좌표가 없는 시연 데이터를 위한 근사값.
+_REGION_LATLON = {
+    "광주": (35.1601, 126.8514),
+    "전남": (34.8161, 126.4630),
+}
+
+
+def _outing_checklist(prof: dict | None, a) -> list[str]:
+    """외출 전 체크리스트 — 기상·대기 참고 정보.
+
+    외부 API가 느리거나 미연동이면 조용히 건너뛴다. 접수 흐름을 막지 않는다.
+    방문 가부는 판단하지 않고 참고 문구만 만든다.
+    """
+    if not prof:
+        return []
+    region = prof.get("region") or ""
+    latlon = next((v for k, v in _REGION_LATLON.items() if region.startswith(k)), None)
+    if latlon is None:
+        return []
+
+    out: list[str] = []
+    target_date = (a.date or {}).get("date")
+    try:
+        from ..services import weather
+        out += weather.checklist(latlon[0], latlon[1], target_date)
+    except Exception:
+        pass
+    try:
+        from ..services import airquality
+        out += airquality.checklist(region)
+    except Exception:
+        pass
+    return out
 
 
 def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:

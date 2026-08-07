@@ -38,6 +38,8 @@ class Card:
     requester: str = "본인"                          # 본인 | 대리
     proxy_relation: str | None = None                # 어머니 | 아버지 | ...
     target_candidates: list[dict] = field(default_factory=list)  # 보호자 번호 역조회 결과
+    # 외출 전 체크리스트 — 기상·대기 참고 정보. 방문 가부는 AI가 결정하지 않는다.
+    outing_checklist: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """API 응답용 — 프론트가 그대로 렌더링할 수 있는 형태."""
@@ -62,6 +64,7 @@ class Card:
             "requester": self.requester,
             "proxy_relation": self.proxy_relation,
             "target_candidates": self.target_candidates,
+            "outing_checklist": self.outing_checklist,
         }
 
     def to_text(self) -> str:
