@@ -130,8 +130,32 @@ curl -X POST localhost:8000/api/warmup      # 시연 전 반드시 — 안 하�
 사전 공유용으로 집 데스크탑에서 돌릴 때. **본선 당일 발표 노트북은 위의 CPU 구성을
 그대로 쓴다** — 현장에서 원격 서버에 의존하면 네트워크가 끊길 때 대안이 없다.
 
-전제: Windows NVIDIA 드라이버 최신 + Docker Desktop(WSL2 백엔드).
-Windows에서는 `nvidia-container-toolkit`을 따로 깔지 않는다.
+전제는 어느 쪽으로 Docker를 깔았느냐에 따라 다르다. 공통 조건은 **Windows용
+NVIDIA 드라이버 최신** 하나뿐이다 — WSL 안에 리눅스 드라이버를 깔면 오히려 깨진다.
+
+| | Docker Desktop (WSL2 백엔드) | WSL 안에 Docker 엔진 직접 설치 |
+|---|---|---|
+| `nvidia-container-toolkit` | 불필요 (Desktop이 처리) | **직접 설치해야 함** |
+| dockerd 기동 | 자동 | `service docker start` 또는 systemd |
+
+WSL에 직접 깐 경우에만 추가로 필요한 단계:
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt update && sudo apt install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker && sudo service docker restart
+```
+
+**어느 쪽이든 이 한 줄로 먼저 확인할 것.** 9GB 이미지를 빌드하기 전에
+GPU 통과 여부가 갈린다.
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+```
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build

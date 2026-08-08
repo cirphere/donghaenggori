@@ -8,8 +8,9 @@
 #   2) CTranslate2가 그 안의 cuBLAS·cuDNN을 찾도록 LD_LIBRARY_PATH를 잡아준다
 # 그래서 이미지가 약 9GB다. 로컬에서만 쓰므로 밀어 넣을 일이 없어 문제되지 않는다.
 #
-# 전제: Windows NVIDIA 드라이버 + Docker Desktop(WSL2 백엔드).
-#       Windows에서는 nvidia-container-toolkit을 따로 깔지 않는다.
+# 전제: Windows용 NVIDIA 드라이버(최신). WSL 안에 리눅스 드라이버를 깔면 깨진다.
+#       Docker Desktop(WSL2 백엔드)이면 nvidia-container-toolkit이 불필요하고,
+#       WSL 안에 Docker 엔진을 직접 깔았으면 toolkit을 설치해야 한다(README 참조).
 
 FROM python:3.12-slim
 
