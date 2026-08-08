@@ -15,6 +15,9 @@ joblib>=1.4
 faster-whisper>=1.1
 # RAG 의미 검색 (로컬 임베딩). 없으면 토큰 겹침으로 폴백
 sentence-transformers>=3.0
+# 의도 분류 BERT 파인튜닝/추론. 없으면 TF-IDF → 규칙으로 폴백
+transformers>=4.44
+torch>=2.2
 # 발화 이해·요약 LLM 보강 (ANTHROPIC_API_KEY 있을 때만 사용)
 anthropic>=0.40
 pydantic>=2.7
