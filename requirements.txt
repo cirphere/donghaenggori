@@ -19,5 +19,6 @@ sentence-transformers>=3.0
 transformers>=4.44
 torch>=2.2
 # 발화 이해·요약 LLM 보강 (ANTHROPIC_API_KEY 있을 때만 사용)
-anthropic>=0.40
+# 0.113 이상 — 구조화 출력(messages.parse + output_config.effort)을 쓴다
+anthropic>=0.113
 pydantic>=2.7

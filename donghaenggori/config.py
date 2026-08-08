@@ -55,7 +55,9 @@ def _float(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     anthropic_api_key: str | None = os.environ.get("ANTHROPIC_API_KEY") or None
-    anthropic_model: str = os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-8"
+    anthropic_model: str = os.environ.get("ANTHROPIC_MODEL") or "claude-opus-5"
+    # 요약은 짧은 메모 구조화라 오래 걸릴 이유가 없다 — 시연 중 멈추지 않게 짧게
+    anthropic_timeout: float = _float("ANTHROPIC_TIMEOUT", 20.0)
     # data.go.kr은 계정당 공통 인증키 — 심평원·기상·대기오염에 같은 키를 쓴다
     data_go_kr_key: str | None = os.environ.get("DATA_GO_KR_KEY") or None
     # 외부 API — 접수 흐름을 막지 않도록 짧게 잡는다
