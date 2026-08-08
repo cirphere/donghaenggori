@@ -1,0 +1,20 @@
+# 빌드 컨텍스트를 가볍게 — venv 1.2GB, 모델 423MB가 들어가면 빌드가 느려진다
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# 키는 이미지에 굽지 않는다. 런타임에 env_file 로 주입한다
+.env
+*.key
+
+# 볼륨으로 마운트되므로 이미지에 넣을 필요가 없다
+donghaenggori/data/models/
+donghaenggori/data/*.db
+donghaenggori/data/*.sqlite3
+donghaenggori/data/audio/
+
+.git/
+.gitignore
+.DS_Store
+README.md

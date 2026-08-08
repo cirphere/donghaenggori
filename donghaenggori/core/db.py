@@ -21,7 +21,9 @@ import threading
 
 _ROOT = os.path.dirname(os.path.dirname(__file__))          # donghaenggori/
 DATA_DIR = os.path.join(_ROOT, "data")
-DB_PATH = os.path.join(DATA_DIR, "donghaenggori.db")
+# DB 위치는 환경변수로 뺄 수 있다. 컨테이너에서 데이터를 볼륨에 두기 위해서다
+# (SQLite는 -wal/-shm 형제 파일을 만들어, 파일 하나만 바인드마운트하면 깨진다).
+DB_PATH = os.environ.get("DONGHAENGGORI_DB") or os.path.join(DATA_DIR, "donghaenggori.db")
 _SEED_PROFILES = os.path.join(DATA_DIR, "care_profiles.json")
 
 _lock = threading.Lock()
@@ -128,6 +130,7 @@ def init_db(force: bool = False) -> None:
         if _inited and not force:
             return
         os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)  # DB를 볼륨으로 뺀 경우
         conn = get_conn()
         conn.executescript(SCHEMA)
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:

@@ -95,6 +95,36 @@ python -c "from donghaenggori.services import intent_model; ..."   # 학습
 python -m tests.test_file3_cases     # 제출 문서(파일3) 12건 회귀 검증
 ```
 
+## 배포 (Docker)
+
+배포 대상 아키텍처를 고정하지 않았다. **배포할 머신에서 빌드**하면 amd64(AWS)든
+arm64(Oracle Ampere)든 그대로 만들어진다 — 의존성은 양쪽 휠을 모두 확인했다.
+
+```bash
+cp .env.example .env          # 최초 1회. 이미 있으면 실행하지 말 것 (키가 지워진다)
+docker compose up -d --build
+docker compose logs -f                      # 첫 기동은 모델 다운로드로 오래 걸린다
+curl -X POST localhost:8000/api/warmup      # 시연 전 반드시 — 안 하면 첫 요청이 30초
+```
+
+| | |
+|---|---|
+| 이미지 | 약 2.2GB (torch는 CPU 전용 빌드. 기본 휠은 CUDA를 딸고 와 8.9GB가 된다) |
+| 메모리 | 대기 1.4GB · 5분 음성 처리 시 최대 2.2GB. compose에서 3GB로 제한 |
+| 워커 | **1개 고정.** 모델이 프로세스별로 적재되어 2개면 4GiB 장비에서 OOM |
+| 최초 기동 | 모델 다운로드 약 1.5GB. 시연 3일 전 기동 권장 |
+
+볼륨 3개로 나뉜다.
+
+- `hf-cache` — 모델 캐시. 컨테이너를 지워도 다시 안 받는다
+- `db-data` — SQLite. 접수·감사로그가 재시작에도 남는다
+- `./donghaenggori/data/models` (바인드, 읽기전용) — 학습한 BERT는 저장소에 없다.
+  호스트에 없으면 TF-IDF → 규칙으로 자동 폴백한다. `/api/status`의 `intent_model`로 확인할 것
+
+> `docker compose`는 프로젝트 디렉터리의 `.env`를 변수 치환에도 쓴다. 즉 `.env`에
+> `WHISPER_MODEL`이 있으면 compose의 배포 기본값(`base`)보다 **`.env`가 이긴다.**
+> 배포 설정을 바꾸려면 compose가 아니라 `.env`를 고쳐야 한다.
+
 ## 환경변수
 
 `.env.example` 참고. 전부 없어도 동작하며, 없으면 아래처럼 폴백한다.

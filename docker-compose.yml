@@ -1,0 +1,51 @@
+# 동행고리 AI — 배포용 구성
+#
+#   docker compose up -d --build       # 기동 (첫 회는 모델 다운로드로 오래 걸린다)
+#   docker compose logs -f             # 진행 확인
+#   curl -X POST localhost:8000/api/warmup   # 시연 전 반드시
+#
+# 배포 대상이 미정이라 아키텍처를 고정하지 않았다. 배포할 머신에서 빌드하면
+# amd64(AWS)든 arm64(Oracle)든 그대로 만들어진다.
+
+services:
+  app:
+    build: .
+    image: donghaenggori:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env                      # 키는 .env 에만. 이 파일에 적지 않는다
+    environment:
+      # 배포 기본값 — .env 에 같은 키가 있으면 그쪽이 이긴다
+      WHISPER_MODEL: "${WHISPER_MODEL:-base}"     # small은 vCPU 2개에서 3배 느리다
+      WHISPER_DEVICE: "${WHISPER_DEVICE:-cpu}"
+      WHISPER_CPU_THREADS: "${WHISPER_CPU_THREADS:-2}"
+      STT_MAX_SECONDS: "${STT_MAX_SECONDS:-300}"  # 넘으면 413. 없으면 긴 파일 하나로 OOM
+      HF_HOME: /models/hf
+      DONGHAENGGORI_DB: /data/donghaenggori.db
+    volumes:
+      # 모델 캐시 1.5GB — 첫 기동 때 받고 이후 재사용한다
+      - hf-cache:/models/hf
+      # SQLite — 컨테이너를 지워도 접수·감사로그가 남는다
+      - db-data:/data
+      # 학습 산출물(BERT 423MB)은 저장소에 없다. 호스트에 있으면 쓰고,
+      # 없으면 TF-IDF → 규칙으로 자동 폴백한다(/api/status 로 확인).
+      - ./donghaenggori/data/models:/app/donghaenggori/data/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 첫 기동은 모델 다운로드가 있어 오래 걸린다 — 그동안 unhealthy로 보지 않는다
+      start_period: 900s
+    # 4GiB 장비에서 폭주로 호스트를 끌고 죽지 않게 상한을 둔다.
+    # 실측 최대 2.2GB(5분 음성) 기준으로 여유를 잡았다.
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+volumes:
+  hf-cache:
+  db-data:
