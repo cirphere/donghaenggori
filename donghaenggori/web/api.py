@@ -239,6 +239,14 @@ def warmup() -> dict:
     # 학습 모델 로드
     done["intent_model"] = "loaded" if intent_model.available() else "미학습"
 
+    # RAG 임베딩 모델 로드 + 인덱싱 (최초 20초가량 걸린다)
+    try:
+        from ..services import rag
+        rag.search(region="광주광역시 서구", query="예열", limit=1)
+        done["rag_embedding"] = "loaded" if rag.available() else "폴백(토큰겹침)"
+    except Exception as e:
+        done["rag_embedding"] = type(e).__name__
+
     # 시연에 쓰이는 지역만 예열
     for region in ("전남 고흥군", "전남 보성군", "광주광역시 서구"):
         latlon = geo.coords_of(region)

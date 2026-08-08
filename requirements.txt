@@ -13,6 +13,8 @@ joblib>=1.4
 # --- 선택 ---
 # STT (로컬 추론, API 키 불필요)
 faster-whisper>=1.1
+# RAG 의미 검색 (로컬 임베딩). 없으면 토큰 겹침으로 폴백
+sentence-transformers>=3.0
 # 발화 이해·요약 LLM 보강 (ANTHROPIC_API_KEY 있을 때만 사용)
 anthropic>=0.40
 pydantic>=2.7
