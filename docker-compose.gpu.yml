@@ -1,0 +1,31 @@
+# GPU 오버레이 — 기본 구성 위에 덮어쓴다. 단독으로 쓰지 않는다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# 값을 ${VAR:-기본} 이 아니라 리터럴로 박은 이유: compose는 프로젝트 .env를
+# 변수 치환에도 쓰기 때문에, ${WHISPER_DEVICE:-cuda} 로 두면 .env의 cpu가 이겨서
+# GPU가 조용히 안 쓰인다(실제로 CPU 구성에서 그 현상을 확인했다).
+
+services:
+  app:
+    build:
+      dockerfile: Dockerfile.gpu
+    image: donghaenggori:gpu
+    environment:
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: float16
+      # GPU면 큰 모델을 감당한다. medium은 VRAM 약 2.5GB, large-v3는 약 5GB.
+      # 4060 Ti(8/16GB) 어느 쪽이든 들어간다. 한국어 정확도가 눈에 띄게 오른다.
+      WHISPER_MODEL: medium
+      # GPU에서는 CPU 스레드 수가 의미 없다
+      WHISPER_CPU_THREADS: "0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          # 데스크탑은 RAM이 넉넉하다. CPU 구성의 3g 제한을 푼다
+          memory: 8g

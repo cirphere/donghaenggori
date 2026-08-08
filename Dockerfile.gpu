@@ -1,0 +1,49 @@
+# 동행고리 AI — GPU(CUDA) 배포 이미지
+#
+# 용도: 집 데스크탑(Windows + RTX 4060 Ti)에서 Cloudflare Tunnel로 공유할 때.
+# 본선 당일 발표 노트북은 CPU용 Dockerfile을 그대로 쓴다 — 이 파일은 별개다.
+#
+# CPU 이미지와의 차이는 두 가지뿐이다.
+#   1) torch를 기본 인덱스에서 받는다 → CUDA 런타임(nvidia-*)이 함께 깔린다
+#   2) CTranslate2가 그 안의 cuBLAS·cuDNN을 찾도록 LD_LIBRARY_PATH를 잡아준다
+# 그래서 이미지가 약 9GB다. 로컬에서만 쓰므로 밀어 넣을 일이 없어 문제되지 않는다.
+#
+# 전제: Windows NVIDIA 드라이버 + Docker Desktop(WSL2 백엔드).
+#       Windows에서는 nvidia-container-toolkit을 따로 깔지 않는다.
+
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+# CPU 이미지와 달리 --index-url 을 주지 않는다. 기본 휠이 CUDA 빌드다.
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY donghaenggori ./donghaenggori
+COPY tests ./tests
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# faster-whisper(CTranslate2)는 torch가 끌어온 cuBLAS·cuDNN을 직접 dlopen 한다.
+# 이 경로를 잡아주지 않으면 "Unable to load libcudnn_ops.so" 로 죽는다.
+ENV NV=/usr/local/lib/python3.12/site-packages/nvidia
+ENV LD_LIBRARY_PATH=$NV/cublas/lib:$NV/cudnn/lib:$NV/cuda_runtime/lib
+
+ENV HF_HOME=/models/hf \
+    DONGHAENGGORI_DB=/data/donghaenggori.db \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN useradd -m -u 10001 app \
+    && mkdir -p /models/hf /data \
+    && chown -R app:app /app /models /data
+USER app
+
+EXPOSE 8000
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["uvicorn", "donghaenggori.web.api:app", \
+     "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

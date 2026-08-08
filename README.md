@@ -125,6 +125,39 @@ curl -X POST localhost:8000/api/warmup      # 시연 전 반드시 — 안 하�
 > `WHISPER_MODEL`이 있으면 compose의 배포 기본값(`base`)보다 **`.env`가 이긴다.**
 > 배포 설정을 바꾸려면 compose가 아니라 `.env`를 고쳐야 한다.
 
+### GPU (Windows 데스크탑 + Cloudflare Tunnel)
+
+사전 공유용으로 집 데스크탑에서 돌릴 때. **본선 당일 발표 노트북은 위의 CPU 구성을
+그대로 쓴다** — 현장에서 원격 서버에 의존하면 네트워크가 끊길 때 대안이 없다.
+
+전제: Windows NVIDIA 드라이버 최신 + Docker Desktop(WSL2 백엔드).
+Windows에서는 `nvidia-container-toolkit`을 따로 깔지 않는다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+CPU 이미지와 다른 점은 torch를 CUDA 빌드로 받고(그래서 약 9GB) CTranslate2가
+cuBLAS·cuDNN을 찾도록 `LD_LIBRARY_PATH`를 잡아주는 것뿐이다. GPU에서는 VRAM이
+넉넉하므로 `WHISPER_MODEL`을 `medium`(VRAM 약 2.5GB)으로 올려 잡았다.
+`large-v3`(약 5GB)도 4060 Ti면 들어간다.
+
+**GPU가 실제로 쓰이는지 반드시 확인할 것** — 설정이 어긋나면 조용히 CPU로
+돌아 느려지기만 한다.
+
+```bash
+docker compose exec app nvidia-smi          # GPU가 보여야 한다
+docker compose logs app | grep -i cuda      # 로드 오류가 없어야 한다
+# 3.5초 음성 전사가 CPU에선 1초대, GPU면 그보다 확연히 빨라야 한다
+```
+
+터널은 `cloudflared`로 붙인다. 3일 무인 가동이면 **서비스로 등록**해야 재부팅
+후에도 살아난다(`cloudflared service install`). 임시 터널(`--url`)은 재시작마다
+주소가 바뀌므로 링크를 공유할 거면 Named Tunnel + 도메인을 쓴다.
+
+> Cloudflare 무료 플랜은 프록시 요청이 **100초를 넘으면 524**로 끊는다. CPU로는
+> 3분짜리 음성이 여기 걸리지만(실측 129.6초) GPU에서는 문제되지 않는다.
+
 ## 환경변수
 
 `.env.example` 참고. 전부 없어도 동작하며, 없으면 아래처럼 폴백한다.
