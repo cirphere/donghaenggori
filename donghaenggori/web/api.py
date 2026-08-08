@@ -78,7 +78,9 @@ def status() -> dict:
     from ..services import intent_model
     return {
         "keys": settings.status(),
-        "intent_model_loaded": intent_model.available(),
+        "intent_model": ("BERT" if intent_model.bert_available()
+                         else "TF-IDF" if intent_model.available() else "미학습(규칙 폴백)"),
+        "intent_model_loaded": intent_model.available() or intent_model.bert_available(),
         "facilities": db.facility_counts(),
     }
 
@@ -237,7 +239,8 @@ def warmup() -> dict:
     done: dict[str, str] = {}
 
     # 학습 모델 로드
-    done["intent_model"] = "loaded" if intent_model.available() else "미학습"
+    done["intent_model"] = ("BERT" if intent_model.bert_available()
+                            else "TF-IDF" if intent_model.available() else "미학습")
 
     # RAG 임베딩 모델 로드 + 인덱싱 (최초 20초가량 걸린다)
     try:

@@ -176,8 +176,62 @@ class Prediction:
     source: str = "학습모델"
 
 
+# ─────────────────────────────── BERT 경로 (있으면 우선) ──
+# 3단 폴백: KLUE-RoBERTa → TF-IDF → 규칙 사전
+# 무거운 의존성이 없거나 모델이 없어도 서비스가 계속 돌아가야 한다.
+BERT_DIR = os.path.join(MODEL_DIR, "bert")
+_bert: dict = {}
+
+
+def _load_bert():
+    if "tried" in _bert:
+        return _bert.get("model")
+    _bert["tried"] = True
+    meta_path = os.path.join(BERT_DIR, "meta.json")
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        import json
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        meta = json.load(open(meta_path, encoding="utf-8"))
+        tok = AutoTokenizer.from_pretrained(BERT_DIR)
+        model = AutoModelForSequenceClassification.from_pretrained(BERT_DIR).eval()
+        _bert.update(model=model, tok=tok, torch=torch,
+                     thr=meta.get("urgent_threshold", 0.5),
+                     id2label=model.config.id2label)
+        return model
+    except Exception:
+        return None
+
+
+def bert_available() -> bool:
+    return _load_bert() is not None
+
+
+def _predict_bert(text: str) -> Prediction | None:
+    if _load_bert() is None:
+        return None
+    torch, tok, model = _bert["torch"], _bert["tok"], _bert["model"]
+    with torch.no_grad():
+        enc = tok([text], truncation=True, max_length=256, return_tensors="pt")
+        p = torch.softmax(model(**enc).logits, dim=-1)[0]
+    idx = int(p.argmax())
+    label = _bert["id2label"][idx]
+    urgent_idx = next((i for i, l in _bert["id2label"].items() if l == "긴급"), None)
+    u = float(p[urgent_idx]) if urgent_idx is not None else 0.0
+    is_urgent = u >= _bert["thr"]
+    return Prediction(intent="긴급" if is_urgent else str(label),
+                      confidence=float(p[idx]), urgent=is_urgent,
+                      urgent_score=u, source="BERT")
+
+
 def predict(text: str) -> Prediction | None:
-    """학습된 모델로 의도를 예측한다. 모델이 없으면 None → 호출부가 규칙으로 폴백."""
+    """의도를 예측한다. BERT → TF-IDF → None(호출부가 규칙으로 폴백)."""
+    b = _predict_bert(text)
+    if b is not None:
+        return b
+
     intent_clf, urgent_pack = _load()
     if intent_clf is None:
         return None
@@ -193,4 +247,4 @@ def predict(text: str) -> Prediction | None:
     if is_urgent:
         label = "긴급"
     return Prediction(intent=str(label), confidence=float(proba[idx]),
-                      urgent=is_urgent, urgent_score=u_score)
+                      urgent=is_urgent, urgent_score=u_score, source="TF-IDF")
