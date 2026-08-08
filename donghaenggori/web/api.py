@@ -126,8 +126,13 @@ def create_intake(body: IntakeIn) -> dict:
 
 
 @app.post("/api/stt", tags=["화면02 접수"])
-async def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/m4a/aiff)")) -> dict:
-    """음성 → 텍스트. 확신도가 낮으면 needs_review=true로 사람 확인을 요구한다."""
+def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/m4a/aiff)")) -> dict:
+    """음성 → 텍스트. 확신도가 낮으면 needs_review=true로 사람 확인을 요구한다.
+
+    async def가 아니라 def다. 전사는 CPU를 붙잡는 블로킹 작업이라
+    async def로 두면 이벤트 루프에서 실행돼 전사 시간 내내 서버 전체가 멈춘다.
+    (실측: 전사 중 /api/health 0.0006s → 0.96s) def면 스레드풀로 빠진다.
+    """
     if not stt.available():
         raise HTTPException(503, "faster-whisper 미설치 — 텍스트 입력을 사용하세요")
     suffix = os.path.splitext(file.filename or "")[1] or ".wav"
@@ -141,10 +146,10 @@ async def transcribe(file: UploadFile = File(..., description="음성 파일 (wa
 
 
 @app.post("/api/intakes/from-audio", tags=["화면02 접수"])
-async def intake_from_audio(file: UploadFile = File(...), phone: str = Query(...),
-                            channel: str = Query("전화")) -> dict:
+def intake_from_audio(file: UploadFile = File(...), phone: str = Query(...),
+                      channel: str = Query("전화")) -> dict:
     """음성 파일 하나로 접수까지 — 시연 첫 장면(전화 시뮬레이션)용."""
-    tr = await transcribe(file)
+    tr = transcribe(file)
     res = create_intake(IntakeIn(phone=phone, utterance=tr["text"], channel=channel))
     res["stt"] = tr
     return res
