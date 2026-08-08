@@ -28,6 +28,11 @@ COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE") or ("float16" if DEVICE ==
 CPU_THREADS = int(os.environ.get("WHISPER_CPU_THREADS", "0"))
 # 평균 로그확률이 이 값 미만이면 사람 확인으로 넘긴다
 CONFIDENCE_THRESHOLD = float(os.environ.get("STT_CONF_THRESHOLD", "-0.9"))
+# 허용 음성 길이 상한(초). 메모리가 음성 길이에 비례해 늘기 때문에 필요하다.
+#   실측(small, 2스레드): 3.5초 1,170MB · 3분 1,774MB · 7.5분 2,221MB
+#   대략 분당 +140MB. 4GiB 인스턴스에서 15~20분짜리면 OOM으로 프로세스가 죽는다.
+#   접수 발화는 수십 초, 매니저 메모도 2분 안쪽이라 5분이면 충분히 넉넉하다.
+MAX_SECONDS = float(os.environ.get("STT_MAX_SECONDS", "300"))
 
 # 도메인 힌트 — Whisper가 진료과·복지 용어를 더 잘 잡게 한다
 DOMAIN_PROMPT = (
@@ -99,11 +104,43 @@ def _postprocess(text: str) -> str:
     return out
 
 
+class AudioTooLong(ValueError):
+    """허용 길이를 넘는 음성. 전사를 시작하기 전에 막는다."""
+
+    def __init__(self, seconds: float, limit: float):
+        self.seconds, self.limit = seconds, limit
+        super().__init__(
+            f"음성이 너무 깁니다 ({seconds/60:.1f}분). 최대 {limit/60:.0f}분까지 처리합니다.")
+
+
+def probe_duration(audio_path: str) -> float | None:
+    """전사 없이 길이만 읽는다. 못 읽으면 None(길이 검사를 건너뛴다)."""
+    try:
+        import av
+        with av.open(audio_path) as c:
+            if c.duration:
+                return c.duration / 1_000_000
+            st = next((s for s in c.streams if s.type == "audio"), None)
+            if st is not None and st.duration and st.time_base:
+                return float(st.duration * st.time_base)
+    except Exception:
+        return None
+    return None
+
+
 def transcribe(audio_path: str, language: str = "ko",
                size: str | None = None, device: str | None = None) -> Transcript:
-    """음성 파일 → 텍스트. 확신도가 낮으면 needs_review=True로 사람에게 넘긴다."""
+    """음성 파일 → 텍스트. 확신도가 낮으면 needs_review=True로 사람에게 넘긴다.
+
+    긴 음성은 전사 전에 거절한다 — 메모리가 길이에 비례해 늘어,
+    막지 않으면 파일 하나로 프로세스가 OOM으로 죽는다.
+    """
     if not os.path.exists(audio_path):
         raise FileNotFoundError(audio_path)
+
+    dur = probe_duration(audio_path)
+    if dur is not None and MAX_SECONDS > 0 and dur > MAX_SECONDS:
+        raise AudioTooLong(dur, MAX_SECONDS)
 
     model = _get_model(size, device)
     segments, info = model.transcribe(

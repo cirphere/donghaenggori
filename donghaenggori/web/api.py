@@ -141,6 +141,9 @@ def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/
         shutil.copyfileobj(file.file, tmp)
         tmp.close()
         return stt.transcribe(tmp.name).to_dict()
+    except stt.AudioTooLong as e:
+        # 413 — 받아서 죽느니 거절한다 (메모리가 음성 길이에 비례해 늘어난다)
+        raise HTTPException(413, str(e))
     finally:
         os.unlink(tmp.name)
 
