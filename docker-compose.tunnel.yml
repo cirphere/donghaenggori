@@ -1,0 +1,24 @@
+# Cloudflare Tunnel 오버레이 — 기본 구성 위에 덮어쓴다. 단독으로 쓰지 않는다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#                  -f docker-compose.tunnel.yml up -d
+#
+# 사전 준비 (Cloudflare 대시보드, 도메인 1개 필요)
+#   Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared
+#   → 토큰 복사해서 .env 의 CF_TUNNEL_TOKEN 에 넣는다
+#   → Public Hostname 추가:  Service = HTTP,  URL = app:8000
+#
+# ※ URL을 localhost:8000 으로 적으면 안 된다. cloudflared는 자기 컨테이너
+#   안에서 도는 것이라 localhost가 자기 자신을 가리킨다. compose 네트워크에서
+#   앱의 이름은 서비스명인 'app' 이다.
+#
+# restart: unless-stopped 이므로 데스크탑이 재부팅돼도 Docker만 뜨면 함께 올라온다.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # --no-autoupdate: 시연 기간에 제멋대로 판올림하다 끊기는 일을 막는다
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:?CF_TUNNEL_TOKEN 을 .env 에 넣으세요}
+    depends_on:
+      - app
