@@ -33,7 +33,7 @@ import time
 MODEL_NAME = os.environ.get("BERT_MODEL", "klue/roberta-base")
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "bert")
 MAX_LEN = 256
-TARGET_URGENT_RECALL = 0.97
+TARGET_URGENT_RECALL = 0.99
 
 
 def pick_device():
@@ -196,8 +196,8 @@ def main() -> None:
     r = run(a.data, a.epochs, a.batch_size, a.lr, a.seed, a.save, a.opening)
 
     # TF-IDF 기준선 (같은 평가 프로토콜: 실데이터 홀드아웃)
-    BASE = {"accuracy": 0.962, "macro_f1": 0.941,
-            "urgent_recall": 1.000, "urgent_precision": 0.582}
+    BASE = {"accuracy": 0.986, "macro_f1": 0.979,
+            "urgent_recall": 0.993, "urgent_precision": 0.907}
     print()
     print("── TF-IDF 기준선과 비교 (같은 실데이터 홀드아웃) ──")
     print(f"  {'':<14}{'TF-IDF':>10}{'BERT':>10}{'차이':>10}")

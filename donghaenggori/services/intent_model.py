@@ -23,8 +23,14 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "mo
 INTENT_PATH = os.path.join(MODEL_DIR, "intent_clf.pkl")
 URGENT_PATH = os.path.join(MODEL_DIR, "urgent_clf.pkl")
 
-# 긴급 감지 목표 재현율 — 파일1 성능 목표(97% 이상)
-TARGET_URGENT_RECALL = 0.97
+# 긴급 감지 목표 재현율.
+# 놓치는 것이 오탐보다 훨씬 위험하므로 재현율을 우선한다.
+# 전체 데이터(7,019세션) 기준 트레이드오프 실측:
+#   0.97 → 놓침 8건 / 오탐 10건
+#   0.99 → 놓침 2건 / 오탐 25건   ← 채택
+#   1.00 → 놓침 0건 / 오탐 57건 (홀드아웃 한 번에 맞춘 임계값이라 과적합 위험)
+# 규칙 사전이 병렬로 동작해 명백한 표현("가슴이 아파", "숨이 차")은 별도로 잡는다.
+TARGET_URGENT_RECALL = 0.99
 
 
 @dataclass
