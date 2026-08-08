@@ -307,6 +307,19 @@ small{color:#666}
   <button onclick="post('/api/reset',{})">초기화</button>
 </div>
 
+<h3>음성 입력 (STT)</h3>
+<small>파일 업로드 또는 마이크 녹음. 인식된 문장은 위 접수 칸에 자동으로 채워집니다.<br>
+마이크는 localhost에서만 열립니다 — LAN IP(http)로 접속하면 브라우저가 막습니다.</small>
+<div class=row>
+  <input type=file id=audio accept="audio/*">
+  <button onclick="sttFile()">파일 인식</button>
+  <button onclick="fromAudio()">음성으로 바로 접수</button>
+</div>
+<div class=row>
+  <button id=recbtn onclick="toggleRec()">● 녹음 시작</button>
+  <span id=recstat><small>대기 중</small></span>
+</div>
+
 <h3>사후기록 요약</h3>
 <div class=row><textarea id=memo rows=2>오늘 무릎 주사 맞았고, 다음 진료는 2주 뒤. 약국 들러서 약 받았어요. 계단 힘들어하셨습니다.</textarea></div>
 <div class=row><button onclick="postRecord()">요약 생성</button></div>
@@ -319,5 +332,56 @@ async function load(u){ show(await (await fetch(u)).json()); }
 async function post(u,b){ show(await (await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json()); }
 function go(){ post('/api/intakes',{phone:phone.value,utterance:utt.value,channel:channel.value}); }
 function postRecord(){ post('/api/post-records',{intake_id:0,phone:phone.value,memo:memo.value,dept:'정형외과',target:'박순자 어르신'}); }
+
+// ── STT ────────────────────────────────────────────────────────
+// 인식 결과는 접수 칸에 채워 넣는다 — 바로 '접수카드 생성'으로 이어서 확인하려고.
+async function send(url, blob, name){
+  const fd = new FormData(); fd.append('file', blob, name);
+  out.textContent = '인식 중…';
+  const r = await fetch(url, {method:'POST', body:fd});
+  const d = await r.json();
+  show(d);
+  const t = d.text || (d.stt && d.stt.text);
+  if (t) utt.value = t;
+  return d;
+}
+function pick(){
+  const f = document.getElementById('audio').files[0];
+  if (!f) { out.textContent = '음성 파일을 먼저 고르세요.'; return null; }
+  return f;
+}
+function sttFile(){ const f = pick(); if (f) send('/api/stt', f, f.name); }
+function fromAudio(){
+  const f = pick(); if (!f) return;
+  send('/api/intakes/from-audio?phone=' + encodeURIComponent(phone.value)
+       + '&channel=' + encodeURIComponent(channel.value), f, f.name);
+}
+
+let rec = null, chunks = [];
+async function toggleRec(){
+  const btn = document.getElementById('recbtn'), stat = document.getElementById('recstat');
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    stat.innerHTML = '<small>이 브라우저·주소에서는 마이크를 쓸 수 없습니다. 파일 업로드를 쓰세요.</small>';
+    return;
+  }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch (e) { stat.innerHTML = '<small>마이크 권한 거부됨: ' + e.name + '</small>'; return; }
+  chunks = [];
+  rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    btn.textContent = '● 녹음 시작';
+    stat.innerHTML = '<small>인식 중…</small>';
+    const blob = new Blob(chunks, {type: rec.mimeType || 'audio/webm'});
+    const d = await send('/api/stt', blob, 'rec.webm');
+    stat.innerHTML = '<small>' + (d.needs_review ? '확신도 낮음 — 사람 확인 필요' : '완료') + '</small>';
+  };
+  rec.start();
+  btn.textContent = '■ 녹음 정지';
+  stat.innerHTML = '<small>녹음 중… 말한 뒤 정지를 누르세요</small>';
+}
 </script>
 </html>"""
