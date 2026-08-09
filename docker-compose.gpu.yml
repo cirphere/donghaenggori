@@ -27,5 +27,6 @@ services:
               count: all
               capabilities: [gpu]
         limits:
-          # 데스크탑은 RAM이 넉넉하다. CPU 구성의 3g 제한을 푼다
-          memory: 8g
+          # 실측 최대 2.2GB(CPU, 5분 음성). GPU에서는 whisper 가중치가 VRAM으로
+          # 가므로 더 낮다. 호스트 16GB에서 WSL2가 절반을 쓰는 걸 감안해 4g로 둔다.
+          memory: 4g
