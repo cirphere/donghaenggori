@@ -15,6 +15,7 @@ import shutil
 import tempfile
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,19 @@ app = FastAPI(
     title="동행고리 AI",
     description="사회복지사를 위한 병원동행 접수·이력정리 Copilot — AI는 후보·근거만, 확정은 사람",
     version="0.1.0",
+)
+
+# 프론트는 별도 오리진에서 뜬다(localhost:3000 등). CORS가 없으면 브라우저가
+# 막아서 연동 자체가 시작되지 않는다. 기본은 전부 허용 — 이 API는 어차피
+# 인증이 없어 CORS로 지켜지는 것이 없고, 좁혀봐야 프론트만 막힌다.
+# 운영에서 제한하려면 .env 의 CORS_ORIGINS 에 도메인을 콤마로 나열한다.
+_origins = [o.strip() for o in (os.environ.get("CORS_ORIGINS") or "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=False,      # "*" 와 함께 쓰면 브라우저가 거부한다
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
