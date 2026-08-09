@@ -1,0 +1,27 @@
+# 프론트엔드 오버레이 — 백엔드와 별도 컨테이너로 띄운다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d --build
+#   (COMPOSE_FILE 에 넣어두면 -f 없이 docker compose up -d 로 끝난다)
+#
+# 백엔드(app)와 프론트(frontend)는 서로 다른 컨테이너·다른 주소다.
+#   프론트  https://donghaenggori.dohyeongops.com   → frontend:80
+#   백엔드  https://api.dohyeongops.com             → app:8000
+# 터널에 Public Hostname 을 두 개 만들어 각각 연결한다(docs/FRONTEND.md 참조).
+#
+# 오리진이 다르므로 브라우저에서 CORS 가 필요하다. 백엔드는 기본이 전부 허용이라
+# 그대로 동작하고, 좁히려면 .env 의 CORS_ORIGINS 에 프론트 주소를 넣는다.
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # 빌드 산출물 디렉터리 — Vite=dist, CRA=build, Next(export)=out
+        BUILD_DIR: ${FRONTEND_BUILD_DIR:-dist}
+    image: donghaenggori:frontend
+    restart: unless-stopped
+    ports:
+      # 로컬 확인용. 터널은 이 포트가 아니라 컨테이너 이름으로 붙는다
+      - "3000:80"
+    depends_on:
+      - app

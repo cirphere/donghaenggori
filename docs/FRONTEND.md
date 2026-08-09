@@ -3,12 +3,21 @@
 이 문서는 **살아 있는 API에서 뽑아 쓴 것**이다. 스키마가 의심스러우면 손으로 적힌 이 문서보다
 Swagger가 항상 맞다. 아래 주소에서 바로 눌러볼 수 있다.
 
+프론트와 백엔드는 **별도 컨테이너·별도 주소**로 뜬다.
+
+| | 배포 | 로컬 |
+|---|---|---|
+| 프론트 | `https://donghaenggori.dohyeongops.com` | `localhost:3000` |
+| **백엔드(API)** | `https://api.dohyeongops.com` | `localhost:8000` |
+| **Swagger (연동 기준)** | `https://api.dohyeongops.com/docs` | `localhost:8000/docs` |
+
 | | |
 |---|---|
-| 배포 주소 | `https://donghaenggori.dohyeongops.com` |
-| **Swagger (연동 기준)** | `https://donghaenggori.dohyeongops.com/docs` |
 | 동작 확인 | `GET /api/health` → `{"status": "ok"}` |
 | 현재 상태 | `GET /api/status` — 모델·키 적재 상태 |
+
+API 주소는 **하드코딩하지 말고** `window.API_BASE`를 쓴다(실행 시점에 결정됨).
+프론트 프로젝트 구성은 [`../frontend/README.md`](../frontend/README.md) 참조.
 
 **CORS는 열려 있다.** 기본값이 모든 오리진 허용이라 `localhost:3000`이든 어디든 바로 호출된다.
 운영에서 좁히려면 서버 `.env`의 `CORS_ORIGINS`에 도메인을 콤마로 나열하면 된다.
@@ -144,9 +153,44 @@ date  profile  urgent_message  facilities  card  intake_id
 
 - **첫 요청이 느리다.** 모델 적재·외부 API 콜드 스타트로 20~30초 걸릴 수 있다.
   `POST /api/warmup` 한 번 치면 이후 1초대로 떨어진다. 데모 전에 꼭 호출할 것.
-- **인증이 없다.** 지금은 누구나 호출 가능하고 `POST /api/reset`으로 데이터가 초기화된다.
-  개발 중 실수로 부르지 않게 주의.
+- **인증이 없다.** 배포 주소를 아는 사람은 누구나 호출할 수 있다. 단 `POST /api/reset`
+  (데이터 전체 초기화)은 **외부에서 403**이고 서버 로컬에서만 동작한다.
 - **데이터는 전부 가상이다.** 실제 개인정보가 아니다.
 - 응답 필드가 `null`인 경우가 정상적으로 많다(이력 없음, 대리 전화 아님 등). 널 가드 필요.
 
 막히는 부분이나 필요한 필드가 있으면 말해달라. 서버에서 맞춰줄 수 있다.
+
+---
+
+## 부록 — 배포 구조 (백엔드 담당자용)
+
+```
+                  Cloudflare Tunnel
+                         │
+     ┌───────────────────┴───────────────────┐
+     │                                       │
+donghaenggori.dohyeongops.com        api.dohyeongops.com
+     │                                       │
+  frontend:80  (nginx)                   app:8000  (FastAPI)
+```
+
+터널 대시보드에 **Public Hostname 두 개**를 만든다.
+
+| Subdomain | Domain | Path | Service |
+|---|---|---|---|
+| `donghaenggori` | `dohyeongops.com` | 비움 | `HTTP` → `frontend:80` |
+| `api` | `dohyeongops.com` | 비움 | `HTTP` → `app:8000` |
+
+`localhost`가 아니라 **컨테이너 서비스 이름**(`frontend`, `app`)을 쓴다 —
+cloudflared가 자기 컨테이너 안에서 돌기 때문이다.
+
+띄우는 명령:
+
+```bash
+docker compose -f docker-compose.yml \
+               -f docker-compose.frontend.yml \
+               -f docker-compose.gpu.yml \
+               -f docker-compose.tunnel.yml up -d --build
+```
+
+매번 치기 번거로우면 `.env`의 `COMPOSE_FILE`에 콜론으로 나열해두면 `docker compose up -d`만으로 끝난다.

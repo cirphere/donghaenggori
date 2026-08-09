@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동행고리 AI — 프론트 자리</title>
+<style>
+  body { font: 15px/1.7 -apple-system, 'Apple SD Gothic Neo', sans-serif;
+         max-width: 780px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 28px; }
+  .box { border: 1px solid #e3e3e3; border-radius: 8px; padding: 16px; margin: 14px 0; }
+  .ok { color: #0a7a34; } .bad { color: #b3261e; }
+  pre { background: #f6f6f6; padding: 12px; border-radius: 6px; overflow: auto; font-size: 13px; }
+  code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<h1>동행고리 AI — 프론트엔드</h1>
+<div class="sub">이 페이지는 자리표시자입니다. 실제 화면은 프론트 담당자가 구현합니다.</div>
+
+<div class="box">
+  <strong>백엔드 연결 확인</strong>
+  <div id="result">확인 중…</div>
+  <pre id="detail" hidden></pre>
+</div>
+
+<div class="box">
+  <strong>여기에 코드를 넣으세요</strong>
+  <p>이 <code>frontend/</code> 디렉터리에 React·Vue 등 프로젝트를 만들면
+     <code>package.json</code>을 감지해 자동으로 빌드합니다.
+     빌드 산출물 경로가 <code>dist</code>가 아니면
+     <code>docker-compose.frontend.yml</code>의 <code>BUILD_DIR</code>을 바꾸세요.</p>
+  <p>API 주소는 <code>window.API_BASE</code>로 주입됩니다 —
+     코드에서 하드코딩하지 마세요.</p>
+</div>
+
+<script>
+  // API 주소는 빌드 시점이 아니라 실행 시점에 정해진다.
+  // 로컬 개발이면 localhost:8000, 배포면 api 서브도메인.
+  window.API_BASE = location.hostname === 'localhost'
+      ? 'http://localhost:8000'
+      : location.origin.replace('//', '//api.');
+
+  const el = document.getElementById('result');
+  const detail = document.getElementById('detail');
+
+  fetch(window.API_BASE + '/api/status')
+    .then(r => r.json())
+    .then(d => {
+      el.innerHTML = '<span class="ok">연결됨</span> — ' + window.API_BASE
+        + '<br>의도 모델: <b>' + d.intent_model + '</b>'
+        + (d.stt ? ' · STT: <b>' + d.stt.model + ' / ' + d.stt.device + '</b>' : '');
+      detail.hidden = false;
+      detail.textContent = JSON.stringify(d, null, 2);
+    })
+    .catch(e => {
+      el.innerHTML = '<span class="bad">연결 실패</span> — ' + window.API_BASE
+        + '<br><small>' + e + '</small>'
+        + '<br><small>백엔드가 떠 있는지, CORS가 열려 있는지 확인하세요.</small>';
+    });
+</script>
+</html>
