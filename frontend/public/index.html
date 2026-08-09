@@ -35,10 +35,17 @@
 
 <script>
   // API 주소는 빌드 시점이 아니라 실행 시점에 정해진다.
-  // 로컬 개발이면 localhost:8000, 배포면 api 서브도메인.
-  window.API_BASE = location.hostname === 'localhost'
-      ? 'http://localhost:8000'
-      : location.origin.replace('//', '//api.');
+  // 로컬 개발이면 localhost:8000, 배포면 첫 라벨을 api 로 바꾼 주소.
+  //   donghaenggori.dohyeongops.com → api.dohyeongops.com
+  // (접두로 붙이면 api.donghaenggori.dohyeongops.com 이 되어 존재하지 않는다)
+  window.API_BASE = (function () {
+    var h = location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8000';
+    var p = h.split('.');
+    if (p.length >= 3) p[0] = 'api';      // 서브도메인 교체
+    else p.unshift('api');                // 최상위 도메인이면 앞에 붙임
+    return location.protocol + '//' + p.join('.');
+  })();
 
   const el = document.getElementById('result');
   const detail = document.getElementById('detail');
