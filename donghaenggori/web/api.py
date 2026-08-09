@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -298,8 +298,25 @@ def warmup() -> dict:
     return {"elapsed": round(time.time() - t0, 1), "warmed": done}
 
 
+def _via_internet(request: Request) -> bool:
+    """이 요청이 Cloudflare 터널을 거쳐 들어왔는가.
+
+    Cloudflare는 프록시한 요청에 CF-Connecting-IP / CF-Ray 를 붙인다. 클라이언트가
+    이 헤더를 지울 수는 없고, 터널을 우회해 컨테이너에 직접 닿으려면 같은 로컬
+    네트워크에 있어야 한다. 그래서 '외부에서 온 요청'의 판별 근거로 쓸 수 있다.
+    """
+    return bool(request.headers.get("cf-connecting-ip") or request.headers.get("cf-ray"))
+
+
 @app.post("/api/reset", tags=["시스템"])
-def reset() -> dict:
+def reset(request: Request) -> dict:
+    """데모 초기화. **외부(터널) 요청은 거부한다.**
+
+    이 API에는 인증이 없어서, 막지 않으면 주소를 아는 사람이 시연 데이터를
+    통째로 날릴 수 있다. 로컬(리허설 스크립트·본인 브라우저)에서는 그대로 된다.
+    """
+    if _via_internet(request):
+        raise HTTPException(403, "외부에서는 초기화할 수 없습니다 (서버 로컬에서만 가능)")
     db.reset_db()
     return {"ok": True}
 
@@ -307,8 +324,14 @@ def reset() -> dict:
 # --------------------------------------------- 개발 확인용 최소 UI --
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def dev_ui() -> str:
-    """개발 확인용 단일 페이지. 실제 UI는 프론트 담당자가 별도 구현."""
+def dev_ui(request: Request) -> str:
+    """개발 확인용 단일 페이지. 실제 UI는 프론트 담당자가 별도 구현.
+
+    외부(터널)에서 열면 '초기화' 버튼을 감춘다 — 눌러도 서버가 403으로 막지만,
+    시연 중 심사위원이 누를 수 있는 버튼을 보여줄 이유가 없다.
+    """
+    reset_btn = ("" if _via_internet(request)
+                 else '<button onclick="post(\'/api/reset\',{})">초기화</button>')
     return """<!doctype html><html lang=ko><meta charset=utf-8>
 <title>동행고리 AI — dev</title>
 <style>
@@ -333,7 +356,7 @@ small{color:#666}
   <button onclick="load('/api/dashboard')">대시보드</button>
   <button onclick="load('/api/audit')">감사 로그</button>
   <button onclick="load('/api/status')">상태</button>
-  <button onclick="post('/api/reset',{})">초기화</button>
+  __RESET_BTN__
 </div>
 
 <h3>음성 입력 (STT)</h3>
@@ -413,4 +436,4 @@ async function toggleRec(){
   stat.innerHTML = '<small>녹음 중… 말한 뒤 정지를 누르세요</small>';
 }
 </script>
-</html>"""
+</html>""".replace("__RESET_BTN__", reset_btn)
