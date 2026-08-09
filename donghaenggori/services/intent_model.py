@@ -184,11 +184,24 @@ _bert: dict = {}
 
 
 def _load_bert():
+    """BERT를 적재한다. 실패해도 서비스는 계속 도는 대신, **이유를 남긴다**.
+
+    조용히 TF-IDF로 내려가면 배포에서 이걸 눈치채지 못한다. 실제로 컨테이너
+    사용자(UID 10001)가 model.safetensors(권한 600)를 못 읽어 폴백한 적이 있고,
+    /api/status 에 'BERT'가 아니라 'TF-IDF'로 뜨는 것 말고는 단서가 없었다.
+    """
     if "tried" in _bert:
         return _bert.get("model")
     _bert["tried"] = True
     meta_path = os.path.join(BERT_DIR, "meta.json")
     if not os.path.exists(meta_path):
+        _bert["error"] = f"모델 없음: {meta_path}"
+        return None
+    weights = os.path.join(BERT_DIR, "model.safetensors")
+    if os.path.exists(weights) and not os.access(weights, os.R_OK):
+        # 가장 흔한 배포 사고 — 바인드마운트한 파일을 컨테이너 사용자가 못 읽는다
+        _bert["error"] = (f"가중치를 읽을 수 없음(권한): {weights} — "
+                          f"호스트에서 chmod a+r 하세요")
         return None
     try:
         import json
@@ -201,12 +214,19 @@ def _load_bert():
                      thr=meta.get("urgent_threshold", 0.5),
                      id2label=model.config.id2label)
         return model
-    except Exception:
+    except Exception as e:
+        _bert["error"] = f"{type(e).__name__}: {e}"
         return None
 
 
 def bert_available() -> bool:
     return _load_bert() is not None
+
+
+def bert_error() -> str | None:
+    """BERT를 못 쓰는 이유. 정상 적재됐으면 None."""
+    _load_bert()
+    return _bert.get("error")
 
 
 def _predict_bert(text: str) -> Prediction | None:

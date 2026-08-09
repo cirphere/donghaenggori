@@ -75,14 +75,21 @@ def health() -> dict:
 @app.get("/api/status", tags=["시스템"])
 def status() -> dict:
     """외부 연동 상태 — 키 값은 노출하지 않고 존재 여부만."""
-    from ..services import intent_model
-    return {
+    from ..services import intent_model, stt
+    out = {
         "keys": settings.status(),
         "intent_model": ("BERT" if intent_model.bert_available()
                          else "TF-IDF" if intent_model.available() else "미학습(규칙 폴백)"),
         "intent_model_loaded": intent_model.available() or intent_model.bert_available(),
+        "stt": {"model": stt.MODEL_SIZE, "device": stt.DEVICE,
+                "compute_type": stt.COMPUTE_TYPE},
         "facilities": db.facility_counts(),
     }
+    # BERT로 못 올라갔으면 이유를 함께 준다 — 조용한 폴백을 눈에 보이게
+    err = intent_model.bert_error()
+    if err:
+        out["intent_model_fallback_reason"] = err
+    return out
 
 
 # ------------------------------------------- 화면 01 홈 대시보드 --
