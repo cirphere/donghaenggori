@@ -4,9 +4,9 @@
 # 본선 당일 발표 노트북은 CPU용 Dockerfile을 그대로 쓴다 — 이 파일은 별개다.
 #
 # CPU 이미지와의 차이는 두 가지뿐이다.
-#   1) torch를 기본 인덱스에서 받는다 → CUDA 런타임(nvidia-*)이 함께 깔린다
-#   2) CTranslate2가 그 안의 cuBLAS·cuDNN을 찾도록 LD_LIBRARY_PATH를 잡아준다
-# 그래서 이미지가 약 9GB다. 로컬에서만 쓰므로 밀어 넣을 일이 없어 문제되지 않는다.
+#   1) torch를 CUDA 12 빌드로 받는다 → CUDA 런타임(nvidia-*)이 함께 깔린다
+#   2) CTranslate2가 그 라이브러리를 찾도록 ldconfig에 경로를 등록한다
+# 그래서 이미지가 수 GB로 커진다. 로컬에서만 쓰므로 밀어 넣을 일이 없어 무방하다.
 #
 # 전제: Windows용 NVIDIA 드라이버(최신). WSL 안에 리눅스 드라이버를 깔면 깨진다.
 #       Docker Desktop(WSL2 백엔드)이면 nvidia-container-toolkit이 불필요하고,
@@ -21,8 +21,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-# CPU 이미지와 달리 --index-url 을 주지 않는다. 기본 휠이 CUDA 빌드다.
-RUN pip install --no-cache-dir -r requirements.txt
+# torch를 CUDA 12 빌드로 고정한다.
+#
+# 기본 인덱스의 torch(2.13)는 CUDA 13을 가져와 libcublas.so.13 을 깐다.
+# 그런데 CTranslate2 4.8(faster-whisper)은 CUDA 12 빌드라 libcublas.so.12 를
+# 찾는다. 그대로 두면 전사할 때 이렇게 죽는다:
+#     RuntimeError: Library libcublas.so.12 is not found or cannot be loaded
+#
+# nvidia-cublas-cu12 를 따로 얹는 방법도 있으나, cuDNN 이 torch 것과 같은
+# 디렉터리·같은 SONAME(libcudnn.so.9)이라 서로 덮어써 torch가 깨질 수 있다.
+# CUDA 버전을 하나로 맞추는 편이 안전하다.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu126 torch \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY donghaenggori ./donghaenggori
 COPY tests ./tests
@@ -30,9 +40,18 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # faster-whisper(CTranslate2)는 torch가 끌어온 cuBLAS·cuDNN을 직접 dlopen 한다.
-# 이 경로를 잡아주지 않으면 "Unable to load libcudnn_ops.so" 로 죽는다.
-ENV NV=/usr/local/lib/python3.12/site-packages/nvidia
-ENV LD_LIBRARY_PATH=$NV/cublas/lib:$NV/cudnn/lib:$NV/cuda_runtime/lib
+# 경로를 잡아주지 않으면 "libcublas.so.12 is not found" 로 죽는다.
+#
+# 디렉터리 구조는 torch 버전마다 바뀐다 — cu12 계열은 nvidia/cublas/lib,
+# cu13 계열은 nvidia/cu13/lib 로 합쳐진다. 하드코딩하면 조용히 어긋나므로
+# 빌드 시점에 실제 위치를 찾아 ldconfig 에 등록한다.
+RUN python -c "import pathlib; r=pathlib.Path('/usr/local/lib/python3.12/site-packages/nvidia'); print('\n'.join(sorted({str(p.parent) for p in r.rglob('*.so*')})))" \
+      > /etc/ld.so.conf.d/nvidia.conf \
+    && ldconfig
+
+# 빌드 시점에 확인한다. 여기서 걸러야 시연 중에 전사가 죽는 걸 막는다.
+RUN ldconfig -p | grep -q 'libcublas\.so\.12' \
+    || { echo 'ERROR: libcublas.so.12 없음 — torch가 CUDA 12 빌드가 아닙니다'; exit 1; }
 
 ENV HF_HOME=/models/hf \
     DONGHAENGGORI_DB=/data/donghaenggori.db \
