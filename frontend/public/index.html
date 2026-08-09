@@ -34,18 +34,16 @@
 </div>
 
 <script>
-  // API 주소는 빌드 시점이 아니라 실행 시점에 정해진다.
-  // 로컬 개발이면 localhost:8000, 배포면 첫 라벨을 api 로 바꾼 주소.
-  //   donghaenggori.dohyeongops.com → api.dohyeongops.com
-  // (접두로 붙이면 api.donghaenggori.dohyeongops.com 이 되어 존재하지 않는다)
-  window.API_BASE = (function () {
-    var h = location.hostname;
-    if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8000';
-    var p = h.split('.');
-    if (p.length >= 3) p[0] = 'api';      // 서브도메인 교체
-    else p.unshift('api');                // 최상위 도메인이면 앞에 붙임
-    return location.protocol + '//' + p.join('.');
-  })();
+  // API 는 같은 오리진이다. nginx 가 /api/ 를 백엔드 컨테이너로 넘긴다.
+  // 그래서 주소를 만들 필요가 없다 — 상대 경로만 쓰면 된다.
+  //
+  // 예외는 프론트를 npm run dev(:5173 등)로 띄웠을 때뿐이다. 그때는 nginx 를
+  // 거치지 않으므로 백엔드를 직접 가리킨다. 개발 서버의 proxy 설정을 쓰면
+  // 이 분기도 없앨 수 있다(frontend/README.md 참조).
+  window.API_BASE = (location.port && location.port !== '80' && location.port !== '443'
+                     && location.hostname === 'localhost' && location.port !== '3000')
+      ? 'http://localhost:8000'
+      : '';
 
   const el = document.getElementById('result');
   const detail = document.getElementById('detail');
@@ -53,7 +51,7 @@
   fetch(window.API_BASE + '/api/status')
     .then(r => r.json())
     .then(d => {
-      el.innerHTML = '<span class="ok">연결됨</span> — ' + window.API_BASE
+      el.innerHTML = '<span class="ok">연결됨</span> — ' + (window.API_BASE || location.origin + " (같은 오리진)")
         + '<br>의도 모델: <b>' + d.intent_model + '</b>'
         + (d.stt ? ' · STT: <b>' + d.stt.model + ' / ' + d.stt.device + '</b>' : '');
       detail.hidden = false;

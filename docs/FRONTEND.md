@@ -3,24 +3,27 @@
 이 문서는 **살아 있는 API에서 뽑아 쓴 것**이다. 스키마가 의심스러우면 손으로 적힌 이 문서보다
 Swagger가 항상 맞다. 아래 주소에서 바로 눌러볼 수 있다.
 
-프론트와 백엔드는 **별도 컨테이너·별도 주소**로 뜬다.
+프론트와 백엔드는 **별도 컨테이너**지만 **주소는 하나**다. nginx가 `/api/`를 백엔드로
+넘긴다. 그래서 프론트에서는 **상대 경로만 쓰면 된다.**
 
-| | 배포 | 로컬 |
-|---|---|---|
-| 프론트 | `https://donghaenggori.dohyeongops.com` | `localhost:3000` |
-| **백엔드(API)** | `https://api.dohyeongops.com` | `localhost:8000` |
-| **Swagger (연동 기준)** | `https://api.dohyeongops.com/docs` | `localhost:8000/docs` |
-
-| | |
+| | 주소 |
 |---|---|
+| 배포 | `https://donghaenggori.dohyeongops.com` |
+| 로컬 | `http://localhost:3000` |
+| **Swagger (연동 기준)** | 위 주소 + `/docs` |
 | 동작 확인 | `GET /api/health` → `{"status": "ok"}` |
 | 현재 상태 | `GET /api/status` — 모델·키 적재 상태 |
 
-API 주소는 **하드코딩하지 말고** `window.API_BASE`를 쓴다(실행 시점에 결정됨).
-프론트 프로젝트 구성은 [`../frontend/README.md`](../frontend/README.md) 참조.
+```js
+fetch('/api/status')      // 이렇게. 도메인을 붙일 필요가 없다
+```
 
-**CORS는 열려 있다.** 기본값이 모든 오리진 허용이라 `localhost:3000`이든 어디든 바로 호출된다.
-운영에서 좁히려면 서버 `.env`의 `CORS_ORIGINS`에 도메인을 콤마로 나열하면 된다.
+같은 오리진이라 **CORS 문제가 없고**, Cloudflare Access를 이 주소 하나에 걸면
+**API까지 함께 보호된다**(로그인 쿠키가 API 요청에도 자동으로 실린다).
+
+> `npm run dev`로 개발 서버(:5173 등)를 띄우면 nginx를 거치지 않는다. 그때는 개발
+> 서버의 proxy 설정으로 `/api`를 `localhost:8000`에 연결하면 배포와 동일해진다.
+> 설정은 [`../frontend/README.md`](../frontend/README.md) 참조.
 
 ---
 
@@ -165,32 +168,39 @@ date  profile  urgent_message  facilities  card  intake_id
 ## 부록 — 배포 구조 (백엔드 담당자용)
 
 ```
-                  Cloudflare Tunnel
-                         │
-     ┌───────────────────┴───────────────────┐
-     │                                       │
-donghaenggori.dohyeongops.com        api.dohyeongops.com
-     │                                       │
-  frontend:80  (nginx)                   app:8000  (FastAPI)
+      Cloudflare Tunnel
+             │
+  donghaenggori.dohyeongops.com          ← Public Hostname 하나뿐
+             │
+      frontend:80  (nginx)
+        ├── /            정적 파일 (프론트 빌드 결과)
+        ├── /api/        → app:8000   프록시
+        └── /docs        → app:8000   프록시 (Swagger)
 ```
 
-터널 대시보드에 **Public Hostname 두 개**를 만든다.
+터널 Public Hostname은 **하나만** 만든다. 경로 분기는 대시보드의 Path 정규식이
+아니라 nginx가 한다 — 설정이 저장소에 남아 검증할 수 있고, 실수하면 로컬에서
+바로 드러난다.
 
 | Subdomain | Domain | Path | Service |
 |---|---|---|---|
 | `donghaenggori` | `dohyeongops.com` | 비움 | `HTTP` → `frontend:80` |
-| `api` | `dohyeongops.com` | 비움 | `HTTP` → `app:8000` |
 
-`localhost`가 아니라 **컨테이너 서비스 이름**(`frontend`, `app`)을 쓴다 —
-cloudflared가 자기 컨테이너 안에서 돌기 때문이다.
+`app:8000`을 가리키는 호스트명이 따로 있다면 **삭제한다.** API가 인증 밖으로
+새는 통로가 된다.
 
 띄우는 명령:
 
 ```bash
-docker compose -f docker-compose.yml \
-               -f docker-compose.frontend.yml \
-               -f docker-compose.gpu.yml \
-               -f docker-compose.tunnel.yml up -d --build
+docker compose up -d --build
 ```
 
-매번 치기 번거로우면 `.env`의 `COMPOSE_FILE`에 콜론으로 나열해두면 `docker compose up -d`만으로 끝난다.
+`.env`의 `COMPOSE_FILE`에 파일들을 콜론으로 나열해두면 `-f` 없이 위 한 줄로 끝난다.
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.tunnel.yml:docker-compose.frontend.yml
+```
+
+> **`--build`를 빼면 코드 변경이 반영되지 않는다.** 소스가 이미지 안으로 복사되기
+> 때문이다. `restart`로는 옛 코드가 그대로 돈다 — 실제로 이것 때문에 보안 수정이
+> 적용 안 된 걸 한참 뒤에 발견한 적이 있다.

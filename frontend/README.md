@@ -46,23 +46,26 @@ FRONTEND_BUILD_DIR=build
 
 ## API 주소
 
-**하드코딩하지 말 것.** 실행 시점에 결정된다.
+**같은 오리진이다.** nginx가 `/api/`를 백엔드 컨테이너로 넘기므로 도메인을 붙일 필요가 없다.
 
 ```js
-const API = window.API_BASE;      // public/index.html 에서 주입
-fetch(`${API}/api/status`)
+fetch('/api/status')      // 이렇게
 ```
 
-| 환경 | 주소 |
-|---|---|
-| 로컬 | `http://localhost:8000` |
-| 배포 | `https://api.dohyeongops.com` |
+빌드 산출물에 주소가 박히지 않으므로 로컬과 배포에서 같은 이미지를 쓸 수 있고,
+CORS도 신경 쓸 필요가 없다.
 
-프로젝트를 만들고 나면 이 주입 로직을 `index.html`이나 환경변수(`VITE_API_BASE` 등)로
-옮겨도 된다. 중요한 건 **빌드 산출물에 주소가 박히지 않는 것**이다 — 그러면 로컬과
-배포에서 같은 이미지를 못 쓴다.
+`npm run dev`로 개발 서버를 띄우면 nginx를 거치지 않으니 proxy 설정을 해준다.
 
-CORS는 백엔드에서 열어두었으니 별도 설정이 필요 없다.
+```js
+// vite.config.ts
+export default defineConfig({
+  server: { proxy: { '/api': 'http://localhost:8000',
+                     '/docs': 'http://localhost:8000' } },
+})
+```
+
+이러면 개발 서버에서도 `/api/...` 상대 경로가 그대로 동작해 배포와 같아진다.
 
 ## 배포
 
