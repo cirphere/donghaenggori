@@ -29,8 +29,17 @@
      <code>package.json</code>을 감지해 자동으로 빌드합니다.
      빌드 산출물 경로가 <code>dist</code>가 아니면
      <code>docker-compose.frontend.yml</code>의 <code>BUILD_DIR</code>을 바꾸세요.</p>
-  <p>API 주소는 <code>window.API_BASE</code>로 주입됩니다 —
-     코드에서 하드코딩하지 마세요.</p>
+  <p>API는 <strong>같은 오리진</strong>입니다. <code>fetch('/api/status')</code> 처럼
+     상대 경로만 쓰면 됩니다 — 도메인을 붙이거나 하드코딩하지 마세요.</p>
+</div>
+
+<div class="box">
+  <strong>지금 바로 써볼 수 있는 것</strong>
+  <p>
+    <a href="/dev">개발 확인용 UI</a> — 접수·STT·녹음·사후기록을 눌러볼 수 있습니다.
+    프론트가 완성되기 전까지 시연·점검용으로 씁니다.<br>
+    <a href="/docs">Swagger</a> — API 명세. <b>연동 기준은 항상 이쪽</b>입니다.
+  </p>
 </div>
 
 <script>
