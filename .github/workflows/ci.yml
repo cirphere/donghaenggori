@@ -24,6 +24,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" jinja2 python-multipart python-dotenv httpx
 
+      # 복지시설은 init_db 가 아니라 loader 가 넣는다. 이걸 빠뜨리면
+      # case 10(광주 복지관 조회)이 0건으로 실패한다 — 로컬에서는 예전에
+      # 적재해둔 DB가 남아 있어 드러나지 않는 차이다.
+      # 키가 없으면 공공 API 는 건너뛰고 저장소에 있는 CSV 만 읽으므로
+      # 네트워크 없이 결정적으로 돈다(C-DS03 20건 · C-DS18 13건).
+      - name: 복지시설 CSV 적재
+        run: python -m donghaenggori.services.loader
+
       # 학습 모델(425MB)은 저장소에 없다. 없는 상태에서도 통과해야 한다 —
       # 폴백이 실제로 동작하는지까지 함께 검증하는 셈이다.
       - name: 파일3 회귀 테스트
