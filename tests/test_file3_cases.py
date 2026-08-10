@@ -135,16 +135,42 @@ def case12() -> None:
           f"{filled}/6개 항목 / 상대날짜 분리={d.needs_schedule_check}")
 
 
+# ── 13. LLM 보강이 대리 전화 정보를 지우지 않는가 ──────────────
+# 회귀 방지: nlu._llm_refine 이 Analysis 를 새로 만들면서 requester·
+# proxy_relation 을 빠뜨려, 키를 넣는 순간 "어머니 병원 좀..." 이 본인 전화로
+# 처리되던 버그가 있었다. 규칙 경로만 검사하면 드러나지 않아 여기서 잡는다.
+def case13() -> None:
+    from donghaenggori.core import nlu
+
+    class Stub:                      # client.messages.parse(...) 흉내
+        def __init__(self): self.messages = self
+        def parse(self, **kw):
+            P = kw["output_format"]
+            return type("R", (), {
+                "parsed_output": P(intent="병원동행", dept="정형외과",
+                                   symptom="무릎", urgent=False),
+                "stop_reason": "end_turn"})()
+
+    text = "어머니 모레 정형외과 모시고 가야 하는데요"
+    rule = nlu.analyze(text, use_llm=False)
+    llm = nlu.analyze(text, client=Stub())
+    ok = (rule.requester == "대리" and llm.requester == rule.requester
+          and llm.proxy_relation == rule.proxy_relation and llm.source == "규칙+LLM")
+    check(13, "LLM 보강 시 대리 정보 보존", ok,
+          f"규칙={rule.requester}/{rule.proxy_relation} → "
+          f"LLM={llm.requester}/{llm.proxy_relation} ({llm.source})")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
-               case7, case8, case9, case10, case11, case12):
+               case7, case8, case9, case10, case11, case12, case13):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 회귀 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 1건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):

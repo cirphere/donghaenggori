@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from ..config import settings
 from . import dateparse
 
 _TERMS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "medical_terms.json")
@@ -99,8 +100,11 @@ def _llm_available() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
-def _llm_refine(text: str, base: Analysis) -> Analysis:
-    """Claude로 의도·진료과·증상·긴급신호를 보강. 날짜는 규칙 결과를 유지한다."""
+def _llm_refine(text: str, base: Analysis, client=None) -> Analysis:
+    """Claude로 의도·진료과·증상·긴급신호를 보강. 날짜는 규칙 결과를 유지한다.
+
+    client를 주입하면 키 없이도 이 경로를 실행·검증할 수 있다.
+    """
     try:
         import anthropic
         from pydantic import BaseModel
@@ -121,19 +125,29 @@ def _llm_refine(text: str, base: Analysis) -> Analysis:
         f"intent는 반드시 다음 중 하나: {INTENTS}."
     )
     try:
-        client = anthropic.Anthropic()
+        if client is None:
+            client = anthropic.Anthropic(timeout=settings.anthropic_timeout)
         resp = client.messages.parse(
-            model="claude-opus-4-8",
+            model=settings.anthropic_model,   # .env 의 ANTHROPIC_MODEL 을 따른다
             max_tokens=1024,
             system=system,
             messages=[{"role": "user", "content": f'발화: "{text}"'}],
             output_format=Parsed,
         )
-        p = resp.parsed_output
+        if getattr(resp, "stop_reason", None) == "refusal":
+            base.notes.append("LLM이 응답을 거부함 — 규칙 결과 사용")
+            return base
+        p = getattr(resp, "parsed_output", None)
         if p is None:
             base.notes.append("LLM 파싱 실패 — 규칙 결과 사용")
             return base
-        merged = Analysis(
+        # Analysis 를 새로 만들지 않고 base 를 복사해 덮어쓴다.
+        # 새로 만들면 LLM 이 다루지 않는 필드(requester·proxy_relation 등)가
+        # 조용히 기본값으로 되돌아간다 — 실제로 대리 전화 판별이 사라져
+        # "어머니 병원 좀…" 이 본인 전화로 처리되던 버그가 있었다.
+        # replace 를 쓰면 앞으로 필드가 늘어도 같은 사고가 나지 않는다.
+        merged = replace(
+            base,
             intent=p.intent if p.intent in INTENTS else base.intent,
             dept=p.dept or base.dept,
             symptom=p.symptom or base.symptom,
@@ -153,12 +167,12 @@ def _llm_refine(text: str, base: Analysis) -> Analysis:
 
 # ------------------------------------------------------------------- 공개 API --
 
-def analyze(text: str, use_llm: bool | None = None) -> Analysis:
+def analyze(text: str, use_llm: bool | None = None, client=None) -> Analysis:
     base = _rule_based(text)
     if base.urgent:                 # 긴급이면 LLM 호출 없이 즉시 반환(빠른 사람 연결)
         return base
     if use_llm is None:
-        use_llm = _llm_available()
+        use_llm = client is not None or _llm_available()
     if use_llm:
-        return _llm_refine(text, base)
+        return _llm_refine(text, base, client=client)
     return base
