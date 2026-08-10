@@ -37,6 +37,12 @@ jobs:
       - name: 파일3 회귀 테스트
         run: python -m tests.test_file3_cases
 
+      # compose 는 env_file 이 없으면 에러로 멈춘다(의도된 동작 — 키를 빠뜨린 채
+      # 뜨는 것보다 낫다). .env 는 gitignore 라 CI 에는 없으므로 예제를 복사한다.
+      # 덤으로 .env.example 이 실제로 쓸 수 있는 파일인지도 함께 검증된다.
+      - name: .env 준비
+        run: cp .env.example .env
+
       - name: compose 파일 문법 검사
         run: |
           docker compose -f docker-compose.yml config -q
