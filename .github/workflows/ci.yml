@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # torch·transformers·faster-whisper 는 깔지 않는다.
+      # 무거운 패키지는 전부 함수 안에서 지연 import 되고 없으면 폴백하므로,
+      # 회귀 테스트는 필수 의존성만으로 돈다(설치 몇 초 vs 수 분).
+      - name: 필수 의존성만 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi "uvicorn[standard]" jinja2 python-multipart python-dotenv httpx
+
+      # 학습 모델(425MB)은 저장소에 없다. 없는 상태에서도 통과해야 한다 —
+      # 폴백이 실제로 동작하는지까지 함께 검증하는 셈이다.
+      - name: 파일3 회귀 테스트
+        run: python -m tests.test_file3_cases
+
+      - name: compose 파일 문법 검사
+        run: |
+          docker compose -f docker-compose.yml config -q
+          CF_TUNNEL_TOKEN=dummy docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.gpu.yml \
+            -f docker-compose.tunnel.yml \
+            -f docker-compose.frontend.yml config -q
+
+      - name: Dockerfile 빌드 (CPU 이미지)
+        run: docker build -f Dockerfile -t donghaenggori:ci .
