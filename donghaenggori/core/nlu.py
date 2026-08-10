@@ -106,10 +106,9 @@ def _llm_refine(text: str, base: Analysis, client=None) -> Analysis:
     client를 주입하면 키 없이도 이 경로를 실행·검증할 수 있다.
     """
     try:
-        import anthropic
         from pydantic import BaseModel
     except ImportError:
-        base.notes.append("anthropic/pydantic 미설치 — 규칙 기반만 사용")
+        base.notes.append("pydantic 미설치 — 규칙 기반만 사용")
         return base
 
     class Parsed(BaseModel):
@@ -124,9 +123,18 @@ def _llm_refine(text: str, base: Analysis, client=None) -> Analysis:
         "긴급 신호(가슴통증·호흡곤란·쓰러짐·의식저하 등)는 조금이라도 의심되면 urgent=true로 둔다. "
         f"intent는 반드시 다음 중 하나: {INTENTS}."
     )
+    # anthropic 패키지는 클라이언트를 직접 만들 때만 필요하다.
+    # 주입받은 경우까지 import 를 요구하면, 패키지 없는 환경(CI 등)에서
+    # 테스트가 LLM 경로에 들어가지도 못하고 규칙 결과로 빠진다.
+    if client is None:
+        try:
+            import anthropic
+        except ImportError:
+            base.notes.append("anthropic 미설치 — 규칙 기반만 사용")
+            return base
+        client = anthropic.Anthropic(timeout=settings.anthropic_timeout)
+
     try:
-        if client is None:
-            client = anthropic.Anthropic(timeout=settings.anthropic_timeout)
         resp = client.messages.parse(
             model=settings.anthropic_model,   # .env 의 ANTHROPIC_MODEL 을 따른다
             max_tokens=1024,
