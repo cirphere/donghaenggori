@@ -28,7 +28,8 @@ class Analysis:
     intent: str = "병원동행"
     dept: str | None = None          # 진료과
     symptom: str | None = None       # 증상 키워드
-    date: dict | None = None         # {"date","label","confident"}
+    date: dict | None = None         # {"date","label","confident","corrected"}
+    time: dict | None = None         # {"time","label","confident","corrected"}
     urgent: bool = False             # 긴급 신호
     source: str = "규칙"             # "규칙" 또는 "규칙+LLM"
     raw: str = ""
@@ -89,8 +90,9 @@ def _rule_based(text: str) -> Analysis:
     # 대리 접수 판별 (긴급 다음으로 중요 — 대상자 확정에 영향)
     a.requester, a.proxy_relation = detect_proxy(text)
 
-    # 날짜(결정적)
+    # 날짜·시각(결정적)
     a.date = dateparse.parse_date(text)
+    a.time = dateparse.parse_time(text)
     return a
 
 
@@ -159,7 +161,8 @@ def _llm_refine(text: str, base: Analysis, client=None) -> Analysis:
             intent=p.intent if p.intent in INTENTS else base.intent,
             dept=p.dept or base.dept,
             symptom=p.symptom or base.symptom,
-            date=base.date,                 # 날짜는 규칙 파서 결과 유지
+            date=base.date,                 # 날짜·시각은 규칙 파서 결과 유지
+            time=base.time,
             urgent=bool(p.urgent) or base.urgent,
             source="규칙+LLM",
             raw=text,

@@ -15,6 +15,18 @@ def mask_phone(phone: str) -> str:
     return "***"
 
 
+# 필드 이름 → 카드 속성. to_dict 의 fields 블록을 만들 때 쓴다.
+FIELD_VALUE_ATTRS = {
+    "target": "target",
+    "hospital": "hospital",
+    "dept": "dept",
+    "date": "date_value",
+    "time": "time_value",
+}
+FIELD_LABELS = {"target": "대상자", "hospital": "병원", "dept": "진료과",
+                "date": "방문일", "time": "방문 시각"}
+
+
 @dataclass
 class Card:
     target: str                      # 대상자 표시(이름/신규)
@@ -42,6 +54,34 @@ class Card:
     outing_checklist: list[str] = field(default_factory=list)
     # 이력이 없을 때만 채운다 — 거리 기준 '참고 후보'. 확정 후보가 아니다(화면 04 4-A).
     reference_candidates: list[dict] = field(default_factory=list)
+    # 방문 시각 — 날짜만으로는 병원 예약을 잡을 수 없다
+    time_value: str | None = None            # "14:30"
+    time_label: str | None = None            # "오후 2시 반"
+    # 필드별 상태·근거. 지금까지 근거(reasons)가 카드 전체에 하나뿐이라
+    # 화면이 "이 근거가 어느 항목 것인지"를 알 수 없었다(파일4 와이어프레임은
+    # 항목마다 근거 표시를 요구한다). 아래 두 딕셔너리가 그 대응을 만든다.
+    field_status: dict[str, str] = field(default_factory=dict)        # 확인됨 | 추정 | 확인 필요
+    field_evidence: dict[str, list[str]] = field(default_factory=dict)
+
+    def fields_view(self) -> dict[str, dict]:
+        """항목별 {값·상태·근거}. 평면 키(hospital, date_value…)는 그대로 두고 덧붙인다.
+
+        확률(%)은 넣지 않는다 — 상태 3단계와 근거 문장으로만 말한다(화면 규칙 1).
+        """
+        out = {}
+        for name, attr in FIELD_VALUE_ATTRS.items():
+            value = getattr(self, attr)
+            out[name] = {
+                "label": FIELD_LABELS[name],
+                "value": value,
+                # 상태를 안 채운 항목은 값 유무로 판단한다
+                "status": self.field_status.get(name) or ("확인됨" if value else "확인 필요"),
+                "evidence": self.field_evidence.get(name, []),
+            }
+        # 날짜·시각은 어르신이 말한 표현을 함께 보여줘야 확인 전화가 쉬워진다
+        out["date"]["spoken"] = self.date_label
+        out["time"]["spoken"] = self.time_label
+        return out
 
     def to_dict(self) -> dict:
         """API 응답용 — 프론트가 그대로 렌더링할 수 있는 형태."""
@@ -56,6 +96,9 @@ class Card:
             "dept": self.dept,
             "date_label": self.date_label,
             "date_value": self.date_value,
+            "time_label": self.time_label,
+            "time_value": self.time_value,
+            "fields": self.fields_view(),
             "reasons": self.reasons,
             "confirm_questions": self.confirm_questions,
             "need_level": self.need_level,
@@ -80,6 +123,10 @@ class Card:
         L.append(f"│ AI 요약  : {self.summary}")
         L.append(f"│ 요청 유형: {self.intent}")
         date_str = f"{self.date_label} ({self.date_value})" if self.date_value else "미확정"
+        if self.time_value:
+            date_str += f" {self.time_label} ({self.time_value})"
+        elif self.time_label:
+            date_str += f" {self.time_label} [오전·오후 확인 필요]"
         L.append(f"│ 방문 예정: {date_str}")
         hosp = self.hospital or "—"
         L.append(f"│ 병원 후보: {hosp}  [{self.hospital_status}]   진료과: {self.dept or '—'}")

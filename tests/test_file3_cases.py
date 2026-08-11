@@ -161,16 +161,70 @@ def case13() -> None:
           f"LLM={llm.requester}/{llm.proxy_relation} ({llm.source})")
 
 
+# 회귀 방지: 날짜 표현을 하나 찾고 곧바로 반환하던 시절, "내일 아니고 모레"가
+# 정정 이전 날짜(내일)로 접수됐다. 어르신은 말하면서 고치므로 마지막이 최종이다.
+def case14() -> None:
+    from donghaenggori.core import dateparse
+
+    cases = [("내일 아니고 모레 가야 해", "2026-07-09", True),
+             ("모레 말고 내일로 해주쇼", "2026-07-08", True),
+             ("모레 가야겄어", "2026-07-09", False),
+             ("내일 내일 꼭 가야 해", "2026-07-08", False)]   # 같은 날짜 반복은 정정이 아니다
+    got = [dateparse.parse_date(t, BASE_DATE) for t, _, _ in cases]
+    ok = all(g and g["date"] == d and g["corrected"] == c
+             for g, (_, d, c) in zip(got, cases))
+    check(14, "날짜 자기수정 — 마지막 표현 채택", ok,
+          " / ".join(f"{t.split()[0]}…→{g['date']}(정정={g['corrected']})"
+                     for (t, _, _), g in zip(cases, got)))
+
+
+# 시각은 예약에 필요하지만, 오전·오후를 모르는 "3시"를 우리가 골라주면 안 된다.
+def case15() -> None:
+    from donghaenggori.core import dateparse
+
+    checks = [
+        ("오전 10시에 가야 해", "10:00", True),
+        ("오후 3시 반에 가야 해", "15:30", True),
+        ("3시에 가야 해", None, False),          # 오전·오후 불명 → 되묻는다
+        ("10시 말고 11시로 해주쇼", "11:00", True),
+    ]
+    got = [dateparse.parse_time(t) for t, _, _ in checks]
+    ok = all(g and g["time"] == v and g["confident"] == c
+             for g, (_, v, c) in zip(got, checks))
+
+    r = pipeline.run(PHONE_MAIN, "모레 오후 2시에 정형외과 가야 해")
+    ok = ok and r.card.time_value == "14:00"
+    amb = pipeline.run(PHONE_MAIN, "모레 3시에 정형외과 가야 해")
+    ok = ok and amb.card.time_value is None and any(
+        "오전인가요" in q for q in amb.card.confirm_questions)
+    check(15, "방문 시각 파싱 + 오전·오후 불명 시 되묻기", ok,
+          f"카드 시각={r.card.time_value} / 불명 시 질문={len(amb.card.confirm_questions)}개")
+
+
+# 항목마다 상태·근거가 붙어야 화면이 "이 근거가 어느 항목 것인지"를 안다(파일4).
+def case16() -> None:
+    r = pipeline.run(PHONE_MAIN, "모레 저번에 무릎 봐준 데 가야겄어")
+    fields = r.card.to_dict()["fields"]
+    allowed = {"확인됨", "추정", "확인 필요"}
+    ok = (set(fields) == {"target", "hospital", "dept", "date", "time"}
+          and all(f["status"] in allowed for f in fields.values())
+          and all(f["evidence"] for f in fields.values())
+          and fields["target"]["status"] == "확인됨")
+    check(16, "항목별 상태·근거 구조", ok,
+          " ".join(f"{k}[{v['status']}]" for k, v in fields.items()))
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
-               case7, case8, case9, case10, case11, case12, case13):
+               case7, case8, case9, case10, case11, case12, case13,
+               case14, case15, case16):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 1건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 4건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):

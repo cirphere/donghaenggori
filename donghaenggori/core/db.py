@@ -132,14 +132,16 @@ def init_db(force: bool = False) -> None:
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)  # DB를 볼륨으로 뺀 경우
         conn = get_conn()
-        conn.executescript(SCHEMA)
-        if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:
-            _seed_profiles(conn)
-        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-            conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
-        conn.commit()
-        conn.close()
-        _inited = True
+        try:
+            conn.executescript(SCHEMA)
+            if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:
+                _seed_profiles(conn)
+            if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+                conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
+            conn.commit()
+            _inited = True
+        finally:
+            conn.close()
 
 
 def _seed_profiles(conn: sqlite3.Connection) -> None:
@@ -185,23 +187,24 @@ def get_profile(phone: str) -> dict | None:
     """발신번호로 케어 프로필 조회(과거 이력 포함). 없으면 None(신규)."""
     init_db()
     conn = get_conn()
-    row = conn.execute("SELECT * FROM profiles WHERE phone=?", (normalize_phone(phone),)).fetchone()
-    if row is None:
+    try:
+        row = conn.execute("SELECT * FROM profiles WHERE phone=?", (normalize_phone(phone),)).fetchone()
+        if row is None:
+            return None
+        hist = conn.execute(
+            "SELECT date,hospital,dept,symptom,pharmacy FROM history WHERE phone=? ORDER BY date",
+            (row["phone"],)).fetchall()
+        return {
+            "phone": row["phone"], "id": row["id"], "name": row["name"], "age": row["age"],
+            "region": row["region"],
+            "guardian": json.loads(row["guardian_json"]) if row["guardian_json"] else None,
+            "caregiver": row["caregiver"], "mobility": row["mobility"],
+            "fall_risk": bool(row["fall_risk"]), "lives_alone": bool(row["lives_alone"]),
+            "preferred_time": row["preferred_time"], "notes": row["notes"],
+            "history": [dict(h) | {"pharmacy": bool(h["pharmacy"])} for h in hist],
+        }
+    finally:
         conn.close()
-        return None
-    hist = conn.execute(
-        "SELECT date,hospital,dept,symptom,pharmacy FROM history WHERE phone=? ORDER BY date",
-        (row["phone"],)).fetchall()
-    conn.close()
-    return {
-        "phone": row["phone"], "id": row["id"], "name": row["name"], "age": row["age"],
-        "region": row["region"],
-        "guardian": json.loads(row["guardian_json"]) if row["guardian_json"] else None,
-        "caregiver": row["caregiver"], "mobility": row["mobility"],
-        "fall_risk": bool(row["fall_risk"]), "lives_alone": bool(row["lives_alone"]),
-        "preferred_time": row["preferred_time"], "notes": row["notes"],
-        "history": [dict(h) | {"pharmacy": bool(h["pharmacy"])} for h in hist],
-    }
 
 
 def find_by_guardian_phone(phone: str) -> list[dict]:
@@ -209,17 +212,32 @@ def find_by_guardian_phone(phone: str) -> list[dict]:
 
     보호자가 자기 폰으로 전화하면 발신번호가 대상자와 일치하지 않는다.
     이때 보호자 연락처로 등록된 대상자를 후보로 제시하되, 확정은 사람이 한다.
+
+    JSON 문자열을 LIKE 로 훑지 않는다. 발신번호가 그대로 패턴에 들어가면
+    "%" 한 글자로 전체 프로필이 후보로 뜬다 — 실제로 phone="%" 를 넣으면
+    12명의 이름·거주지가 접수카드에 그대로 실렸다. LIKE '%...%' 는 어차피
+    인덱스를 못 타서 전수 스캔이므로, 파이썬에서 정확히 비교하는 편이
+    더 안전하면서 비용도 같다.
     """
     init_db()
+    target = normalize_phone(phone)
+    if not target:
+        return []
     conn = get_conn()
-    like = f'%"phone": "{normalize_phone(phone)}"%'
-    rows = conn.execute(
-        "SELECT phone, name, region, guardian_json FROM profiles WHERE guardian_json LIKE ?",
-        (like,)).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            "SELECT phone, name, region, guardian_json FROM profiles "
+            "WHERE guardian_json IS NOT NULL").fetchall()
+    finally:
+        conn.close()
     out = []
     for r in rows:
-        g = json.loads(r["guardian_json"]) if r["guardian_json"] else {}
+        try:
+            g = json.loads(r["guardian_json"]) or {}
+        except (TypeError, ValueError):
+            continue
+        if normalize_phone(str(g.get("phone") or "")) != target:
+            continue
         out.append({"phone": r["phone"], "name": r["name"], "region": r["region"],
                     "guardian_name": g.get("name"), "guardian_relation": g.get("relation")})
     return out
@@ -229,11 +247,13 @@ def add_history(phone, date, hospital, dept, symptom=None, pharmacy=False, sourc
     """동행 완료 → 이력 누적. 다음 접수의 병원 후보가 더 정확해진다(플라이휠)."""
     init_db()
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO history (phone,date,hospital,dept,symptom,pharmacy,source) VALUES (?,?,?,?,?,?,?)",
-        (normalize_phone(phone), date, hospital, dept, symptom, int(bool(pharmacy)), source))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO history (phone,date,hospital,dept,symptom,pharmacy,source) VALUES (?,?,?,?,?,?,?)",
+            (normalize_phone(phone), date, hospital, dept, symptom, int(bool(pharmacy)), source))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------ 접수 --
@@ -241,64 +261,74 @@ def add_history(phone, date, hospital, dept, symptom=None, pharmacy=False, sourc
 def save_intake(card, phone: str, channel: str = "전화", status: str = "접수 대기") -> int:
     init_db()
     conn = get_conn()
-    cur = conn.execute(
-        """INSERT INTO intakes
-           (created_at,channel,phone,target,raw_utterance,intent,hospital,hospital_status,
-            dept,date_value,date_label,need_level,status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (_now(), channel, normalize_phone(phone), card.target, card.raw_utterance, card.intent,
-         card.hospital, card.hospital_status, card.dept, card.date_value, card.date_label,
-         card.need_level, status))
-    conn.commit()
-    iid = cur.lastrowid
-    conn.close()
-    return iid
+    try:
+        cur = conn.execute(
+            """INSERT INTO intakes
+               (created_at,channel,phone,target,raw_utterance,intent,hospital,hospital_status,
+                dept,date_value,date_label,need_level,status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (_now(), channel, normalize_phone(phone), card.target, card.raw_utterance, card.intent,
+             card.hospital, card.hospital_status, card.dept, card.date_value, card.date_label,
+             card.need_level, status))
+        conn.commit()
+        iid = cur.lastrowid
+        return iid
+    finally:
+        conn.close()
 
 
 def confirm_intake(intake_id: int, hospital: str, date: str, level: str,
                    actor: str = "김○○ 사회복지사", role: str = "사회복지사") -> None:
     init_db()
     conn = get_conn()
-    conn.execute(
-        """UPDATE intakes SET confirmed=1, status='확정',
-           confirmed_hospital=?, confirmed_date=?, confirmed_level=? WHERE id=?""",
-        (hospital, date, level, intake_id))
-    conn.commit()
-    conn.close()
-    log_audit(actor, role, "확정", "intake", str(intake_id),
-              f"병원={hospital} / 방문일={date} / 지원수준={level}")
+    try:
+        conn.execute(
+            """UPDATE intakes SET confirmed=1, status='확정',
+               confirmed_hospital=?, confirmed_date=?, confirmed_level=? WHERE id=?""",
+            (hospital, date, level, intake_id))
+        conn.commit()
+        log_audit(actor, role, "확정", "intake", str(intake_id),
+                  f"병원={hospital} / 방문일={date} / 지원수준={level}")
+    finally:
+        conn.close()
 
 
 def get_intake(intake_id: int) -> dict | None:
     init_db()
     conn = get_conn()
-    row = conn.execute("SELECT * FROM intakes WHERE id=?", (intake_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute("SELECT * FROM intakes WHERE id=?", (intake_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def list_intakes(limit: int = 50) -> list[dict]:
     init_db()
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM intakes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM intakes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def intake_counts() -> dict:
     """홈 대시보드 카운트 — 오늘 접수 / 접수 대기 / 확정 / 긴급."""
     init_db()
     conn = get_conn()
-    today = datetime.date.today().isoformat()
-    q = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
-    out = {
-        "today": q("SELECT COUNT(*) FROM intakes WHERE substr(created_at,1,10)=?", today),
-        "waiting": q("SELECT COUNT(*) FROM intakes WHERE status='접수 대기'"),
-        "confirmed": q("SELECT COUNT(*) FROM intakes WHERE status='확정'"),
-        "urgent": q("SELECT COUNT(*) FROM intakes WHERE status='긴급'"),
-    }
-    conn.close()
-    return out
+    try:
+        today = datetime.date.today().isoformat()
+        q = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
+        out = {
+            "today": q("SELECT COUNT(*) FROM intakes WHERE substr(created_at,1,10)=?", today),
+            "waiting": q("SELECT COUNT(*) FROM intakes WHERE status='접수 대기'"),
+            "confirmed": q("SELECT COUNT(*) FROM intakes WHERE status='확정'"),
+            "urgent": q("SELECT COUNT(*) FROM intakes WHERE status='긴급'"),
+        }
+        return out
+    finally:
+        conn.close()
 
 
 # -------------------------------------------------------------- 사후기록 --
@@ -306,43 +336,78 @@ def intake_counts() -> dict:
 def save_post_record(intake_id: int, phone: str, memo_raw: str, draft: dict) -> int:
     init_db()
     conn = get_conn()
-    cur = conn.execute(
-        """INSERT INTO post_records
-           (intake_id,phone,created_at,memo_raw,treatment,next_visit,pharmacy,
-            cautions,guardian_msg,profile_update)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-        (intake_id, normalize_phone(phone), _now(), memo_raw,
-         draft.get("treatment"), draft.get("next_visit"), draft.get("pharmacy"),
-         draft.get("cautions"), draft.get("guardian_msg"), draft.get("profile_update")))
-    conn.commit()
-    rid = cur.lastrowid
-    conn.close()
-    return rid
+    try:
+        cur = conn.execute(
+            """INSERT INTO post_records
+               (intake_id,phone,created_at,memo_raw,treatment,next_visit,pharmacy,
+                cautions,guardian_msg,profile_update)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (intake_id, normalize_phone(phone), _now(), memo_raw,
+             draft.get("treatment"), draft.get("next_visit"), draft.get("pharmacy"),
+             draft.get("cautions"), draft.get("guardian_msg"), draft.get("profile_update")))
+        conn.commit()
+        rid = cur.lastrowid
+        return rid
+    finally:
+        conn.close()
 
 
 def approve_post_record(record_id: int, approved: bool,
-                        actor: str = "김○○ 사회복지사", role: str = "사회복지사") -> None:
-    """AI는 프로필을 자동 변경하지 않는다 — 승인한 항목만 반영되고 감사 로그에 남는다."""
+                        actor: str = "김○○ 사회복지사", role: str = "사회복지사") -> dict:
+    """AI는 프로필을 자동 변경하지 않는다 — 승인한 항목만 반영되고 감사 로그에 남는다.
+
+    승인 상태가 실제로 바뀔 때만 프로필에 반영한다. 예전에는 호출할 때마다
+    무조건 메모를 이어 붙여서, 버튼을 두 번 누르거나 타임아웃 뒤 재요청이
+    들어오면 같은 문장이 프로필에 반복해서 쌓였다("무릎 상태 악화 …;
+    무릎 상태 악화 …"). 되돌릴 방법도 없다.
+
+    이미 반영한 뒤에 거절로 바꾸는 경우, 프로필 메모는 자동으로 되돌리지
+    않는다 — 그 사이 사회복지사가 직접 고쳤을 수 있어서다. 대신 감사 로그에
+    수기 확인이 필요하다고 남긴다.
+    """
     init_db()
     conn = get_conn()
-    conn.execute("UPDATE post_records SET approved=? WHERE id=?", (1 if approved else 0, record_id))
-    row = conn.execute("SELECT phone, profile_update FROM post_records WHERE id=?", (record_id,)).fetchone()
-    if approved and row and row["profile_update"]:
-        prev = conn.execute("SELECT notes FROM profiles WHERE phone=?", (row["phone"],)).fetchone()
-        merged = "; ".join(x for x in [prev["notes"] if prev else None, row["profile_update"]] if x)
-        conn.execute("UPDATE profiles SET notes=? WHERE phone=?", (merged, row["phone"]))
-    conn.commit()
-    conn.close()
-    log_audit(actor, role, "승인" if approved else "거절", "post_record", str(record_id),
-              (row["profile_update"] if row else "") or "")
+    try:
+        row = conn.execute(
+            "SELECT phone, profile_update, approved FROM post_records WHERE id=?",
+            (record_id,)).fetchone()
+        if row is None:
+            return {"changed": False, "applied": False, "reason": "없는 기록"}
+
+        want = 1 if approved else 0
+        # 조건부 상태 전이 — 0→1 또는 1→0 일 때만 rowcount 가 1이다
+        cur = conn.execute("UPDATE post_records SET approved=? WHERE id=? AND approved=?",
+                           (want, record_id, 1 - want))
+        changed = cur.rowcount == 1
+
+        applied = False
+        if changed and approved and row["profile_update"]:
+            prev = conn.execute("SELECT notes FROM profiles WHERE phone=?", (row["phone"],)).fetchone()
+            merged = "; ".join(x for x in [prev["notes"] if prev else None, row["profile_update"]] if x)
+            conn.execute("UPDATE profiles SET notes=? WHERE phone=?", (merged, row["phone"]))
+            applied = True
+        conn.commit()
+    finally:
+        conn.close()
+
+    if not changed:
+        return {"changed": False, "applied": False, "reason": "이미 같은 상태"}
+
+    detail = row["profile_update"] or ""
+    if not approved and row["approved"] == 1 and row["profile_update"]:
+        detail += " (프로필 메모는 이미 반영됨 — 수기 확인 필요)"
+    log_audit(actor, role, "승인" if approved else "거절", "post_record", str(record_id), detail)
+    return {"changed": True, "applied": applied}
 
 
 def list_post_records(limit: int = 50) -> list[dict]:
     init_db()
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM post_records ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM post_records ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 # -------------------------------------------------------------- 감사 로그 --
@@ -351,19 +416,23 @@ def log_audit(actor: str, role: str, action: str, target_type: str,
               target_id: str, detail: str = "") -> None:
     init_db()
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO audit_log (at,actor,role,action,target_type,target_id,detail) VALUES (?,?,?,?,?,?,?)",
-        (_now(), actor, role, action, target_type, target_id, detail))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO audit_log (at,actor,role,action,target_type,target_id,detail) VALUES (?,?,?,?,?,?,?)",
+            (_now(), actor, role, action, target_type, target_id, detail))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def list_audit(limit: int = 100) -> list[dict]:
     init_db()
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 # -------------------------------------------------------------- 복지시설 --
@@ -371,39 +440,45 @@ def list_audit(limit: int = 100) -> list[dict]:
 def bulk_insert_facilities(rows: list[dict]) -> int:
     init_db()
     conn = get_conn()
-    conn.executemany(
-        """INSERT INTO facilities (source,name,kind,region,address,phone,lat,lon)
-           VALUES (:source,:name,:kind,:region,:address,:phone,:lat,:lon)""", rows)
-    conn.commit()
-    n = conn.total_changes
-    conn.close()
-    return n
+    try:
+        conn.executemany(
+            """INSERT INTO facilities (source,name,kind,region,address,phone,lat,lon)
+               VALUES (:source,:name,:kind,:region,:address,:phone,:lat,:lon)""", rows)
+        conn.commit()
+        n = conn.total_changes
+        return n
+    finally:
+        conn.close()
 
 
 def search_facilities(region: str | None = None, kind: str | None = None,
                       keyword: str | None = None, limit: int = 20) -> list[dict]:
     init_db()
     conn = get_conn()
-    sql = "SELECT * FROM facilities WHERE 1=1"
-    args: list = []
-    if region:
-        sql += " AND region LIKE ?"; args.append(f"%{region}%")
-    if kind:
-        sql += " AND kind LIKE ?"; args.append(f"%{kind}%")
-    if keyword:
-        sql += " AND (name LIKE ? OR address LIKE ?)"; args += [f"%{keyword}%"] * 2
-    sql += " LIMIT ?"; args.append(limit)
-    rows = conn.execute(sql, args).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        sql = "SELECT * FROM facilities WHERE 1=1"
+        args: list = []
+        if region:
+            sql += " AND region LIKE ?"; args.append(f"%{region}%")
+        if kind:
+            sql += " AND kind LIKE ?"; args.append(f"%{kind}%")
+        if keyword:
+            sql += " AND (name LIKE ? OR address LIKE ?)"; args += [f"%{keyword}%"] * 2
+        sql += " LIMIT ?"; args.append(limit)
+        rows = conn.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def facility_counts() -> dict[str, int]:
     init_db()
     conn = get_conn()
-    rows = conn.execute("SELECT source, COUNT(*) c FROM facilities GROUP BY source").fetchall()
-    conn.close()
-    return {r["source"]: r["c"] for r in rows}
+    try:
+        rows = conn.execute("SELECT source, COUNT(*) c FROM facilities GROUP BY source").fetchall()
+        return {r["source"]: r["c"] for r in rows}
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------ 기타 --
@@ -416,11 +491,13 @@ def reset_db() -> None:
     """데모 초기화 — 모든 테이블 비우고 시드 재적재(복지시설 제외)."""
     global _inited
     conn = get_conn()
-    conn.executescript(SCHEMA)
-    for t in ("audit_log", "post_records", "intakes", "history", "profiles", "users"):
-        conn.execute(f"DELETE FROM {t}")
-    _seed_profiles(conn)
-    conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
-    conn.commit()
-    conn.close()
-    _inited = True
+    try:
+        conn.executescript(SCHEMA)
+        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "users"):
+            conn.execute(f"DELETE FROM {t}")
+        _seed_profiles(conn)
+        conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
+        conn.commit()
+        _inited = True
+    finally:
+        conn.close()

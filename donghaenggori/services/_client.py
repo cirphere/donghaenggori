@@ -17,6 +17,10 @@ from ..config import settings
 TIMEOUT = settings.public_api_timeout        # 초 — 접수 응답성을 위해 짧게 잡는다
 CACHE_TTL = settings.public_api_cache_ttl    # 초
 _cache: dict[str, tuple[float, Any]] = {}
+# 캐시 키에 좌표·날짜·검색어가 들어간다. 대상자와 방문일이 늘어날수록 키가
+# 계속 새로 생기는데, TTL은 읽을 때만 확인하므로 만료된 항목도 그대로 남는다.
+# 오래 켜두는 서버에서 응답 JSON이 무한정 쌓이지 않게 상한을 둔다.
+CACHE_MAX = 256
 
 # 공공데이터포털 게이트웨이는 간헐적으로 요청을 구버전 엔드포인트로 302 리다이렉트한다
 # (실측: 같은 키·같은 URL이 어떤 구간엔 5/5 실패, 다른 구간엔 10/10 성공).
@@ -36,6 +40,19 @@ class ApiResult:
     @property
     def unavailable(self) -> bool:
         return not self.ok
+
+
+def _cache_put(ck: str, data: Any) -> None:
+    """TTL 캐시에 넣는다. 상한을 넘으면 만료분 → 오래된 순으로 버린다."""
+    now = time.time()
+    _cache[ck] = (now, data)
+    if len(_cache) <= CACHE_MAX:
+        return
+    for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL]:
+        _cache.pop(k, None)
+    # 전부 유효기간 안이면 넣은 순서대로 버린다 (dict는 삽입 순서를 지킨다)
+    while len(_cache) > CACHE_MAX:
+        _cache.pop(next(iter(_cache)))
 
 
 def _key() -> str | None:
@@ -83,7 +100,7 @@ def get_json(url: str, params: dict, *, cache_key: str | None = None,
                 except Exception:
                     # 공공데이터 API는 오류 시 XML을 반환하는 경우가 많다
                     return ApiResult(False, reason=f"JSON 아님 (응답 {resp.text[:80]})")
-                _cache[ck] = (time.time(), data)
+                _cache_put(ck, data)
                 return ApiResult(True, data)
 
             last_reason = f"HTTP {resp.status_code}"

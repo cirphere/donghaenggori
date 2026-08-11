@@ -13,11 +13,12 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from typing import Literal
 
 from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
 from ..core import db, pipeline
@@ -49,6 +50,46 @@ def _startup() -> None:
 
 
 # ------------------------------------------------------------ 스키마 --
+
+class Policy(BaseModel):
+    """이 서비스가 응답마다 지키는 약속.
+
+    값이 리터럴로 고정돼 있어서, 누가 나중에 "AI가 응급 여부를 판정한다" 쪽으로
+    코드를 바꾸면 응답 검증에서 터진다. 원칙을 주석이 아니라 계약으로 만든 것이다.
+    """
+    medical_judgement: Literal[False] = False       # AI는 의료 판단을 하지 않는다
+    human_review_required: Literal[True] = True     # 모든 결과는 사람 검토가 전제다
+    ai_scope: Literal["후보·근거 제시까지"] = "후보·근거 제시까지"
+
+
+class FieldView(BaseModel):
+    """접수카드 항목 하나. 확률(%)은 두지 않는다 — 상태 3단계와 근거 문장으로만 말한다."""
+    label: str
+    value: str | None = None
+    status: Literal["확인됨", "추정", "확인 필요"]
+    evidence: list[str] = []
+    spoken: str | None = None                       # 어르신이 실제로 말한 표현
+
+
+class CardOut(BaseModel):
+    # 카드의 나머지 키(need_level·flags·outing_checklist…)는 그대로 통과시킨다.
+    # 여기 안 적었다고 응답에서 빠지면 프론트가 조용히 깨진다.
+    model_config = ConfigDict(extra="allow")
+    target: str
+    hospital: str | None = None
+    hospital_status: Literal["확인됨", "추정", "확인 필요"]
+    fields: dict[str, FieldView]
+    confirm_questions: list[str] = []
+
+
+class IntakeOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    urgent: bool
+    urgent_confident: bool = True
+    urgent_message: str | None = None
+    card: CardOut | None = None                     # 긴급이면 카드를 만들지 않는다
+    policy: Policy = Policy()
+
 
 class IntakeIn(BaseModel):
     phone: str = Field(..., description="발신번호 — 보조 식별 단서일 뿐, 대상자 확정 아님")
@@ -120,7 +161,7 @@ def list_intakes(limit: int = Query(50, le=200)) -> list[dict]:
 
 # ------------------------------------ 화면 02 접수 → 화면 03 카드 --
 
-@app.post("/api/intakes", tags=["화면02 접수"])
+@app.post("/api/intakes", tags=["화면02 접수"], response_model=IntakeOut)
 def create_intake(body: IntakeIn) -> dict:
     """발화 → 접수카드. 긴급이면 카드를 만들지 않고 사람 연결로 전환한다."""
     if body.channel not in pipeline.CHANNELS:
@@ -219,8 +260,10 @@ def approve_post_record(record_id: int, body: ApproveIn) -> dict:
     """AI는 프로필을 자동 변경하지 않는다 — 승인한 항목만 반영된다."""
     if not db.can(body.role, "post.approve"):
         raise HTTPException(403, f"'{body.role}' 역할에는 승인 권한이 없습니다")
-    db.approve_post_record(record_id, body.approved, body.actor, body.role)
-    return {"ok": True, "approved": body.approved}
+    res = db.approve_post_record(record_id, body.approved, body.actor, body.role)
+    # changed=False 는 이미 같은 상태였다는 뜻이다(재요청·더블클릭). 오류가 아니므로
+    # 200 으로 돌려주되, 프로필에 반영됐는지를 화면이 구분할 수 있게 함께 내린다.
+    return {"ok": True, "approved": body.approved, **res}
 
 
 @app.get("/api/post-records", tags=["화면05 사후기록"])
