@@ -214,17 +214,54 @@ def case16() -> None:
           " ".join(f"{k}[{v['status']}]" for k, v in fields.items()))
 
 
+# 분류기 경계 — 파이프라인이 '무엇으로' 분류하는지 몰라야 한다. 그리고 분류기
+# 결과를 그대로 믿지 않아야 한다(LLM·원격 추론이 들어올 자리라서).
+def case17() -> None:
+    from donghaenggori.core import classify, nlu
+
+    # 다른 구현을 끼워 넣어도 접수는 그대로 된다
+    alt = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어",
+                       with_rag=False, classifier=classify.RuleOnlyClassifier())
+
+    class Broken:                     # 계약을 어기는 분류기
+        def classify(self, utterance):
+            a = nlu.analyze(utterance, use_llm=False)
+            a.intent = "택시호출"      # INTENTS 에 없다
+            return classify.Classification(analysis=a, source="가짜모델", confidence=7.3)
+
+    bad = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어",
+                       with_rag=False, classifier=Broken())
+
+    violations = 0
+    for mutate in (lambda a: setattr(a, "intent", "택시호출"),
+                   lambda a: (setattr(a, "urgent", True), setattr(a, "intent", "약국"))):
+        a = nlu.analyze("모레 병원 가야 해", use_llm=False)
+        mutate(a)
+        try:
+            classify.validate(classify.Classification(analysis=a, source="테스트"))
+        except classify.ClassifierContractError:
+            violations += 1
+
+    ok = (alt.card is not None and alt.intent_source == "규칙"
+          and bad.card is not None                      # 접수는 계속된다
+          and bad.analysis.intent in nlu.INTENTS        # 잘못된 의도는 안 새어나온다
+          and any("계약 위반" in n for n in bad.analysis.notes)
+          and violations == 2)
+    check(17, "분류기 교체 가능 + 계약 위반 시 규칙 폴백", ok,
+          f"교체={alt.intent_source} / 위반 시={bad.analysis.intent}(노트 {len(bad.analysis.notes)}개) / 검증 {violations}/2")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16):
+               case14, case15, case16, case17):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 4건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 5건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):
