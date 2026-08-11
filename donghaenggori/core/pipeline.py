@@ -264,6 +264,7 @@ def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:
         time_value=a.time.get("time") if a.time else None,
         reasons=hres.reasons, confirm_questions=questions,
         need_level=nres.level, need_reasons=nres.reasons,
+        need_basis=nres.basis, need_official=nres.official,
         guardian_contact=nres.guardian_contact,
         manager_notes=mnotes, flags=flags,
         requester=a.requester, proxy_relation=a.proxy_relation,

@@ -62,6 +62,9 @@ class Card:
     # 항목마다 근거 표시를 요구한다). 아래 두 딕셔너리가 그 대응을 만든다.
     field_status: dict[str, str] = field(default_factory=dict)        # 확인됨 | 추정 | 확인 필요
     field_evidence: dict[str, list[str]] = field(default_factory=dict)
+    # 동행 지원 수준을 무엇에 근거해 냈는가 — 공식 판정인지 우리 추정인지
+    need_basis: str = "정보 없음"
+    need_official: bool = False
 
     def fields_view(self) -> dict[str, dict]:
         """항목별 {값·상태·근거}. 평면 키(hospital, date_value…)는 그대로 두고 덧붙인다.
@@ -103,6 +106,8 @@ class Card:
             "confirm_questions": self.confirm_questions,
             "need_level": self.need_level,
             "need_reasons": self.need_reasons,
+            "need_basis": self.need_basis,
+            "need_official": self.need_official,
             "guardian_contact": self.guardian_contact,
             "manager_notes": self.manager_notes,
             "flags": self.flags,
@@ -136,7 +141,8 @@ class Card:
             L.append("│ 확인 질문(콜백):")
             for q in self.confirm_questions:
                 L.append(f"│    · {q}")
-        L.append(f"│ 동행 지원 수준(후보): {self.need_level}")
+        mark = "공식 판정 기준" if self.need_official else "임시 추정"
+        L.append(f"│ 동행 지원 수준(후보): {self.need_level}  [{self.need_basis} · {mark}]")
         if self.need_reasons:
             L.append(f"│    근거: {', '.join(self.need_reasons)}")
         L.append(f"│ 보호자 연락 필요: {'예' if self.guardian_contact else '아니오'}")

@@ -1,5 +1,5 @@
 {
-  "_comment": "발신번호 → 케어 프로필. 시연용 가상 데이터(실제 개인정보 아님). history는 과거 동행 이력. 병원 후보 3단계 재현을 위해 패턴을 배분함.",
+  "_comment": "발신번호 → 케어 프로필. 시연용 가상 데이터(실제 개인정보 아님). history는 과거 동행 이력. 병원 후보 3단계 재현을 위해 패턴을 배분함. 장기요양등급(ltci_grade)·노인맞춤돌봄 군(care_program)은 공식 판정 결과를 옮겨 적는 자리다. 비어 있으면 관찰 특성으로 임시 후보를 내고 확정 전 확인을 요구한다. 시연 데이터는 전부 가상이다.",
   "010-1234-5678": {
     "id": "P001",
     "name": "박순자",
@@ -39,7 +39,8 @@
         "symptom": "혈압약 처방",
         "pharmacy": true
       }
-    ]
+    ],
+    "ltci_grade": "2"
   },
   "010-2222-3333": {
     "id": "P002",
@@ -73,7 +74,8 @@
         "symptom": "허리 물리치료",
         "pharmacy": false
       }
-    ]
+    ],
+    "care_program": "일반돌봄군"
   },
   "010-7777-8888": {
     "id": "P003",
@@ -87,7 +89,8 @@
     "lives_alone": true,
     "preferred_time": "오전",
     "notes": "보호자 없음 — 동행 매니저 필수",
-    "history": []
+    "history": [],
+    "ltci_grade": "1"
   },
   "010-3562-3157": {
     "id": "P004",
@@ -101,7 +104,8 @@
     "lives_alone": true,
     "preferred_time": "오전",
     "notes": "큰 소리로 천천히 안내 필요",
-    "history": []
+    "history": [],
+    "care_program": "중점돌봄군"
   },
   "010-8736-7732": {
     "id": "P005",
@@ -230,7 +234,8 @@
         "symptom": "어지럼 경과",
         "pharmacy": true
       }
-    ]
+    ],
+    "ltci_grade": "1"
   },
   "010-5352-2398": {
     "id": "P008",
@@ -271,7 +276,8 @@
         "symptom": "무릎 통증",
         "pharmacy": true
       }
-    ]
+    ],
+    "care_program": "중점돌봄군"
   },
   "010-8321-5932": {
     "id": "P009",
@@ -370,7 +376,8 @@
         "symptom": "잇몸 치료",
         "pharmacy": false
       }
-    ]
+    ],
+    "ltci_grade": "1"
   },
   "010-7426-1577": {
     "id": "P012",
@@ -420,7 +427,8 @@
         "symptom": "백내장 경과",
         "pharmacy": false
       }
-    ]
+    ],
+    "care_program": "중점돌봄군"
   },
   "010-3478-7237": {
     "id": "P013",
@@ -463,7 +471,8 @@
         "symptom": "무릎 통증",
         "pharmacy": false
       }
-    ]
+    ],
+    "ltci_grade": "1"
   },
   "010-5457-5765": {
     "id": "P014",
@@ -559,7 +568,8 @@
         "symptom": "가려움",
         "pharmacy": false
       }
-    ]
+    ],
+    "ltci_grade": "1"
   },
   "010-6015-6195": {
     "id": "P016",
@@ -600,7 +610,8 @@
         "symptom": "잇몸 치료",
         "pharmacy": false
       }
-    ]
+    ],
+    "ltci_grade": "1"
   },
   "010-5018-8226": {
     "id": "P017",
@@ -641,7 +652,8 @@
         "symptom": "어지럼 경과",
         "pharmacy": false
       }
-    ]
+    ],
+    "care_program": "중점돌봄군"
   },
   "010-2757-9322": {
     "id": "P018",
@@ -775,6 +787,7 @@
         "symptom": "백내장 경과",
         "pharmacy": false
       }
-    ]
+    ],
+    "ltci_grade": "1"
   }
 }

@@ -251,17 +251,38 @@ def case17() -> None:
           f"교체={alt.intent_source} / 위반 시={bad.analysis.intent}(노트 {len(bad.analysis.notes)}개) / 검증 {violations}/2")
 
 
+# 동행 필요도의 근거가 우리가 지어낸 점수가 아니라 공식 판정에서 나와야 한다.
+# "왜 휠체어가 3점입니까"에 답할 수 없는 상태를 회귀로 막는다.
+def case18() -> None:
+    base = db.get_profile(PHONE_MAIN) or {}
+
+    official = needlevel.assess(base | {"ltci_grade": "2", "care_program": None})
+    program = needlevel.assess(base | {"ltci_grade": None, "care_program": "중점돌봄군"})
+    observed = needlevel.assess(base | {"ltci_grade": None, "care_program": None})
+
+    ok = (official.official and official.basis == needlevel.BASIS_LTCI
+          and official.level == "휠체어·부축 동행"
+          and program.official and program.basis == needlevel.BASIS_CARE_PROGRAM
+          and not observed.official
+          # 공식 등급이 있어도 현장 주의사항(낙상·독거)은 가려지지 않는다
+          and any("낙상" in r for r in official.reasons)
+          # 추정 경로는 확정 전 확인을 반드시 요구한다
+          and any("확정 전 공식 등급 확인" in r for r in observed.reasons))
+    check(18, "동행 필요도 — 공식 판정 우선, 추정이면 표시", ok,
+          f"등급={official.basis}/{official.level} · 돌봄군={program.basis} · 미등록={observed.basis}")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17):
+               case14, case15, case16, case17, case18):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 5건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 6건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):
