@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import card as card_mod
+from . import classify as classify_mod
 from . import db
 from . import hospital as hospital_mod
 from . import needlevel as need_mod
@@ -22,22 +23,9 @@ from . import nlu as nlu_mod
 
 CHANNELS = ("전화", "앱·웹(보호자)", "직접(기관)")
 
-# 긴급 임계값(0.06)은 재현율 우선으로 잡혀 있어 낮다. 그 아래로는 못 내리지만,
-# 낮은 점수까지 "긴급"이라고 단정하면 문제가 생긴다 — 학습 분포 밖의 발화
-# (인사·잡담·STT 오인식)가 0.06~0.13 구간에 흩어져 전부 긴급으로 뜬다.
-#   실측: "고맙습니다 수고하세요" 0.112 · "여보세요?" 0.068 · 실제 긴급 0.994
-#   홀드아웃 실제 긴급의 95%가 0.97 이상이다.
-# 그래서 임계값은 유지하고(재현율 0.993 그대로), 이 값 미만은 '판단 보류'로
-# 구분한다. 사람에게 넘기는 안전 동작은 같고, 단정만 하지 않는다.
-URGENT_CONFIDENT = 0.5
-
-# 약국·보호자연락은 학습 모델에 실데이터가 없다. C-DS01 에 대응 카테고리가
-# 없어서 train_intent 가 규칙 사전으로 만든 합성 템플릿만 넣고 학습했다.
-# 그래서 템플릿 밖 표현이 오면 모델이 무너진다 — 사전이 잡는 8문장으로 재보니
-# 규칙 8/8, 모델 2/8 이었고, 틀릴 때도 확신은 높았다(0.993 · 0.939 · 0.906).
-# 확신도 임계값으로 거를 수 없다는 뜻이다. 이 두 의도만큼은 사전이 직접 잡은
-# 결과를 유지한다. 병원동행·기타는 실데이터로 학습했으므로 모델을 따른다.
-RULE_OWNED_INTENTS = ("약국", "보호자연락")
+# 분류 관련 상수는 분류기 쪽으로 옮겼다. 예전 이름으로 참조하던 곳이 있어 남겨둔다.
+URGENT_CONFIDENT = classify_mod.URGENT_CONFIDENT
+RULE_OWNED_INTENTS = classify_mod.RULE_OWNED_INTENTS
 
 
 @dataclass
@@ -71,47 +59,30 @@ class Result:
         }
 
 
-def _classify(utterance: str, use_llm: bool | None):
-    """학습 모델 우선 → 규칙 NLU 폴백. 슬롯(진료과·증상·날짜)은 규칙이 담당한다.
+def _classify(utterance: str, use_llm: bool | None,
+              classifier: classify_mod.Classifier | None = None) -> classify_mod.Classification:
+    """⑤ 의도 분류. 어떤 분류기를 쓰는지는 이 함수 바깥의 관심사다.
 
-    반환의 마지막 값은 '긴급을 단정할 수 있는가'다. 규칙 사전이 직접 잡았거나
-    모델 점수가 충분히 높을 때만 True — 자세한 이유는 URGENT_CONFIDENT 참조.
+    결과는 쓰기 전에 검증한다 — 자세한 이유는 classify 모듈 설명 참조.
+    계약을 어기면 규칙 사전으로 내려앉고, 그 사실을 노트에 남긴다.
+    접수 자체를 못 하게 되는 것보다는 낫지만, 조용히 넘어가지도 않는다.
     """
-    a = nlu_mod.analyze(utterance, use_llm=use_llm)
-    source, conf = a.source, None
-    rule_urgent = a.urgent          # 사전이 직접 잡은 것은 근거가 명확하다
-    rule_intent = a.intent
-
+    clf = classifier or classify_mod.default_classifier(use_llm)
     try:
-        from ..services import intent_model
-        pred = intent_model.predict(utterance)
-    except Exception:
-        pred = None
-
-    urgent_score = None
-    if pred is not None:
-        # 긴급은 어느 쪽이든 하나라도 걸리면 긴급 (재현율 우선)
-        a.urgent = a.urgent or pred.urgent
-        source, conf = "학습모델", pred.confidence
-        urgent_score = pred.urgent_score
-        if a.urgent:
-            a.intent = "긴급"
-        elif rule_intent in RULE_OWNED_INTENTS and pred.intent != rule_intent:
-            # 사전이 잡은 의도를 모델이 뒤집으려 한다 — RULE_OWNED_INTENTS 참조.
-            # 무엇을 근거로 정했는지 화면에 그대로 드러낸다.
-            a.intent = rule_intent
-            source, conf = "규칙 사전(모델과 불일치)", None
-        else:
-            a.intent = pred.intent
-
-    confident = rule_urgent or (urgent_score is not None and urgent_score >= URGENT_CONFIDENT)
-    return a, source, conf, confident
+        return classify_mod.validate(clf.classify(utterance))
+    except classify_mod.ClassifierContractError as e:
+        fallback = classify_mod.validate(
+            classify_mod.RuleOnlyClassifier(use_llm=False).classify(utterance))
+        fallback.analysis.notes.append(f"분류기 계약 위반으로 규칙 사전 사용: {e}")
+        return fallback
 
 
 def run(phone: str, utterance: str, channel: str = "전화",
-        use_llm: bool | None = None, with_rag: bool = True) -> Result:
+        use_llm: bool | None = None, with_rag: bool = True,
+        classifier: classify_mod.Classifier | None = None) -> Result:
     prof = db.get_profile(phone)                                   # ③④
-    a, source, conf, confident = _classify(utterance, use_llm)     # ⑤
+    c = _classify(utterance, use_llm, classifier)                  # ⑤
+    a, source, conf, confident = c.analysis, c.source, c.confidence, c.urgent_confident
 
     if a.urgent:                                                   # 긴급 → 접수 중단
         msg = ("긴급 신호 감지 — 접수카드 생성을 중단하고 즉시 담당자·사람 상담으로 연결합니다. "
