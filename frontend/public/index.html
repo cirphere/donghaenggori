@@ -1,75 +1,81 @@
 <!doctype html>
 <html lang="ko">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>동행고리 AI — 프론트 자리</title>
-<style>
-  body { font: 15px/1.7 -apple-system, 'Apple SD Gothic Neo', sans-serif;
-         max-width: 780px; margin: 40px auto; padding: 0 20px; color: #222; }
-  h1 { font-size: 20px; margin-bottom: 4px; }
-  .sub { color: #666; font-size: 14px; margin-bottom: 28px; }
-  .box { border: 1px solid #e3e3e3; border-radius: 8px; padding: 16px; margin: 14px 0; }
-  .ok { color: #0a7a34; } .bad { color: #b3261e; }
-  pre { background: #f6f6f6; padding: 12px; border-radius: 6px; overflow: auto; font-size: 13px; }
-  code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; }
-</style>
+<title>동행고리 AI</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 
-<h1>동행고리 AI — 프론트엔드</h1>
-<div class="sub">이 페이지는 자리표시자입니다. 실제 화면은 프론트 담당자가 구현합니다.</div>
+<header class="topbar">
+  <div>
+    <strong>동행고리 AI</strong>
+    <span class="sub">병원동행 접수 Copilot — AI는 후보·근거까지, 확정은 사람</span>
+  </div>
+  <div class="status" id="sysStatus">상태 확인 중…</div>
+</header>
 
-<div class="box">
-  <strong>백엔드 연결 확인</strong>
-  <div id="result">확인 중…</div>
-  <pre id="detail" hidden></pre>
+<!--
+  임시 화면이다. 배선을 확인하고 계약을 눈으로 보려고 만든 것이라
+  디자인은 최소한만 넣었다. 제대로 만들 때 api.js 는 그대로 쓰고
+  이 파일과 style.css 만 갈아끼우면 된다.
+-->
+<div class="note">
+  임시 화면입니다. 응답 계약(<code>card.fields</code>, <code>policy</code>)을 그대로 그려
+  백엔드 연결을 확인하는 용도입니다. 실제 UI는 이후 별도로 구현합니다.
 </div>
 
-<div class="box">
-  <strong>여기에 코드를 넣으세요</strong>
-  <p>이 <code>frontend/</code> 디렉터리에 React·Vue 등 프로젝트를 만들면
-     <code>package.json</code>을 감지해 자동으로 빌드합니다.
-     빌드 산출물 경로가 <code>dist</code>가 아니면
-     <code>docker-compose.frontend.yml</code>의 <code>BUILD_DIR</code>을 바꾸세요.</p>
-  <p>API는 <strong>같은 오리진</strong>입니다. <code>fetch('/api/status')</code> 처럼
-     상대 경로만 쓰면 됩니다 — 도메인을 붙이거나 하드코딩하지 마세요.</p>
-</div>
+<main>
+  <!-- ── 화면 02 접수 입력 ───────────────────────────── -->
+  <section class="panel">
+    <h2>접수</h2>
 
-<div class="box">
-  <strong>지금 바로 써볼 수 있는 것</strong>
-  <p>
-    <a href="/dev">개발 확인용 UI</a> — 접수·STT·녹음·사후기록을 눌러볼 수 있습니다.
-    프론트가 완성되기 전까지 시연·점검용으로 씁니다.<br>
-    <a href="/docs">Swagger</a> — API 명세. <b>연동 기준은 항상 이쪽</b>입니다.
-  </p>
-</div>
+    <label>발신번호
+      <input id="phone" value="010-1234-5678" placeholder="010-0000-0000">
+    </label>
 
-<script>
-  // API 는 같은 오리진이다. nginx 가 /api/ 를 백엔드 컨테이너로 넘긴다.
-  // 그래서 주소를 만들 필요가 없다 — 상대 경로만 쓰면 된다.
-  //
-  // 예외는 프론트를 npm run dev(:5173 등)로 띄웠을 때뿐이다. 그때는 nginx 를
-  // 거치지 않으므로 백엔드를 직접 가리킨다. 개발 서버의 proxy 설정을 쓰면
-  // 이 분기도 없앨 수 있다(frontend/README.md 참조).
-  window.API_BASE = (location.port && location.port !== '80' && location.port !== '443'
-                     && location.hostname === 'localhost' && location.port !== '3000')
-      ? 'http://localhost:8000'
-      : '';
+    <label>발화
+      <textarea id="utterance" rows="3"
+        placeholder="예) 모레 정형외과 가야겄어. 저번에 무릎 봐준 데">모레 정형외과 가야겄어. 저번에 무릎 봐준 데</textarea>
+    </label>
 
-  const el = document.getElementById('result');
-  const detail = document.getElementById('detail');
+    <label>채널
+      <select id="channel">
+        <option>전화</option>
+        <option>앱·웹(보호자)</option>
+        <option>직접(기관)</option>
+      </select>
+    </label>
 
-  fetch(window.API_BASE + '/api/status')
-    .then(r => r.json())
-    .then(d => {
-      el.innerHTML = '<span class="ok">연결됨</span> — ' + (window.API_BASE || location.origin + " (같은 오리진)")
-        + '<br>의도 모델: <b>' + d.intent_model + '</b>'
-        + (d.stt ? ' · STT: <b>' + d.stt.model + ' / ' + d.stt.device + '</b>' : '');
-      detail.hidden = false;
-      detail.textContent = JSON.stringify(d, null, 2);
-    })
-    .catch(e => {
-      el.innerHTML = '<span class="bad">연결 실패</span> — ' + window.API_BASE
-        + '<br><small>' + e + '</small>'
-        + '<br><small>백엔드가 떠 있는지, CORS가 열려 있는지 확인하세요.</small>';
-    });
-</script>
+    <div class="row">
+      <button id="btnIntake" class="primary">접수카드 만들기</button>
+      <button id="btnRec">● 녹음</button>
+      <input type="file" id="audioFile" accept="audio/*" hidden>
+      <button id="btnPick">음성 파일</button>
+    </div>
+    <div class="hint" id="recHint"></div>
+
+    <details class="samples">
+      <summary>시연 발화 모음</summary>
+      <button class="sample" data-phone="010-1234-5678" data-text="모레 정형외과 가야겄어. 저번에 무릎 봐준 데">단골 → 확인됨</button>
+      <button class="sample" data-phone="010-1234-5678" data-text="내일 아니고 모레 오후 2시 반에 가야 해">날짜 자기수정 + 시각</button>
+      <button class="sample" data-phone="010-1234-5678" data-text="모레 3시에 정형외과 가야 해">오전·오후 불명 → 되묻기</button>
+      <button class="sample" data-phone="010-7777-8888" data-text="내일 그 큰 병원 좀 가야 쓰겄는디">이력 없음 → 확인 필요</button>
+      <button class="sample" data-phone="010-9876-5432" data-text="느그 어매 병원 좀 델꼬 가야 쓰겄는디">보호자 대리 전화</button>
+      <button class="sample" data-phone="010-0000-0000" data-text="병원 좀 가야 해">미등록 번호</button>
+      <button class="sample" data-phone="010-1234-5678" data-text="가슴이 답답하고 숨이 차">긴급 → 접수 중단</button>
+      <button class="sample" data-phone="010-1234-5678" data-text="고맙습니다 수고하세요">확신 낮은 긴급 → 확인 요청</button>
+    </details>
+  </section>
+
+  <!-- ── 화면 03 접수카드 ────────────────────────────── -->
+  <section class="panel" id="resultPanel">
+    <h2>접수카드</h2>
+    <div id="result" class="empty">왼쪽에서 발화를 넣고 <b>접수카드 만들기</b>를 누르세요.</div>
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
 </html>
