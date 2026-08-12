@@ -1,4 +1,58 @@
-# 사회복지사 콘솔 접근 제한 (Cloudflare Access)
+# 화면 접근 제한
+
+두 가지 길이 있다. **지금 쓰는 것은 A(nginx 기본 인증)** 다.
+
+| | A. nginx 기본 인증 | B. Cloudflare Access |
+|---|---|---|
+| 팀원 준비물 | 공유 아이디·비번 | 이메일(계정 불필요, One-time PIN) |
+| 로그인 | 브라우저 창에 즉시 | **메일로 코드를 받아** 입력 |
+| 설정 위치 | 저장소(`nginx.conf`) + `.env` | Cloudflare 대시보드 |
+| 누가 들어왔는지 | 구분 안 됨 | 이메일로 구분됨 |
+
+시연장에서 **이메일을 기다리는 것이 실제 위험**이라 A를 택했다. 심사 도중
+"코드가 안 와요"가 되면 손쓸 방법이 없다. 둘을 겹쳐 쓸 수도 있다.
+
+---
+
+## A. nginx 기본 인증 (현재)
+
+`.env` 에 두 값을 넣고 `down → up` 하면 끝이다.
+
+```
+STAFF_USER=donghaeng
+STAFF_PASSWORD=<팀이 공유할 비밀번호>
+```
+
+비밀번호는 저장소에 들어가지 않는다. 컨테이너가 기동할 때 bcrypt 해시를 만들어
+컨테이너 안에만 둔다(`frontend/docker-entrypoint.sh`).
+
+**인증에서 빠지는 곳은 둘뿐이고, 각자 다른 방식으로 지킨다.**
+
+| 경로 | 왜 예외인가 | 무엇이 지키나 |
+|---|---|---|
+| `/api/voice/` | 통신사는 로그인 화면을 통과하지 못한다 | 웹훅 서명(HMAC-SHA256) |
+| `/api/health` | 모니터링이 로그인할 수 없다 | 상태만 돌려주고 데이터가 없다 |
+
+확인:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/staff/            # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u '아이디:비번' https://<도메인>/staff/   # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/dashboard      # 401
+curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/health         # 200
+```
+
+**값을 안 넣으면 인증이 꺼진다.** 조용히 열리지 않도록 기동 로그에 경고를 크게
+남기니, 배포 후 `docker compose logs frontend | grep frontend` 로 확인할 것.
+
+```
+[frontend] 기본 인증 켜짐 — 사용자: donghaeng        ← 이게 나와야 한다
+[frontend] 경고: STAFF_USER/STAFF_PASSWORD 가 없어 …  ← 이러면 열려 있다
+```
+
+---
+
+## B. Cloudflare Access (선택)
 
 ## 왜 필요한가
 
@@ -85,8 +139,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/dashboard
 
 - 화면 분리: **완료** (`/` 보호자, `/staff` 사회복지사)
 - nginx 경로 분리: **완료**
-- Access 정책: **사람이 대시보드에서 설정해야 함**
-- 백엔드 인증: **미구현** — 본선 후 과제
+- **nginx 기본 인증: 완료** — `.env` 에 `STAFF_USER`/`STAFF_PASSWORD` 만 넣으면 켜진다
+- Access 정책: 선택 사항. 쓰려면 대시보드에서 사람이 설정
+- 백엔드 인증: **미구현** — 본선 후 과제. 지금은 nginx 가 앞에서 막는다
 
 `/api/reset` 만은 예외적으로 이미 막혀 있다. Cloudflare 헤더가 붙은 요청(=외부에서
 터널을 거쳐 온 요청)을 403으로 거절한다. 다른 엔드포인트에는 그런 보호가 없다.
