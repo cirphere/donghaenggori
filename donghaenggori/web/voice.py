@@ -36,7 +36,11 @@ import logging
 
 from ..core import db, pipeline
 
-_log = logging.getLogger("donghaenggori.voice")
+# uvicorn 로거를 빌려 쓴다. 자체 이름으로 만들면 루트로 propagate 되는데
+# uvicorn 은 루트에 핸들러를 달지 않아 INFO 가 조용히 사라진다(WARNING 만
+# 파이썬 최후 핸들러로 겨우 나온다). 전화 연동은 로그가 유일한 단서라
+# 확실히 보이는 쪽을 택한다.
+_log = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/api/voice", tags=["전화(ClawOps)"])
 
