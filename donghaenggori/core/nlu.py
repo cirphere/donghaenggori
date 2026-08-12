@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field, replace
 
 from ..config import settings
@@ -28,6 +29,7 @@ class Analysis:
     intent: str = "병원동행"
     dept: str | None = None          # 진료과
     symptom: str | None = None       # 증상 키워드
+    hospital: str | None = None      # 발화에 직접 나온 병원명 (이력보다 우선)
     date: dict | None = None         # {"date","label","confident","corrected"}
     time: dict | None = None         # {"time","label","confident","corrected"}
     urgent: bool = False             # 긴급 신호
@@ -54,6 +56,45 @@ def detect_proxy(text: str) -> tuple[str, str | None]:
     if any(v in text for v in (pk.get("proxy_verbs") or [])):
         return "대리", None
     return "본인", None
+
+
+# 병원 이름의 꼬리. 긴 것부터 본다 — "대학교병원" 을 "병원" 으로 자르면 안 된다.
+_HOSPITAL_SUFFIX = ("대학교병원", "대학병원", "종합병원", "한방병원", "치과병원",
+                    "요양병원", "노인병원", "의료원", "보건지소", "보건소",
+                    "한의원", "병원", "의원", "클리닉")
+
+# 꼬리 앞에 붙어도 이름이 아닌 말들. "저번에 갔던 병원" 의 '갔던' 을 이름으로
+# 삼으면 안 된다. 어르신은 병원 이름을 잘 안 대고 이런 표현을 자주 쓴다.
+_NOT_A_NAME = {"그", "저", "저번", "지난번", "예전", "전", "전에", "갔던", "간", "봐준",
+               "보던", "다니던", "다닌", "큰", "작은", "동네", "근처", "가까운",
+               "같은", "어느", "무슨", "새", "다른", "이", "저기", "거기"}
+
+# 이름 + 꼬리. 이름은 **한 덩어리**만 잡고, 꼬리 앞 띄어쓰기만 허용한다 —
+# "전남대학교 병원", "고흥 보건소" 처럼 띄어 쓰는 표기가 흔하기 때문이다.
+# 이름에 두 덩어리를 허용하면 "내일 송정병원" 의 '내일' 까지 먹는다.
+_HOSPITAL_RE = re.compile(
+    r"([가-힣A-Za-z0-9]+)\s*(" + "|".join(_HOSPITAL_SUFFIX) + r")")
+
+
+def detect_hospital(text: str) -> str | None:
+    """발화에 직접 나온 병원 이름. 없으면 None.
+
+    어르신이 이름을 댔으면 그것이 과거 이력보다 우선이다. 실통화에서
+    "허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아" 를 받고도 이력의
+    다른 병원을 '확인됨' 으로 내놓은 적이 있다 — 직접 말한 것을 무시하면
+    엉뚱한 곳으로 배차된다.
+    """
+    for m in _HOSPITAL_RE.finditer(text):
+        name, suffix = m.group(1), m.group(2)
+        if name in _NOT_A_NAME:
+            continue
+        # "내과 병원 가야 해" 는 특정 병원을 댄 것이 아니라 진료과를 말한 것이다.
+        # 이걸 이름으로 잡으면 '확인됨' 으로 잘못 굳는다. 대신 "정형외과의원"
+        # 같은 실제 상호는 놓치는데, 그건 이력 경로가 받아준다 — 놓치는 쪽이 낫다.
+        if name in TERMS["dept_keywords"]:
+            continue
+        return name + suffix
+    return None
 
 
 # ---------------------------------------------------------------- 규칙 기반 ----
@@ -89,6 +130,9 @@ def _rule_based(text: str) -> Analysis:
 
     # 대리 접수 판별 (긴급 다음으로 중요 — 대상자 확정에 영향)
     a.requester, a.proxy_relation = detect_proxy(text)
+
+    # 발화에 직접 나온 병원명 — 이력보다 우선한다
+    a.hospital = detect_hospital(text)
 
     # 날짜·시각(결정적)
     a.date = dateparse.parse_date(text)
@@ -161,6 +205,7 @@ def _llm_refine(text: str, base: Analysis, client=None) -> Analysis:
             intent=p.intent if p.intent in INTENTS else base.intent,
             dept=p.dept or base.dept,
             symptom=p.symptom or base.symptom,
+            hospital=base.hospital,         # 병원명도 규칙 결과 유지
             date=base.date,                 # 날짜·시각은 규칙 파서 결과 유지
             time=base.time,
             urgent=bool(p.urgent) or base.urgent,

@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass, field
 
+from .korean import particle
+
 _WINDOW_DAYS = 180  # 최근 6개월
 
 
@@ -36,9 +38,28 @@ def _recent_history(history: list[dict], today: datetime.date) -> list[dict]:
     return out
 
 
-def suggest(profile: dict | None, dept: str | None, today: datetime.date | None = None) -> HospitalResult:
+def suggest(profile: dict | None, dept: str | None, today: datetime.date | None = None,
+            spoken: str | None = None) -> HospitalResult:
+    """병원 후보를 정한다. 발화에 이름이 나왔으면 그것이 최우선이다.
+
+    독스트링에는 처음부터 "확인됨 : 발화에 직접 명시 또는 …" 이라고 적어 뒀는데
+    직접 명시 쪽이 구현돼 있지 않았다. 실통화에서 "내일 송정병원으로 가야 될 것
+    같아" 를 받고도 이력의 다른 병원을 '확인됨' 으로 내놓았다 — 어르신이 댄
+    이름을 무시하고 엉뚱한 곳으로 배차될 뻔했다.
+    """
     if today is None:
         today = datetime.date.today()
+
+    if spoken:
+        reasons = [f"원문에서 '{spoken}'{particle(spoken, '을')} 직접 언급"]
+        # 이력과 다르면 그 사실도 남긴다. 바꾸지는 않는다 — 어르신이 말한 것이
+        # 우선이고, 다른 곳으로 옮겼을 수도 있다. 판단은 사회복지사가 한다.
+        recent = _recent_history(profile.get("history") or [], today) if profile else []
+        others = {h.get("hospital") for h in recent if h.get("hospital")} - {spoken}
+        if others:
+            reasons.append("과거 이력과 다름 — 최근 방문: " + ", ".join(sorted(others)))
+        return HospitalResult(status="확인됨", hospital=spoken, dept=dept,
+                              reasons=reasons, need_confirm=bool(others))
 
     # 신규(cold start): 이력 없음 → 확인 필요. 증상·위치 기반 추천은 본선 확장.
     if not profile or not profile.get("history"):

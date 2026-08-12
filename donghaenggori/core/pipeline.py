@@ -104,7 +104,7 @@ def run(phone: str, utterance: str, channel: str = "전화",
             urgent_message=msg, urgent_confident=confident,
             intent_source=source, intent_confidence=conf)
 
-    hres = hospital_mod.suggest(prof, a.dept)                      # ⑥
+    hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital)   # ⑥
     nres = need_mod.assess(prof)
 
     facilities: list[dict] = []
