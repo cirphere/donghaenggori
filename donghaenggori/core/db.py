@@ -363,14 +363,48 @@ def recent_intakes(phone: str, minutes: int = 10, exclude_id: int | None = None)
         conn.close()
 
 
+# 목록 정렬 — 긴급이 맨 위, 처리가 끝난 확정은 맨 아래, 그 안에서는 최신순.
+#
+# 최신순만 쓰면 긴급 접수가 이후 접수들에 밀려 화면 중간에 묻힌다. 실제로
+# 시연 데이터에서 긴급 한 건이 다섯 건 아래로 내려가 있었다. 이건 보기 좋고
+# 나쁘고의 문제가 아니라 놓치면 안 되는 것을 놓치는 문제다.
+_ORDER = ("CASE status WHEN '긴급' THEN 0 "
+          "WHEN '확정' THEN 2 WHEN '긴급 처리됨' THEN 2 ELSE 1 END, id DESC")
+
+
 def list_intakes(limit: int = 50) -> list[dict]:
     init_db()
     conn = get_conn()
     try:
-        rows = conn.execute("SELECT * FROM intakes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM intakes ORDER BY {_ORDER} LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def resolve_urgent(intake_id: int, actor: str, role: str, note: str = "") -> bool:
+    """긴급 건을 '처리됨'으로 내린다. 확정과는 다른 개념이다.
+
+    확정은 동행 일정을 확정한 것이고, 이건 "사람이 연락해서 처리를 끝냈다"는
+    표시다. 긴급은 접수카드를 만들지 않으므로 확정할 대상 자체가 없다.
+
+    처리 표시를 못 하면 긴급이 목록 맨 위에 영원히 쌓여, 정작 새 긴급이
+    묻힌다. 경보를 계속 켜두면 아무도 안 본다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE intakes SET status='긴급 처리됨' WHERE id=? AND status='긴급'",
+            (intake_id,))
+        conn.commit()
+        changed = cur.rowcount == 1
+    finally:
+        conn.close()
+    if changed:
+        log_audit(actor, role, "긴급처리", "intake", str(intake_id), note)
+    return changed
 
 
 def intake_counts() -> dict:

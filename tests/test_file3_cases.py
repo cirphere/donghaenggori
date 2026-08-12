@@ -281,17 +281,45 @@ def case18() -> None:
           f"등급={official.basis}/{official.level} · 돌봄군={program.basis} · 미등록={observed.basis}")
 
 
+# 긴급이 목록 맨 위에 오고, 처리하면 내려가야 한다. 최신순만 쓰면 긴급이
+# 이후 접수에 밀려 묻히고, 처리 표시가 없으면 반대로 영원히 맨 위를 덮는다.
+def case19() -> None:
+    r = pipeline.run(PHONE_MAIN, "가슴이 답답하고 숨이 차")
+    class _Stub:
+        target, raw_utterance, intent = "박순자", "가슴이 답답하고 숨이 차", "긴급"
+        hospital = hospital_status = dept = None
+        date_value = date_label = need_level = None
+    uid = db.save_intake(_Stub(), PHONE_MAIN, "전화", status="긴급")
+    # 긴급 뒤에 평범한 접수를 넣어도 긴급이 위에 있어야 한다
+    pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어")
+    db.save_intake(pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어").card, PHONE_MAIN, "전화")
+
+    top = db.list_intakes(limit=1)[0]
+    on_top = top["status"] == "긴급"
+
+    changed = db.resolve_urgent(uid, "김○○ 사회복지사", "사회복지사", "통화 완료")
+    again = db.resolve_urgent(uid, "김○○ 사회복지사", "사회복지사", "재요청")
+    row = db.get_intake(uid)
+    ids_above = [x["id"] for x in db.list_intakes(limit=50)]
+    moved_down = (ids_above.index(uid) > 0 if uid in ids_above else True)
+
+    ok = (on_top and changed and not again
+          and row["status"] == "긴급 처리됨" and moved_down)
+    check(19, "긴급 우선 정렬 + 처리 완료 표시", ok,
+          f"맨위={top['status']} / 처리={changed} 재요청={again} → {row['status']}")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17, case18):
+               case14, case15, case16, case17, case18, case19):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 6건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 7건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):
