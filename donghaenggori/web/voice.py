@@ -28,6 +28,7 @@ import hashlib
 import hmac
 import os
 import tempfile
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -68,6 +69,14 @@ MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "15"))
 FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
+
+# 2턴(본인 확인)을 쓸지. 끄면 1턴만 하고 바로 접수 안내로 끝낸다.
+#
+# 2턴은 <Record> action 응답으로 통화를 이어가는데, 그 사이 내려받기와 STT 가
+# 끝나야 한다. 보내는 쪽이 얼마나 기다려 주는지 문서에 없고, 실통화에서 확인
+# 질문이 들리지 않은 적이 있다. 회선이 못 버티면 이 값을 0 으로 두면 된다 —
+# 1턴만으로도 접수카드는 나온다. 대상자 확인은 사회복지사 확인전화에서 한다.
+TWO_TURN = os.environ.get("CLAWOPS_TWO_TURN", "1").strip() not in ("0", "false", "no")
 
 # 시연 전용 — 발표자가 자기 폰으로 걸었을 때 등록된 대상자로 조회되게 한다.
 # 이게 없으면 본선에서 시연 통화가 전부 '신규 대상자(미등록 번호)'로 뜬다.
@@ -342,11 +351,18 @@ def _lookup_phone(raw: str) -> str:
 
 @router.post("/recording", name="voice_recording")
 async def recording(request: Request) -> Response:
-    """요청 내용 녹음이 끝났다. 어르신은 아직 통화 중이다."""
+    """요청 내용 녹음이 끝났다. 어르신은 아직 통화 중이다.
+
+    **여기서 오래 끌면 통화가 끊긴다.** 내려받기 + STT 를 마쳐야 다음 안내를
+    돌려줄 수 있는데, 보내는 쪽이 응답을 얼마나 기다려 주는지 문서에 없다.
+    실통화에서 확인 질문이 들리지 않은 적이 있어 단계별 시간을 남긴다.
+    """
+    t0 = time.monotonic()
     form = await _verify(request)
     phone = _lookup_phone(form.get("From") or "")
 
     text = _read_recording(form)
+    _log.info("녹음 처리 %.1f초 소요", time.monotonic() - t0)
     if text is None:
         return _hangup("말씀이 녹음되지 않았습니다. 다시 걸어주시거나 담당자에게 연락 주세요.")
     if not text:
@@ -357,7 +373,7 @@ async def recording(request: Request) -> Response:
         return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 
     intake_id = _save(res, phone, text)
-    question = _identity_question(res)
+    question = _identity_question(res) if TWO_TURN else None
     if not question or intake_id is None:
         return _hangup(f"{_receipt(res)} {BYE}")
 
@@ -467,8 +483,10 @@ def _transcribe_url(url: str) -> str:
     import httpx
 
     from ..services import stt
+    t0 = time.monotonic()
     with httpx.Client(timeout=20.0) as cli:
         resp = cli.get(url)
+    dl = time.monotonic() - t0
     if resp.status_code != 200:
         raise RuntimeError(f"녹음 내려받기 HTTP {resp.status_code}")
     audio = resp.content
@@ -478,7 +496,11 @@ def _transcribe_url(url: str) -> str:
     try:
         tmp.write(audio)
         tmp.close()
-        return stt.transcribe(tmp.name).text
+        t1 = time.monotonic()
+        text = stt.transcribe(tmp.name).text
+        _log.info("내려받기 %.1f초 · 전사 %.1f초 (%d바이트)",
+                  dl, time.monotonic() - t1, len(audio))
+        return text
     finally:
         os.unlink(tmp.name)
 
