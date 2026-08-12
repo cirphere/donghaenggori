@@ -75,6 +75,13 @@ async function loadQueue() {
       const st = el("td");
       st.append(el("span", "badge " + (r.status === "긴급" ? "need"
         : r.status === "확정" ? "ok" : "guess"), r.status));
+      // 긴급 전환 결과. 담당자가 못 받은 건은 반드시 눈에 띄어야 한다.
+      if (r.transfer_status) {
+        const okConn = r.transfer_status === "연결됨";
+        st.append(document.createTextNode(" "));
+        st.append(el("span", "badge " + (okConn ? "ok" : "need"),
+                     "전환 " + r.transfer_status));
+      }
       // 전화 2턴에서 받은 본인 확인 답변. AI가 확정한 것이 아니라 들은 말이다.
       if (r.identity_answer || r.identity_status) {
         const b = el("span", "badge " + (r.identity_status === "추정" ? "guess" : "need"),
@@ -211,6 +218,19 @@ function noCardNotice(d) {
 // 함께 보여준다.
 function renderStored(d) {
   const frag = document.createDocumentFragment();
+
+  if (d.transfer_status) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "긴급 전환 결과"));
+    const line = el("div", "need");
+    line.append(el("span", "badge " + (d.transfer_status === "연결됨" ? "ok" : "need"),
+                   d.transfer_status));
+    if (d.transfer_status !== "연결됨") {
+      line.append(el("span", null, "담당자와 연결되지 않았습니다 — 다시 연락 필요"));
+    }
+    b.append(line);
+    frag.append(b);
+  }
 
   if (d.identity_answer || d.identity_status) {
     const b = el("div", "block");

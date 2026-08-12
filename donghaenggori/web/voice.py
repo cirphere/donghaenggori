@@ -103,15 +103,51 @@ def _hangup(text: str) -> Response:
     return _xml(_say(text) + "<Hangup/>")
 
 
-def _transfer(reason: str) -> Response:
+# ClawOps 가 주는 Dial 결과 → 우리 표기
+_DIAL_STATUS = {
+    "completed": "연결됨", "busy": "통화중", "no-answer": "응답없음",
+    "failed": "실패", "canceled": "취소됨",
+}
+
+
+def _transfer(request: Request, reason: str, intake_id: int | None = None) -> Response:
     """긴급 — 통화 중에 담당자로 넘긴다. 응급 여부를 우리가 판정하는 것이 아니라,
-    사람에게 넘길 이유가 생겼다는 뜻이다."""
+    사람에게 넘길 이유가 생겼다는 뜻이다.
+
+    **결과를 반드시 받는다.** 담당자가 못 받은 것을 아무도 모르는 상태가 제일
+    위험하다 — 어르신은 안내를 듣고 끊는데 시스템에는 기록이 없어 아무도 다시
+    걸지 않는다. <Dial action> 으로 연결 여부를 돌려받아 접수에 남긴다.
+    """
     if not STAFF_NUMBER:
         return _hangup(f"{reason} 담당자가 바로 연락드리겠습니다. 급하시면 119에 전화해 주세요.")
+    action = _callback(request, "voice_dial_result")
+    if intake_id:
+        action += f"?intake={intake_id}"
     return _xml(
         _say(f"{reason} 담당자에게 바로 연결해 드리겠습니다. 잠시만 기다려 주세요.")
-        + f'<Dial timeout="30"><Number>{_esc(STAFF_NUMBER)}</Number></Dial>'
-        + _say("연결이 어렵습니다. 급하시면 119에 전화해 주세요."))
+        + f'<Dial timeout="30" action="{_esc(action)}">'
+        f'<Number>{_esc(STAFF_NUMBER)}</Number></Dial>')
+
+
+@router.post("/dial-result", name="voice_dial_result")
+async def dial_result(request: Request) -> Response:
+    """긴급 전환이 끝났다. 연결됐는지 기록하고, 실패면 119 안내로 마무리한다."""
+    form = await _verify(request)
+    raw = (form.get("DialCallStatus") or "").strip().lower()
+    status = _DIAL_STATUS.get(raw, raw or "알 수 없음")
+    try:
+        intake_id = int(request.query_params.get("intake") or 0)
+    except ValueError:
+        intake_id = 0
+    if intake_id:
+        try:
+            db.set_transfer_status(intake_id, status)
+        except Exception:
+            pass
+    if raw == "completed":
+        return _xml("<Hangup/>")
+    return _hangup("담당자와 연결하지 못했습니다. "
+                   "급하시면 119에 전화해 주시고, 담당자가 다시 연락드리겠습니다.")
 
 
 # ─────────────────────────────────────────────────── 서명 검증 --
@@ -165,8 +201,7 @@ async def recording(request: Request) -> Response:
 
     res = pipeline.run(phone, text, channel="전화")
     if res.urgent:
-        _save(res, phone, text)
-        return _transfer("긴급한 상황으로 보입니다.")
+        return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 
     intake_id = _save(res, phone, text)
     question = _identity_question(res)
@@ -202,7 +237,7 @@ async def confirm(request: Request) -> Response:
     if c.analysis.urgent:
         if intake_id:
             db.attach_identity_answer(intake_id, text, "확인 필요")
-        return _transfer("긴급한 상황으로 보입니다.")
+        return _transfer(request, "긴급한 상황으로 보입니다.", intake_id or None)
 
     status = _match_status(phone, text)
     if intake_id:

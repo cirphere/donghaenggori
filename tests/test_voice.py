@@ -193,6 +193,29 @@ def main() -> int:
     body = post(client, conf, rec_params(PHONE_SELF)).text
     check("⑨ 확인 답변에서 긴급 → <Dial>", "<Dial" in body and STAFF in body, "")
 
+    # ── 긴급 전환 결과 ───────────────────────────────────────
+    # 담당자가 못 받은 것을 아무도 모르는 상태가 제일 위험하다.
+    voice._transcribe_url = lambda url: "가슴이 답답하고 숨이 차"
+    body = post(client, "/api/voice/recording", rec_params(PHONE_SELF)).text
+    has_action = "<Dial" in body and "action=" in body and "/api/voice/dial-result" in body
+    check("긴급 <Dial> 에 결과 콜백", has_action, "")
+
+    uid = db.list_intakes(1)[0]["id"]
+    dial = f"/api/voice/dial-result?intake={uid}"
+    body = post(client, dial, call_params(PHONE_SELF, DialCallStatus="no-answer")).text
+    row = db.get_intake(uid)
+    check("응답없음 → 기록 + 119 안내",
+          row["transfer_status"] == "응답없음" and "119" in body and "<Hangup/>" in body,
+          f"{row['transfer_status']}")
+
+    body = post(client, dial, call_params(PHONE_SELF, DialCallStatus="completed")).text
+    row = db.get_intake(uid)
+    check("연결됨 → 기록 + 조용히 종료",
+          row["transfer_status"] == "연결됨" and "119" not in body, f"{row['transfer_status']}")
+
+    audit = [a for a in db.list_audit(10) if a["action"] == "긴급전환"]
+    check("전환 결과가 감사 로그에", len(audit) >= 2, f"{len(audit)}건")
+
     # ── 중복 접수 표시 ───────────────────────────────────────
     # 방금 PHONE_SELF 로 여러 건 넣었으므로 다음 접수에는 중복 표시가 붙어야 한다
     voice._transcribe_url = lambda url: "모레 정형외과 가야겄어"
