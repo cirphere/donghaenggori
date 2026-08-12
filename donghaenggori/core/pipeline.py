@@ -18,6 +18,7 @@ from . import card as card_mod
 from . import classify as classify_mod
 from . import dateparse
 from . import db
+from .korean import josa, particle
 from . import hospital as hospital_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
@@ -303,7 +304,7 @@ def _ambiguity_question(slot: dict, kind: str) -> str:
     if why == dateparse.AMBIGUOUS_MULTIPLE:
         return f"말씀하신 {label} 중에 어느 쪽으로 잡을까요?"
     if why == dateparse.AMBIGUOUS_NEGATED:
-        return f"{label} — 아니라고 하셨는데, 그러면 언제로 잡을까요?"
+        return f"{josa(label, '은')} 아니라고 하셨는데, 그러면 언제로 잡을까요?"
     if kind == "시각":
         return f"말씀하신 {label}, 오전인가요 오후인가요?"
     return "방문 날짜를 한 번 더 확인 부탁드립니다."
@@ -332,8 +333,8 @@ def _field_evidence(a, hres, target_evidence: list[str], dept) -> dict[str, list
 
     def when(slot: dict | None, kind: str) -> list[str]:
         if not slot:
-            return [f"원문에서 방문 {kind}을 확인할 수 없음"]
-        ev = [f"어르신이 '{slot['label']}'이라고 직접 말함"]
+            return [f"원문에서 방문 {josa(kind, '을')} 확인할 수 없음"]
+        ev = [f"어르신이 '{slot['label']}'{particle(slot['label'], '이라고')} 직접 말함"]
         if slot.get("corrected"):
             ev.append("앞선 표현을 정정했으므로 마지막에 말한 것을 최종 의도로 봄")
         if not slot.get("confident"):
