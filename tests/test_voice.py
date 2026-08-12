@@ -80,6 +80,29 @@ def main() -> int:
                     headers={"X-Signature": "bogus"})
     check("서명 틀리면 401", r.status_code == 401, f"HTTP {r.status_code}")
 
+    # URL 만·파라미터만 서명한 것은 **거부해야 한다**. 그것들은 URL 과 본문을
+    # 함께 묶지 않아서, 유효한 서명 하나를 확보하면 본문을 바꿔 재사용할 수 있다.
+    p0 = call_params(PHONE_SELF)
+    url0 = BASE + "/api/voice/incoming"
+    only_url = base64.b64encode(
+        hmac.new(KEY.encode(), url0.encode(), hashlib.sha256).digest()).decode()
+    r = client.post("/api/voice/incoming", data=p0,
+                    headers={"X-Signature": only_url, "X-Forwarded-Proto": "https"})
+    check("URL 만 서명한 것 거부", r.status_code == 401, f"HTTP {r.status_code}")
+
+    joined = "".join(f"{k}{v}" for k, v in sorted(p0.items()))
+    only_params = base64.b64encode(
+        hmac.new(KEY.encode(), joined.encode(), hashlib.sha256).digest()).decode()
+    r = client.post("/api/voice/incoming", data=p0,
+                    headers={"X-Signature": only_params, "X-Forwarded-Proto": "https"})
+    check("파라미터만 서명한 것 거부", r.status_code == 401, f"HTTP {r.status_code}")
+
+    # 본문을 바꾸면 같은 서명이 통하지 않아야 한다(재사용 방지)
+    tampered = dict(p0, From="010-9999-9999")
+    r = client.post("/api/voice/incoming", data=tampered,
+                    headers={"X-Signature": sign(url0, p0), "X-Forwarded-Proto": "https"})
+    check("본문 변조 시 거부", r.status_code == 401, f"HTTP {r.status_code}")
+
     # 보내는 쪽이 query 를 빼고 서명했거나 sha256= 접두사를 붙여도 통과해야 한다
     p2 = call_params(PHONE_SELF)
     sig_noquery = sign(BASE + "/api/voice/confirm", p2)
