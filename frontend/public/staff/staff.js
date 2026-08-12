@@ -81,7 +81,13 @@ async function loadQueue() {
       }
       tr.append(st);
       const act = el("td");
-      if (r.status !== "확정" && r.status !== "긴급") {
+      if (r.status === "긴급") {
+        // 긴급은 접수카드가 없어 확정할 대상이 없다. 사람이 연락을 끝냈다는
+        // 표시만 한다 — 안 그러면 목록 맨 위에 쌓여 새 긴급이 묻힌다.
+        const b = el("button", null, "처리 완료");
+        b.onclick = () => resolveUrgent(r);
+        act.append(b);
+      } else if (r.status !== "확정" && r.status !== "긴급 처리됨") {
         const b = el("button", null, "확정");
         b.onclick = () => confirmIntake(r);
         act.append(b);
@@ -108,6 +114,17 @@ async function confirmIntake(r) {
     loadQueue();
   } catch (e) {
     alert("확정 실패: " + e.message);
+  }
+}
+
+async function resolveUrgent(r) {
+  const note = prompt("어떻게 처리하셨나요? (감사 로그에 남습니다)", "담당자 통화 완료");
+  if (note === null) return;
+  try {
+    await api.resolveUrgent(r.id, note);
+    loadQueue();
+  } catch (e) {
+    alert("처리 실패: " + e.message);
   }
 }
 

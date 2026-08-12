@@ -56,6 +56,10 @@ export const api = {
     req(`/api/intakes/${id}/confirm`,
         { method: "POST", body: { hospital, date, level, actor, role } }),
 
+  // 긴급 처리 완료 표시. changed:false 면 이미 처리됐다는 뜻 — 오류가 아니다.
+  resolveUrgent: (id, note = "", role = "사회복지사") =>
+    req(`/api/intakes/${id}/resolve`, { method: "POST", body: { note, role } }),
+
   createPostRecord: (intakeId, phone, memo, dept, target) =>
     req("/api/post-records",
         { method: "POST", body: { intake_id: intakeId, phone, memo, dept, target } }),

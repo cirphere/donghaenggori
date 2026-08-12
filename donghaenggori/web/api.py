@@ -111,6 +111,12 @@ class ConfirmIn(BaseModel):
     role: str = "사회복지사"
 
 
+class ResolveIn(BaseModel):
+    note: str = Field("", description="어떻게 처리했는지 — 감사 로그에 남는다")
+    actor: str = "김○○ 사회복지사"
+    role: str = "사회복지사"
+
+
 class PostRecordIn(BaseModel):
     intake_id: int
     phone: str
@@ -242,6 +248,21 @@ def confirm(intake_id: int, body: ConfirmIn) -> dict:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
     db.confirm_intake(intake_id, body.hospital, body.date, body.level, body.actor, body.role)
     return {"ok": True, "intake": db.get_intake(intake_id)}
+
+
+@app.post("/api/intakes/{intake_id}/resolve", tags=["화면03 접수카드"])
+def resolve_urgent(intake_id: int, body: ResolveIn) -> dict:
+    """긴급 건 처리 완료 표시 — 사람이 연락을 끝냈다는 뜻이다.
+
+    확정과 다르다. 긴급은 접수카드를 만들지 않으므로 확정할 대상이 없다.
+    """
+    if not db.can(body.role, "intake.confirm"):
+        raise HTTPException(403, f"'{body.role}' 역할에는 처리 권한이 없습니다")
+    if not db.get_intake(intake_id):
+        raise HTTPException(404, "접수를 찾을 수 없습니다")
+    changed = db.resolve_urgent(intake_id, body.actor, body.role, body.note)
+    # changed=False 는 이미 처리됐거나 긴급이 아니라는 뜻 — 오류가 아니다
+    return {"ok": True, "changed": changed, "intake": db.get_intake(intake_id)}
 
 
 # ------------------------------------------- 화면 05 사후기록 --
