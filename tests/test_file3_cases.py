@@ -350,17 +350,45 @@ def case21() -> None:
           " / ".join(f"{f}→{n or '못 찾음'}" for f, n in zip(forms, names)))
 
 
+# 어르신이 병원 이름을 직접 대면 그것이 과거 이력보다 우선이다.
+# 실통화에서 "내일 송정병원으로 가야 될 것 같아" 를 받고도 이력의 다른 병원을
+# '확인됨' 으로 내놓은 적이 있다 — 그대로 확정하면 엉뚱한 곳으로 배차된다.
+def case22() -> None:
+    from donghaenggori.core import nlu
+
+    뽑기 = [("허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아", "송정병원"),
+           ("전남대학교 병원 가야 해", "전남대학교병원"),      # 띄어 쓴 표기
+           ("고흥 보건소 좀 데려다 주쇼", "고흥보건소"),
+           ("저번에 갔던 병원으로 가주쇼", None),              # 이름이 아니다
+           ("내일 그 큰 병원 좀", None),
+           ("내과 병원 가야 해", None)]                       # 진료과를 말한 것
+    나쁨 = [t for t, want in 뽑기 if nlu.detect_hospital(t) != want]
+
+    r = pipeline.run(PHONE_MAIN, "허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아")
+    f = r.card.to_dict()["fields"]["hospital"]
+    말한대로 = f["value"] == "송정병원" and f["status"] == "확인됨"
+    이력도알림 = any("과거 이력과 다름" in e for e in f["evidence"])
+
+    # 이름을 안 댔으면 예전처럼 이력을 쓴다
+    r2 = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데")
+    이력유지 = r2.card.hospital == "○○정형외과의원"
+
+    check(22, "발화의 병원명이 이력보다 우선", not 나쁨 and 말한대로 and 이력도알림 and 이력유지,
+          (f"추출 실패 {나쁨}" if 나쁨 else "추출 6/6") +
+          f" · 말한대로={말한대로} 이력알림={이력도알림} 이력유지={이력유지}")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17, case18, case19, case20, case21):
+               case14, case15, case16, case17, case18, case19, case20, case21, case22):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 9건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 10건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):
