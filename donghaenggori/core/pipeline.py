@@ -27,6 +27,12 @@ CHANNELS = ("전화", "앱·웹(보호자)", "직접(기관)")
 URGENT_CONFIDENT = classify_mod.URGENT_CONFIDENT
 RULE_OWNED_INTENTS = classify_mod.RULE_OWNED_INTENTS
 
+# 참고 후보(화면 04 4-A) 조회 조건. 예열도 반드시 같은 값을 써야 한다 —
+# 공공 API 캐시 키에 파라미터가 들어가서, 반경이나 건수가 다르면 예열해도
+# 실제 호출은 캐시를 못 타고 처음부터 다시 기다린다(시연 중 타임아웃 났다).
+REFERENCE_RADIUS_M = 6000
+REFERENCE_ROWS = 3
+
 
 @dataclass
 class Result:
@@ -129,7 +135,8 @@ def _reference_candidates(prof: dict | None, a) -> list[dict]:
         return []
     try:
         from ..services import hira
-        res = hira.nearby(latlon[0], latlon[1], dept=a.dept, radius_m=6000, rows=3)
+        res = hira.nearby(latlon[0], latlon[1], dept=a.dept,
+                          radius_m=REFERENCE_RADIUS_M, rows=REFERENCE_ROWS)
     except Exception:
         return []
     if res.unavailable:

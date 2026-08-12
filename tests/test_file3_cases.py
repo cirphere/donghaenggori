@@ -116,12 +116,21 @@ def case10() -> None:
           (f"({found[0]['name']}, 출처 {found[0]['source']})" if found else ""))
 
 
-# ── 11. 전남 대상자 → 시설 조회 (C-DS04/17 미연동) ──────────────
+# ── 11. 전남 대상자 → 시설 조회 (C-DS04 노인복지관) ─────────────
 def case11() -> None:
-    found = rag.search(region="전남 고흥군", limit=5)
-    ok = True   # 미연동이 정상 — 문서 파일3에도 C-DS04/17 외 전남 시설은 미적재
-    check(11, "전남 시설 조회 [C-DS17 미연동]", ok,
-          f"{len(found)}건 — 전남 시설 데이터 미적재(공공API 연동 대기)")
+    """관내 시설이 있으면 관내로, 없으면 '같은 시도'라고 밝혀야 한다.
+
+    신안군은 표에 노인복지관이 없다. 이때 다른 시군 시설을 아무 표시 없이
+    1순위로 올리면 섬 주민에게 100km 떨어진 곳을 권하는 셈이 된다.
+    """
+    goheung = rag.search(region="전남 고흥군 ○○면", limit=3)
+    sinan = rag.search(region="전남 신안군 ○○면(섬)", limit=3)
+    ok = (len(goheung) > 0 and goheung[0]["region_match"] == "관내"
+          and goheung[0]["source"] == "C-DS04"
+          and len(sinan) > 0 and all(f["region_match"] != "관내" for f in sinan))
+    check(11, "전남 노인복지관 조회 + 관내/타지역 구분", ok,
+          f"고흥 {len(goheung)}건[{goheung[0]['region_match'] if goheung else '—'}] / "
+          f"신안 {len(sinan)}건[{sinan[0]['region_match'] if sinan else '—'}]")
 
 
 # ── 12. 사후기록 요약 5개 항목 ──────────────────────────────────
