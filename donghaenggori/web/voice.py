@@ -363,7 +363,14 @@ async def incoming(request: Request) -> Response:
     끝나고, 아래 <Say>·<Record> 로 흘러간다. 그때는 예전과 같은 1턴 흐름이다.
     """
     form = await _verify(request)
-    prof = db.get_profile(_lookup_phone(form.get("From") or ""))
+    raw = form.get("From") or ""
+    lookup = _lookup_phone(raw)
+    prof = db.get_profile(lookup)
+    # 프로필을 못 찾으면 이름을 물을 수 없어 미등록 안내로 간다. 왜 못 찾았는지
+    # 로그에 남긴다 — 실통화에서 이름 확인이 안 나와 한참 헤맸다. 대개
+    # DEMO_CALLER_PHONE 미설정이거나 번호 표기가 다른 경우다.
+    _log.info("발신 %s → 조회 %s → %s", raw, db.normalize_phone(lookup),
+              prof["name"] if prof else "등록 없음(미등록 안내로 진행)")
     ask = _record(_callback(request, "voice_recording") + "?who=unknown")
 
     if not prof or not ASK_IDENTITY:
