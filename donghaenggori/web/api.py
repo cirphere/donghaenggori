@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..config import settings
 from ..core import db, pipeline
 from ..services import rag, stt, summarize
+from . import voice
 
 app = FastAPI(
     title="동행고리 AI",
@@ -42,6 +43,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 전화(ClawOps VoiceML) — 키가 없으면 라우트는 뜨되 요청을 거절한다
+app.include_router(voice.router)
 
 
 @app.on_event("startup")
