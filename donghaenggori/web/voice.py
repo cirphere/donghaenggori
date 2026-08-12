@@ -50,7 +50,7 @@ SIGNING_KEY = os.environ.get("CLAWOPS_SIGNING_KEY", "")
 STAFF_NUMBER = os.environ.get("CLAWOPS_STAFF_NUMBER", "")
 # 녹음 상한(초). 2턴이 되면서 통화가 길어졌다 — 인사·질문·대기까지 합치면
 # 어르신이 붙들려 있는 시간이 금세 1분을 넘는다. 짧게 잡는다.
-MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "20"))
+MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "15"))
 
 # 녹음을 끝내는 키. 기본은 **아무 키나**다.
 #
@@ -58,8 +58,13 @@ MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "20"))
 # 통화 중에 폰을 떼고 정확히 우물 정자를 찾아 누르는 것 자체가 어렵고, 회선에
 # 따라 DTMF 가 제대로 전달되지 않기도 한다. 아무 키나 받으면 잘못 눌러도 넘어간다.
 #
-# 키가 아예 안 먹는 회선이면 maxLength 로만 끝난다. 그래서 상한을 20초로
-# 낮췄다 — 눌러도 안 되는 사람이 견뎌야 하는 침묵이 그만큼 줄어든다.
+# 실통화에서 **어떤 키도 먹지 않았다.** 회선이 DTMF 를 전달하지 않는 것으로
+# 보인다. 그래서 안내에서 키를 빼고 "잠시 기다리시면 됩니다"로 바꿨다 —
+# 눌렀는데 반응이 없으면 어르신이 당황해서 끊어 버린다.
+# finishOnKey 는 남겨둔다. 다른 회선에서는 먹을 수 있고, 먹으면 그만큼 빨라진다.
+#
+# 이제 상한이 곧 대기 시간이라 15초로 줄였다. "모레 정형외과 가야겄어" 는
+# 3초면 끝나므로 말이 잘릴 위험보다 침묵이 긴 쪽이 더 아프다.
 FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
@@ -93,8 +98,8 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 바꿨다. 끝까지 안 듣고 말을 시작하거나 끊는 사람이 있으므로, 당장 해야 할
 # 일을 앞에 두고 119 안내를 뒤로 뺐다.
 GREETING = os.environ.get("CLAWOPS_GREETING") or (
-    "동행고리입니다. 삐 소리 후 병원과 날짜를 말씀하시고, "
-    "마치면 아무 번호나 눌러 주세요. "
+    "동행고리입니다. 삐 소리 후 병원과 날짜를 말씀해 주세요. "
+    "마치시면 잠시 기다리시면 됩니다. "
     "급하시면 끊고 119로 전화하세요.")
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
@@ -304,7 +309,8 @@ async def _verify(request: Request) -> dict:
     joined = "".join(f"{k}{v}" for k, v in sorted(form.items()))
     for url in _url_candidates(request):
         if hmac.compare_digest(got, _sign(url + joined)):
-            _log.info("서명 확인 — 기준: url+params %s", url)
+            # 성공은 남기지 않는다. 통화 한 건에 여러 번 찍혀 시끄럽고,
+            # 기준(url+params)은 실통화로 확정됐다. 문제만 아래에 남긴다.
             return form
 
     # 이 로그가 유일한 단서다. 보내는 쪽이 어떤 URL 로 서명했는지 알 수 없으니,
@@ -357,7 +363,7 @@ async def recording(request: Request) -> Response:
 
     # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
     action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
-    return _xml(_say(question + " 말씀하신 뒤 아무 번호나 눌러 주세요.") + _record(action))
+    return _xml(_say(question + " 말씀하신 뒤 잠시 기다려 주세요.") + _record(action))
 
 
 # ──────────────────────────────────────────────────── 2턴 확인 --
@@ -430,18 +436,30 @@ def _match_status(phone: str, answer: str) -> str:
 
 
 def _read_recording(form: dict) -> str | None:
-    """녹음을 내려받아 전사한다. None=녹음 없음, ""=전사 실패."""
+    """녹음을 내려받아 전사한다. None=녹음 없음, ""=전사 실패.
+
+    **실패를 조용히 삼키지 않는다.** 예전에는 예외를 그냥 먹어서, 통화가
+    "지금 처리가 어렵습니다" 로 끝나도 왜 그런지 알 방법이 없었다. 로그가
+    유일한 단서인 경로다.
+    """
     url = form.get("RecordingUrl") or ""
     try:
         duration = float(form.get("RecordingDuration") or 0)
     except ValueError:
         duration = 0
     if not url or duration <= 0:
+        _log.warning("녹음 없음 — RecordingDuration=%s · URL %s",
+                     form.get("RecordingDuration"), "있음" if url else "없음")
         return None
     try:
-        return _transcribe_url(url).strip()
-    except Exception:
+        text = _transcribe_url(url).strip()
+    except Exception as e:
+        _log.warning("녹음 처리 실패 (%.1f초) — %s: %s", duration, type(e).__name__, e)
         return ""
+    # 전사 결과를 남긴다. 전화 음질(8kHz)에서 무엇이 들리는지가 지금 가장 큰
+    # 미지수라 확인이 끝날 때까지 둔다. 실제 개인정보를 다루게 되면 지울 것.
+    _log.info("전사 (%.1f초, %d자): %s", duration, len(text), text or "(빈 문자열)")
+    return text
 
 
 def _transcribe_url(url: str) -> str:
@@ -450,7 +468,12 @@ def _transcribe_url(url: str) -> str:
 
     from ..services import stt
     with httpx.Client(timeout=20.0) as cli:
-        audio = cli.get(url).content
+        resp = cli.get(url)
+    if resp.status_code != 200:
+        raise RuntimeError(f"녹음 내려받기 HTTP {resp.status_code}")
+    audio = resp.content
+    if not audio:
+        raise RuntimeError("녹음 파일이 비어 있음")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     try:
         tmp.write(audio)
