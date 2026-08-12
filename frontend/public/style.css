@@ -115,3 +115,46 @@ blockquote {
 .urgent-title { font-weight: 700; font-size: 16px; margin-bottom: 6px; }
 .urgent p { margin: 4px 0; color: var(--ink); }
 .urgent .small { font-size: 12px; color: var(--muted); }
+
+/* ── 보호자 웹 ─────────────────────────────────────── */
+main.single { display: block; max-width: 720px; margin: 0 auto; }
+body.guardian { background: #f8f8f6; }
+.lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+.help { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+button.wide { width: 100%; padding: 12px; font-size: 15px; }
+.notice {
+  margin-top: 14px; padding: 10px 12px; border-radius: 6px; font-size: 13px;
+  background: var(--need-bg); color: var(--need);
+}
+.receipt-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+dl.receipt { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 12px 0; }
+dl.receipt dt { color: var(--muted); font-size: 13px; }
+dl.receipt dd { margin: 0; font-weight: 600; }
+.quote { background: #f4f5f3; border-radius: 6px; padding: 10px 12px; font-size: 13px; color: #444; }
+.ask { margin-top: 14px; }
+.ask ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.small { font-size: 12px; color: var(--muted); margin-top: 12px; }
+
+/* ── 사회복지사 콘솔 ───────────────────────────────── */
+main.single .panel { max-width: none; }
+body:has(.tabs) main.single { max-width: 1100px; }
+.tabs { display: flex; gap: 6px; padding: 10px 16px 0; }
+.tab { border-radius: 6px 6px 0 0; border-bottom-color: transparent; }
+.tab.active { background: var(--paper); font-weight: 600; }
+.view.hidden { display: none; }
+.two { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+.counts { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.count {
+  display: flex; flex-direction: column; align-items: center; min-width: 76px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
+}
+.count b { font-size: 20px; }
+.count span { font-size: 12px; color: var(--muted); }
+.count.alarm { border-color: var(--need); background: var(--need-bg); color: var(--need); }
+
+table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.list td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+table.list td.dim { color: var(--muted); }
+table.list td.bad { color: var(--need); }

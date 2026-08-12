@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동행고리 AI — 사회복지사</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <strong>동행고리 AI</strong>
+    <span class="sub">사회복지사 콘솔 — AI는 후보·근거까지, 확정은 사람</span>
+  </div>
+  <div class="status" id="sysStatus">상태 확인 중…</div>
+</header>
+
+<!--
+  이 화면은 공개 주소에 두면 안 된다. 백엔드가 요청 본문의 role 을 그대로
+  믿기 때문에(인증 미구현), 여기 접근할 수 있으면 확정·승인·감사로그 조회가
+  전부 가능하다. 배포에서는 /staff 경로를 Cloudflare Access 뒤에 둔다.
+  frontend/nginx.conf 와 docs/DEPLOY-ACCESS.md 참조.
+-->
+<div class="note">
+  내부용 화면입니다. 인증은 Cloudflare Access가 담당하며, 이 페이지 자체에는
+  로그인 기능이 없습니다.
+</div>
+
+<nav class="tabs">
+  <button class="tab active" data-view="queue">접수 대기</button>
+  <button class="tab" data-view="intake">새 접수</button>
+  <button class="tab" data-view="post">사후기록</button>
+  <button class="tab" data-view="audit">감사 로그</button>
+</nav>
+
+<main class="single">
+
+  <!-- ── 접수 대기 (화면 01) ─────────────────────────── -->
+  <section class="panel view" id="view-queue">
+    <div class="counts" id="counts"></div>
+    <table class="list" id="queue"><tbody></tbody></table>
+  </section>
+
+  <!-- ── 새 접수 (화면 02 → 03) ──────────────────────── -->
+  <section class="panel view hidden" id="view-intake">
+    <div class="two">
+      <div>
+        <label>발신번호 <input id="phone" value="010-1234-5678"></label>
+        <label>발화
+          <textarea id="utterance" rows="3">모레 정형외과 가야겄어. 저번에 무릎 봐준 데</textarea>
+        </label>
+        <label>채널
+          <select id="channel">
+            <option>전화</option><option>앱·웹(보호자)</option><option>직접(기관)</option>
+          </select>
+        </label>
+        <div class="row">
+          <button id="btnIntake" class="primary">접수카드 만들기</button>
+          <button id="btnRec">● 녹음</button>
+          <input type="file" id="audioFile" accept="audio/*" hidden>
+          <button id="btnPick">음성 파일</button>
+        </div>
+        <div class="hint" id="recHint"></div>
+        <details class="samples">
+          <summary>시연 발화 모음</summary>
+          <button class="sample" data-phone="010-1234-5678" data-text="모레 정형외과 가야겄어. 저번에 무릎 봐준 데">단골 → 확인됨</button>
+          <button class="sample" data-phone="010-1234-5678" data-text="내일 아니고 모레 3시에 정형외과 가야 해">자기수정 + 시각 모호</button>
+          <button class="sample" data-phone="010-7777-8888" data-text="내일 그 큰 병원 좀 가야 쓰겄는디">이력 없음</button>
+          <button class="sample" data-phone="010-9876-5432" data-text="느그 어매 병원 좀 델꼬 가야 쓰겄는디">보호자 대리</button>
+          <button class="sample" data-phone="010-0000-0000" data-text="병원 좀 가야 해">미등록 번호</button>
+          <button class="sample" data-phone="010-1234-5678" data-text="가슴이 답답하고 숨이 차">긴급</button>
+          <button class="sample" data-phone="010-1234-5678" data-text="고맙습니다 수고하세요">확신 낮은 긴급</button>
+        </details>
+      </div>
+      <div id="result" class="empty">왼쪽에서 발화를 넣으세요.</div>
+    </div>
+  </section>
+
+  <!-- ── 사후기록 (화면 05) ──────────────────────────── -->
+  <section class="panel view hidden" id="view-post">
+    <label>접수 번호 <input id="prIntakeId" value="0" size="6"></label>
+    <label>대상자 번호 <input id="prPhone" value="010-1234-5678"></label>
+    <label>동행 후 메모 (음성 메모를 옮겨 적었다고 가정)
+      <textarea id="prMemo" rows="3">무릎 주사 맞았고 다음 진료 2주 뒤, 약국 들렀어요. 계단 힘들어하셨습니다.</textarea>
+    </label>
+    <button id="btnPost" class="primary">기록 초안 만들기</button>
+    <div id="postResult" class="empty">메모를 넣고 초안을 만드세요.</div>
+  </section>
+
+  <!-- ── 감사 로그 ───────────────────────────────────── -->
+  <section class="panel view hidden" id="view-audit">
+    <table class="list" id="audit"><tbody></tbody></table>
+  </section>
+
+</main>
+
+<script type="module" src="staff.js"></script>
+</body>
+</html>
