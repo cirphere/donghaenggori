@@ -290,26 +290,28 @@ async def _verify(request: Request) -> dict:
     if not got:
         raise HTTPException(401, "X-Signature 헤더가 없습니다")
 
+    # 서명 대상은 **URL 과 파라미터를 함께 묶은 것**만 인정한다.
+    #
+    # 401 원인을 찾을 때 URL 만·본문만·파라미터만도 시도하게 넓혔었는데, 그건
+    # 검증이 아니었다. URL 만 서명하면 본문이 무엇이든 통과하므로, 유효한 서명을
+    # 한 번 확보하면 From·RecordingUrl 을 바꿔 가짜 접수를 만들고 우리가 임의
+    # 주소를 내려받게 할 수 있다(_transcribe_url 이 그 URL 을 그대로 가져온다).
+    # 파라미터만 서명하면 같은 서명을 다른 엔드포인트에 재사용할 수 있다.
+    #
+    # 실통화에서 'url+params' 로 맞는 것이 확인됐으니 나머지는 되돌린다.
+    # URL 표기 후보는 남긴다 — 프록시를 거치며 scheme 이 바뀔 수 있고, 각
+    # 후보가 파라미터를 함께 묶으므로 위 문제가 없다.
     joined = "".join(f"{k}{v}" for k, v in sorted(form.items()))
-    tried: list[str] = []
     for url in _url_candidates(request):
-        for label, data in (("url+params", url + joined), ("url", url)):
-            tried.append(f"{label}:{url}")
-            if hmac.compare_digest(got, _sign(data)):
-                _log.info("서명 확인 — 기준: %s %s", label, url)
-                return form
-    # 본문 그대로, 파라미터만 — 다른 관례도 한 번씩 시도한다
-    for label, data in (("body", raw.decode(errors="replace")), ("params", joined)):
-        tried.append(label)
-        if hmac.compare_digest(got, _sign(data)):
-            _log.info("서명 확인 — 기준: %s", label)
+        if hmac.compare_digest(got, _sign(url + joined)):
+            _log.info("서명 확인 — 기준: url+params %s", url)
             return form
 
     # 이 로그가 유일한 단서다. 보내는 쪽이 어떤 URL 로 서명했는지 알 수 없으니,
     # 우리가 복원한 URL 들을 그대로 남겨 대조할 수 있게 한다. 키는 넣지 않는다.
     _log.warning(
-        "서명 불일치\n  받은 서명   : %s…\n  파라미터 키 : %s\n"
-        "  시도한 URL  :\n%s",
+        "서명 불일치 (기준: URL + 정렬된 파라미터)\n"
+        "  받은 서명   : %s…\n  파라미터 키 : %s\n  시도한 URL  :\n%s",
         got[:12], sorted(form),
         "\n".join(f"    - {u}" for u in _url_candidates(request)))
     raise HTTPException(401, "서명이 올바르지 않습니다")
