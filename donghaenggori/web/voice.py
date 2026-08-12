@@ -50,7 +50,17 @@ SIGNING_KEY = os.environ.get("CLAWOPS_SIGNING_KEY", "")
 STAFF_NUMBER = os.environ.get("CLAWOPS_STAFF_NUMBER", "")
 # 녹음 상한(초). 2턴이 되면서 통화가 길어졌다 — 인사·질문·대기까지 합치면
 # 어르신이 붙들려 있는 시간이 금세 1분을 넘는다. 짧게 잡는다.
-MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "30"))
+MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "20"))
+
+# 녹음을 끝내는 키. 기본은 **아무 키나**다.
+#
+# 처음에는 "#" 하나만 받았는데, 실통화에서 눌러도 넘어가지 않았다. 어르신이
+# 통화 중에 폰을 떼고 정확히 우물 정자를 찾아 누르는 것 자체가 어렵고, 회선에
+# 따라 DTMF 가 제대로 전달되지 않기도 한다. 아무 키나 받으면 잘못 눌러도 넘어간다.
+#
+# 키가 아예 안 먹는 회선이면 maxLength 로만 끝난다. 그래서 상한을 20초로
+# 낮췄다 — 눌러도 안 되는 사람이 견뎌야 하는 침묵이 그만큼 줄어든다.
+FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 
@@ -69,9 +79,23 @@ DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
 # 헤더를 믿는 대신 공개 주소를 직접 적어두는 편이 확실하다.
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
-GREETING = ("안녕하세요, 동행고리 인공지능 서비스입니다. "
-            "어느 병원에 언제 가시는지 말씀해 주세요. "
-            "많이 아프시거나 급한 상황이면 지금 끊고 119에 전화해 주세요.")
+# 인사말은 짧아야 한다. 어르신이 20초짜리 안내를 끝까지 듣지 않는다 — 실제로
+# 인사 도중 끊겨서 녹음이 시작조차 못 한 통화가 있었다.
+#
+# **"다 말씀하시면 어떻게 하세요"를 반드시 넣는다.** <Record> 에는 침묵 감지가
+# 없어서(maxLength·finishOnKey·playBeep·action 뿐) 말을 마쳐도 저절로 끝나지
+# 않는다. 안내가 없으면 어르신은 30초를 기다리거나 끊어 버린다.
+#
+# 끊으면 2턴(본인 확인)을 못 하므로 우물정자를 안내한다. 급한 경우의 119 안내는
+# STT 를 기다리지 않는 유일한 경로라 짧게라도 남긴다.
+# 시연장에서 문구를 다듬을 수 있도록 환경변수로 뺐다.
+# 길이는 더 줄이기 어렵다 — 안내를 넣으면 그만큼 늘어난다. 대신 **순서**를
+# 바꿨다. 끝까지 안 듣고 말을 시작하거나 끊는 사람이 있으므로, 당장 해야 할
+# 일을 앞에 두고 119 안내를 뒤로 뺐다.
+GREETING = os.environ.get("CLAWOPS_GREETING") or (
+    "동행고리입니다. 삐 소리 후 병원과 날짜를 말씀하시고, "
+    "마치면 아무 번호나 눌러 주세요. "
+    "급하시면 끊고 119로 전화하세요.")
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
@@ -104,7 +128,7 @@ def _say(text: str) -> str:
 
 def _record(action: str) -> str:
     return (f'<Record maxLength="{MAX_RECORD_SECONDS}" playBeep="true" '
-            f'finishOnKey="#" action="{_esc(action)}"/>')
+            f'finishOnKey="{_esc(FINISH_ON_KEY)}" action="{_esc(action)}"/>')
 
 
 def _hangup(text: str) -> Response:
@@ -331,7 +355,7 @@ async def recording(request: Request) -> Response:
 
     # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
     action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
-    return _xml(_say(question) + _record(action))
+    return _xml(_say(question + " 말씀하신 뒤 아무 번호나 눌러 주세요.") + _record(action))
 
 
 # ──────────────────────────────────────────────────── 2턴 확인 --
