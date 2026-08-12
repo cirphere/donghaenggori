@@ -8,9 +8,12 @@ frontend/
 ├── nginx.conf        SPA 라우팅 + 캐시 설정
 ├── public/           임시 화면 (빌드 도구 없이 그대로 서빙된다)
 │   ├── api.js        ★ 백엔드 호출 모음 — 이건 그대로 가져다 쓰면 된다
-│   ├── app.js        임시 렌더링. 제대로 만들 때 버리는 파일
-│   ├── style.css     임시 스타일. 버리는 파일
-│   └── index.html
+│   ├── index.html    보호자 웹 (공개)
+│   ├── guardian.js
+│   ├── style.css
+│   └── staff/        사회복지사 콘솔 (Access 뒤에 둔다)
+│       ├── index.html
+│       └── staff.js
 └── (여기에 React/Vue 프로젝트를 만들면 public/ 대신 그게 빌드된다)
 ```
 
@@ -27,8 +30,12 @@ frontend/
 - 오전·오후를 모르는 시각은 화면이 임의로 채우지 않는다
 - 복지자원은 `관내` / `같은 시도` / `타 지역` 을 반드시 표시한다
 
-**제대로 만들 때**: `api.js` 는 그대로 쓰고 `app.js`·`style.css`·`index.html` 만
-갈아끼우면 된다. 이 디렉터리에 `package.json` 이 생기는 순간 Dockerfile 이
+**웹이 둘인 이유는 화면이 아니라 권한이다.** 보호자는 신청만 하고, 확정·승인·감사로그는
+사회복지사 콘솔에서만 한다. 다만 백엔드가 아직 요청 본문의 `role` 을 그대로 믿으므로
+화면 분리만으로는 아무것도 막지 못한다 — 실제 경계는 Cloudflare Access 다.
+반드시 `docs/DEPLOY-ACCESS.md` 를 읽고 설정할 것.
+
+**제대로 만들 때**: `api.js` 는 그대로 쓰고 나머지를 갈아끼우면 된다. 이 디렉터리에 `package.json` 이 생기는 순간 Dockerfile 이
 빌드 경로로 자동 전환되므로(아래 참조) 배포 설정은 손댈 필요가 없다.
 
 임시 화면을 로컬에서 볼 때는 정적 서버만으로는 `/api/` 가 404 다. nginx 를 띄우거나

@@ -113,7 +113,7 @@ def run(phone: str, utterance: str, channel: str = "전화",
         except Exception:
             facilities = []
 
-    c = _build_card(phone, utterance, a, prof, hres, nres)         # ⑧
+    c = _build_card(phone, utterance, a, prof, hres, nres, channel)  # ⑧
     c.outing_checklist = _outing_checklist(prof, a)
     if hres.status == "확인 필요" and not (prof or {}).get("history"):
         c.reference_candidates = _reference_candidates(prof, a)
@@ -193,7 +193,19 @@ def _outing_checklist(prof: dict | None, a) -> list[str]:
     return out
 
 
-def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:
+GUARDIAN_CHANNEL = "앱·웹(보호자)"
+
+
+def _build_card(phone, utterance, a, prof, hres, nres,
+                channel: str = "전화") -> card_mod.Card:
+    # 보호자 웹으로 들어온 요청은 채널 자체가 '대리'라는 사실이다. 발화에서
+    # 관계 호칭을 못 찾아도 마찬가지다 — 예전에는 "무릎이 아파서 정형외과
+    # 가야 해요"처럼 호칭 없이 쓰면 본인 접수로 처리돼, 딸의 번호를 대상자
+    # 번호로 보고 '신규 대상자(미등록 번호)'를 만들었다.
+    requester = a.requester
+    if channel == GUARDIAN_CHANNEL:
+        requester = "대리"
+
     target = prof["name"] if prof else "신규 대상자(미등록 번호)"
     # 표시 문자열과 별개로 상태를 필드로 남긴다. 예전에는 "대상자 후보 3명 —
     # 확인 필요" 같은 한글 문장이 유일한 단서라, 화면이 상태를 알려면 그 문장을
@@ -204,7 +216,7 @@ def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:
 
     # 대리 접수 — 발신자와 대상자가 다르다. 대상자를 확정하지 않고 후보만 제시한다.
     candidates: list[dict] = []
-    if a.requester == "대리":
+    if requester == "대리":
         candidates = db.find_by_guardian_phone(phone)
         rel = f"{a.proxy_relation} " if a.proxy_relation else ""
         if len(candidates) == 1:
@@ -226,7 +238,7 @@ def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:
     summary = f"{a.intent} 접수 — " + (", ".join(parts) if parts else "추가 정보 확인 필요")
 
     flags, questions = [], []
-    if a.requester == "대리":
+    if requester == "대리":
         flags.append("대리 요청: 대상자 확인 필요")
         rel = a.proxy_relation or "어르신"
         if candidates:
@@ -274,7 +286,7 @@ def _build_card(phone, utterance, a, prof, hres, nres) -> card_mod.Card:
         need_basis=nres.basis, need_official=nres.official,
         guardian_contact=nres.guardian_contact,
         manager_notes=mnotes, flags=flags,
-        requester=a.requester, proxy_relation=a.proxy_relation,
+        requester=requester, proxy_relation=a.proxy_relation,
         target_candidates=candidates,
         field_status=_field_status(a, hres, target_status, dept),
         field_evidence=_field_evidence(a, hres, target_evidence, dept))
