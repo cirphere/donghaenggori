@@ -50,7 +50,17 @@ SIGNING_KEY = os.environ.get("CLAWOPS_SIGNING_KEY", "")
 STAFF_NUMBER = os.environ.get("CLAWOPS_STAFF_NUMBER", "")
 # 녹음 상한(초). 2턴이 되면서 통화가 길어졌다 — 인사·질문·대기까지 합치면
 # 어르신이 붙들려 있는 시간이 금세 1분을 넘는다. 짧게 잡는다.
-MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "30"))
+MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "20"))
+
+# 녹음을 끝내는 키. 기본은 **아무 키나**다.
+#
+# 처음에는 "#" 하나만 받았는데, 실통화에서 눌러도 넘어가지 않았다. 어르신이
+# 통화 중에 폰을 떼고 정확히 우물 정자를 찾아 누르는 것 자체가 어렵고, 회선에
+# 따라 DTMF 가 제대로 전달되지 않기도 한다. 아무 키나 받으면 잘못 눌러도 넘어간다.
+#
+# 키가 아예 안 먹는 회선이면 maxLength 로만 끝난다. 그래서 상한을 20초로
+# 낮췄다 — 눌러도 안 되는 사람이 견뎌야 하는 침묵이 그만큼 줄어든다.
+FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 
@@ -84,7 +94,7 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 일을 앞에 두고 119 안내를 뒤로 뺐다.
 GREETING = os.environ.get("CLAWOPS_GREETING") or (
     "동행고리입니다. 삐 소리 후 병원과 날짜를 말씀하시고, "
-    "마치면 우물 정자를 눌러 주세요. "
+    "마치면 아무 번호나 눌러 주세요. "
     "급하시면 끊고 119로 전화하세요.")
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
@@ -118,7 +128,7 @@ def _say(text: str) -> str:
 
 def _record(action: str) -> str:
     return (f'<Record maxLength="{MAX_RECORD_SECONDS}" playBeep="true" '
-            f'finishOnKey="#" action="{_esc(action)}"/>')
+            f'finishOnKey="{_esc(FINISH_ON_KEY)}" action="{_esc(action)}"/>')
 
 
 def _hangup(text: str) -> Response:
@@ -345,7 +355,7 @@ async def recording(request: Request) -> Response:
 
     # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
     action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
-    return _xml(_say(question + " 말씀하신 뒤 우물 정자를 눌러 주세요.") + _record(action))
+    return _xml(_say(question + " 말씀하신 뒤 아무 번호나 눌러 주세요.") + _record(action))
 
 
 # ──────────────────────────────────────────────────── 2턴 확인 --
