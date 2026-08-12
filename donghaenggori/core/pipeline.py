@@ -260,7 +260,7 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 우리가 골라주지 않고 되묻는다 — 잘못 고르면 반나절을 헛걸음한다.
     if a.time and not a.time.get("confident"):
         flags.append("확인 필요: 방문 시각")
-        questions.append(f"말씀하신 {a.time['label']}이 오전인가요, 오후인가요?")
+        questions.append(f"말씀하신 {a.time['label']}, 오전인가요 오후인가요?")
     elif not a.time:
         questions.append("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.")
 
