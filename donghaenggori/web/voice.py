@@ -70,13 +70,13 @@ FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 
-# 2턴(본인 확인)을 쓸지. 끄면 1턴만 하고 바로 접수 안내로 끝낸다.
-#
-# 2턴은 <Record> action 응답으로 통화를 이어가는데, 그 사이 내려받기와 STT 가
-# 끝나야 한다. 보내는 쪽이 얼마나 기다려 주는지 문서에 없고, 실통화에서 확인
-# 질문이 들리지 않은 적이 있다. 회선이 못 버티면 이 값을 0 으로 두면 된다 —
-# 1턴만으로도 접수카드는 나온다. 대상자 확인은 사회복지사 확인전화에서 한다.
-TWO_TURN = os.environ.get("CLAWOPS_TWO_TURN", "1").strip() not in ("0", "false", "no")
+# 통화 앞에서 누른 번호 → 접수에 남길 답변과 상태.
+# '확인됨' 은 쓰지 않는다. 버튼을 눌렀다는 것이 본인이라는 증거는 아니다.
+_IDENTITY_ANSWER = {
+    "self": ("1번(본인 맞다고 응답)", "추정"),
+    "other": ("2번(본인이 아니라고 응답) — 성함·주소를 말로 남김", "확인 필요"),
+    "unknown": ("응답 없음(키 입력 없이 진행)", "확인 필요"),
+}
 
 # 시연 전용 — 발표자가 자기 폰으로 걸었을 때 등록된 대상자로 조회되게 한다.
 # 이게 없으면 본선에서 시연 통화가 전부 '신규 대상자(미등록 번호)'로 뜬다.
@@ -103,15 +103,25 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 끊으면 2턴(본인 확인)을 못 하므로 우물정자를 안내한다. 급한 경우의 119 안내는
 # STT 를 기다리지 않는 유일한 경로라 짧게라도 남긴다.
 # 시연장에서 문구를 다듬을 수 있도록 환경변수로 뺐다.
-# 길이는 더 줄이기 어렵다 — 안내를 넣으면 그만큼 늘어난다. 대신 **순서**를
-# 바꿨다. 끝까지 안 듣고 말을 시작하거나 끊는 사람이 있으므로, 당장 해야 할
-# 일을 앞에 두고 119 안내를 뒤로 뺐다.
+# 미등록 번호용 인사. 등록된 번호는 이름을 확인하는 문장이 따로 나간다.
+#
+# 119 안내는 넣지 않는다. 접수 전화에 대고 끊으라고 하는 것이 어색하고,
+# 안내가 길어지면 어르신이 끝까지 듣지 않는다. 긴급은 발화에서 감지해
+# 담당자로 넘기고, **전환이 실패했을 때만** 119 를 안내한다.
 GREETING = os.environ.get("CLAWOPS_GREETING") or (
-    "동행고리입니다. 삐 소리 후 병원과 날짜를 말씀해 주세요. "
-    "마치시면 잠시 기다리시면 됩니다. "
-    "급하시면 끊고 119로 전화하세요.")
+    "동행고리입니다. 삐 소리 후 어느 병원에 언제 가시는지 말씀해 주세요. "
+    "마치시면 잠시 기다리시면 됩니다.")
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
+
+# 본인 확인을 먼저 물을지. 회선이 DTMF 를 전달하지 않으면 어차피 흘러가지만,
+# 시연장에서 아예 끄고 싶을 때를 위해 남긴다.
+ASK_IDENTITY = os.environ.get("CLAWOPS_ASK_IDENTITY", "1").strip() not in ("0", "false", "no")
+
+SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는지 말씀해 주세요. "
+                  "마치시면 잠시 기다리시면 됩니다.")
+OTHER_PROMPT = ("어르신 성함과 사시는 읍면동, 그리고 어느 병원에 언제 가시는지 "
+                "말씀해 주세요. 마치시면 잠시 기다리시면 됩니다.")
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
@@ -336,9 +346,47 @@ async def _verify(request: Request) -> dict:
 
 @router.post("/incoming")
 async def incoming(request: Request) -> Response:
-    """전화가 걸려왔다. 인사하고 녹음을 시작한다. 대화는 하지 않는다."""
-    await _verify(request)
-    return _xml(_say(GREETING) + _record(_callback(request, "voice_recording")))
+    """전화가 걸려왔다.
+
+    등록된 번호면 **먼저 본인부터 확인하고** 증상을 받는다.
+
+        "박순자 님 맞으신가요? 맞으면 1번, 아니면 2번을 눌러 주세요."
+           1번 → "어디가 편찮으신지 말씀해 주세요"
+           2번 → "성함과 사시는 읍면동을 말씀해 주세요"
+
+    순서가 중요하다. 예전에는 녹음을 먼저 받고 STT 를 마친 뒤에 본인을 되물었는데,
+    그 대기 사이에 통화가 끊겨 확인 질문이 들리지 않았다. 확인을 앞으로 옮기면
+    STT 대기가 통화 맨 끝(접수 안내)으로 밀린다 — 거기서 잘려도 접수는 이미
+    저장돼 있어 잃는 것이 없다.
+
+    키를 못 누르거나 회선이 DTMF 를 전달하지 않으면 <Gather> 는 콜백 없이
+    끝나고, 아래 <Say>·<Record> 로 흘러간다. 그때는 예전과 같은 1턴 흐름이다.
+    """
+    form = await _verify(request)
+    prof = db.get_profile(_lookup_phone(form.get("From") or ""))
+    ask = _record(_callback(request, "voice_recording") + "?who=unknown")
+
+    if not prof or not ASK_IDENTITY:
+        return _xml(_say(GREETING) + ask)
+
+    return _xml(
+        f'<Gather numDigits="1" timeout="7" action="{_esc(_callback(request, "voice_identity"))}">'
+        + _say(f"동행고리입니다. {prof['name']} 님 맞으신가요? "
+               "맞으시면 1번, 아니시면 2번을 눌러 주세요.")
+        + "</Gather>"
+        # 키를 못 눌렀다 — 묻지 말고 바로 증상을 받는다. 대상자는 확인 필요로 남는다.
+        + _say(SYMPTOM_PROMPT) + ask)
+
+
+@router.post("/identity", name="voice_identity")
+async def identity(request: Request) -> Response:
+    """1번(본인) / 2번(아니오) 응답. 어느 쪽이든 다음은 녹음이다."""
+    form = await _verify(request)
+    digit = (form.get("Digits") or "").strip()
+    who = "self" if digit == "1" else "other" if digit == "2" else "unknown"
+    action = _callback(request, "voice_recording") + f"?who={who}"
+    prompt = SYMPTOM_PROMPT if who == "self" else OTHER_PROMPT
+    return _xml(_say(prompt) + _record(action))
 
 
 def _lookup_phone(raw: str) -> str:
@@ -373,83 +421,24 @@ async def recording(request: Request) -> Response:
         return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 
     intake_id = _save(res, phone, text)
-    question = _identity_question(res) if TWO_TURN else None
-    if not question or intake_id is None:
-        return _hangup(f"{_receipt(res)} {BYE}")
 
-    # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
-    action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
-    return _xml(_say(question + " 말씀하신 뒤 잠시 기다려 주세요.") + _record(action))
+    # 통화 앞에서 받은 1번/2번 응답을 접수에 남긴다. 눌렀다는 사실이 근거일 뿐
+    # 본인확인이 아니다 — 남의 폰으로 건 사람도 1번을 누를 수 있다. 최대 '추정'
+    # 이고 확정은 사회복지사가 한다.
+    if intake_id:
+        who = (request.query_params.get("who") or "unknown").strip()
+        answer, status = _IDENTITY_ANSWER.get(who, _IDENTITY_ANSWER["unknown"])
+        try:
+            db.attach_identity_answer(intake_id, answer, status)
+        except Exception:
+            pass
+
+    return _hangup(f"{_receipt(res)} {BYE}")
 
 
 # ──────────────────────────────────────────────────── 2턴 확인 --
 
-@router.post("/confirm", name="voice_confirm")
-async def confirm(request: Request) -> Response:
-    """본인 확인 답변이 녹음됐다. 해석하지 않고 원문을 남긴다."""
-    form = await _verify(request)
-    phone = _lookup_phone(form.get("From") or "")
-    try:
-        intake_id = int(request.query_params.get("intake") or 0)
-    except ValueError:
-        intake_id = 0
-
-    text = _read_recording(form)
-    if not text:
-        # 답변 없이 끊었거나 못 알아들었다. 접수는 이미 저장돼 있다.
-        if intake_id:
-            db.attach_identity_answer(intake_id, "", "확인 필요")
-        return _hangup("담당자가 확인 후 연락드리겠습니다. 감사합니다.")
-
-    # 확인 답변에서도 긴급이 나올 수 있다 — "아이고 숨이 차" 같은 말
-    c = pipeline._classify(text, use_llm=None)
-    if c.analysis.urgent:
-        if intake_id:
-            db.attach_identity_answer(intake_id, text, "확인 필요")
-        return _transfer(request, "긴급한 상황으로 보입니다.", intake_id or None)
-
-    status = _match_status(phone, text)
-    if intake_id:
-        db.attach_identity_answer(intake_id, text, status)
-    return _hangup(f"말씀 감사합니다. {BYE}")
-
-
 # ─────────────────────────────────────────────────────── 도우미 --
-
-def _identity_question(res) -> str | None:
-    """누구인지 되물을 문장. 물어볼 게 없으면 None."""
-    c = res.card
-    if c is None:
-        return None
-    cands = c.target_candidates or []
-    rel = c.proxy_relation or "어르신"
-    if len(cands) == 1:
-        return (f"{rel}이신 {cands[0]['name']} 님 맞으실까요? "
-                "맞으시면 성함을 한 번 더 말씀해 주세요.")
-    if len(cands) > 1:
-        return "어느 어르신이신지 성함을 말씀해 주세요."
-    if res.profile:
-        return (f"{res.profile['name']} 님 맞으실까요? "
-                "맞으시면 성함을 한 번 더 말씀해 주세요.")
-    return "어르신 성함과 사시는 읍면동을 말씀해 주세요."
-
-
-def _match_status(phone: str, answer: str) -> str:
-    """답변에 후보 이름이 들어 있는지 **문자열 대조만** 한다.
-
-    답변을 해석해 사람을 확정하지 않는다. 이름이 나왔다는 사실만 근거로 삼고,
-    안 나왔으면 오히려 확인이 필요하다고 낮춘다. 어느 쪽이든 확정은 사람이 한다.
-    """
-    names = []
-    prof = db.get_profile(phone)
-    if prof:
-        names.append(prof["name"])
-    names += [c["name"] for c in db.find_by_guardian_phone(phone)]
-    if not names:
-        return "확인 필요"          # 미등록 — 들은 이름은 원문으로만 남는다
-    flat = answer.replace(" ", "")
-    return "추정" if any(n.replace(" ", "") in flat for n in names) else "확인 필요"
-
 
 def _read_recording(form: dict) -> str | None:
     """녹음을 내려받아 전사한다. None=녹음 없음, ""=전사 실패.

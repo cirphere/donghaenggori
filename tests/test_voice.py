@@ -105,8 +105,8 @@ def main() -> int:
 
     # 보내는 쪽이 query 를 빼고 서명했거나 sha256= 접두사를 붙여도 통과해야 한다
     p2 = call_params(PHONE_SELF)
-    sig_noquery = sign(BASE + "/api/voice/confirm", p2)
-    r = client.post("/api/voice/confirm?intake=1", data=p2,
+    sig_noquery = sign(BASE + "/api/voice/recording", p2)
+    r = client.post("/api/voice/recording?who=self", data=p2,
                     headers={"X-Signature": sig_noquery,
                              "X-Forwarded-Proto": "https"})
     check("query 없이 서명해도 통과", r.status_code == 200, f"HTTP {r.status_code}")
@@ -127,107 +127,102 @@ def main() -> int:
     voice.PUBLIC_BASE_URL = "https://example.test"
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
     check("PUBLIC_BASE_URL 이 우선한다",
-          'action="https://example.test/api/voice/recording"' in body, "")
+          "https://example.test/api/voice/" in body, "")
     voice.PUBLIC_BASE_URL = ""
 
     # ── 1턴 인사 ─────────────────────────────────────────────
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
     ok = ("<Say" in body and "<Record" in body and "동행고리" in body
-          and "119" in body and "/api/voice/recording" in body)
+          and "/api/voice/recording" in body)
     check("인사 → 녹음", ok, "")
-    check("문답(Gather) 없음", "<Gather" not in body, "AI가 대화를 시작하면 설계가 깨진다")
+    # 안내 멘트에는 119 를 넣지 않는다. 긴급은 발화로 감지해 담당자로 넘기고,
+    # 전환이 실패했을 때만 119 를 안내한다(아래 '연결 실패' 검사 참조).
+    check("안내 멘트에 119 없음", "119" not in body, "")
+    # AI 가 자유롭게 대화하면 설계가 깨진다. <Gather> 는 정해진 번호만 받으므로
+    # 대화가 아니다 — 음성을 해석해 분기하는 것이 아니라 키를 세는 것이다.
+    check("음성으로 분기하지 않음",
+          'numDigits="1"' in body and "input=" not in body, "DTMF 만 받는다")
 
-    # ── 1턴 분기 ─────────────────────────────────────────────
+    # ── 본인 확인을 통화 앞에서 묻는다 ───────────────────────
+    # 예전에는 녹음 → STT → 되묻기 순이었는데, 그 대기 사이에 통화가 끊겨
+    # 확인 질문이 들리지 않았다. 앞으로 옮기면 STT 대기가 통화 끝으로 밀린다.
+    body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
+    ok = ("<Gather" in body and "박순자" in body and "1번" in body and "2번" in body
+          and "/api/voice/identity" in body)
+    check("등록 대상자 → 1번/2번 묻기", ok, "")
+
+    # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
+    check("키 안 눌러도 흘러갈 곳이 있음",
+          "<Record" in body and "who=unknown" in body,
+          "Gather 뒤에 Say+Record 가 따라온다")
+
+    # 미등록 번호는 물을 이름이 없다 — 바로 증상을 받는다
+    body = post(client, "/api/voice/incoming", call_params(PHONE_NEW)).text
+    check("미등록 번호 → 묻지 않고 바로 녹음",
+          "<Gather" not in body and "<Record" in body, "")
+
+    # ── 1번 / 2번 / 무입력 ───────────────────────────────────
+    b1 = post(client, "/api/voice/identity", call_params(PHONE_SELF, Digits="1")).text
+    check("1번 → 증상을 묻고 who=self",
+          "편찮으신지" in b1 and "who=self" in b1, "")
+
+    b2 = post(client, "/api/voice/identity", call_params(PHONE_SELF, Digits="2")).text
+    check("2번 → 성함·읍면동을 묻고 who=other",
+          "성함" in b2 and "읍면동" in b2 and "who=other" in b2, "")
+
+    b3 = post(client, "/api/voice/identity", call_params(PHONE_SELF, Digits="")).text
+    check("엉뚱한 입력 → who=unknown", "who=unknown" in b3, "")
+
+    # ── 녹음 처리 ────────────────────────────────────────────
+    def newest():
+        conn = db.get_conn()
+        rid = conn.execute("SELECT MAX(id) FROM intakes").fetchone()[0]
+        conn.close()
+        return db.get_intake(rid)
+
     # ① 녹음 없음
-    before = len(db.list_intakes(limit=200))
-    body = post(client, "/api/voice/recording",
+    before = len(db.list_intakes(200))
+    body = post(client, "/api/voice/recording?who=self",
                 call_params(PHONE_SELF, RecordingUrl="", RecordingDuration="0", Digits="")).text
-    after = len(db.list_intakes(limit=200))
-    check("① 녹음 없음 → 접수 안 만듦", "<Hangup/>" in body and after == before,
-          f"접수 {before}→{after}")
+    check("① 녹음 없음 → 접수 안 만듦",
+          "<Hangup/>" in body and len(db.list_intakes(200)) == before, "")
 
     # ② 전사 실패
     def boom(url):
         raise RuntimeError("stt 실패")
     voice._transcribe_url = boom
-    before = len(db.list_intakes(limit=200))
-    body = post(client, "/api/voice/recording", rec_params(PHONE_SELF)).text
-    after = len(db.list_intakes(limit=200))
+    before = len(db.list_intakes(200))
+    body = post(client, "/api/voice/recording?who=self", rec_params(PHONE_SELF)).text
     check("② 전사 실패 → 접수 안 만듦",
-          "<Hangup/>" in body and "알아듣지" in body and after == before, f"접수 {before}→{after}")
+          "알아듣지" in body and len(db.list_intakes(200)) == before, "")
 
-    # ③ 긴급 → 2턴으로 가지 않고 즉시 전환
+    # ③ 긴급 → 통화 중 전환. 2턴으로 가지 않는다.
     body = say_next(client, PHONE_SELF, "가슴이 답답하고 숨이 차")
     check("③ 긴급 → 통화 중 <Dial>",
           "<Dial" in body and STAFF in body and "<Record" not in body, "")
 
-    # ④ 본인(등록된 번호) → 이름 확인 질문
-    body = say_next(client, PHONE_SELF, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데")
-    check("④ 등록 대상자 → 이름 확인 질문",
-          "박순자" in body and "맞으실까요" in body and "<Record" in body
-          and "/api/voice/confirm" in body, "")
-    intake_id = body.split("intake=")[1].split('"')[0] if "intake=" in body else ""
+    # ④ 정상 → 접수하고 끝낸다. 되묻지 않는다(앞에서 이미 물었다).
+    voice._transcribe_url = lambda url: "허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아"
+    body = post(client, "/api/voice/recording?who=self", rec_params(PHONE_SELF)).text
+    row = newest()
+    check("④ 정상 → 접수 안내 후 종료",
+          "<Hangup/>" in body and "<Record" not in body and "접수했습니다" in body,
+          f"#{row['id']}")
+    check("④ 병원명이 발화에서 잡힘", row["hospital"] == "송정병원", f"{row['hospital']}")
 
-    # ⑤ 보호자 번호, 후보 1명
-    body = say_next(client, PHONE_GUARD, "어머니 모레 정형외과 모시고 가야 해요")
-    check("⑤ 대리(후보 1명) → 관계+이름 확인",
-          "박순자" in body and "맞으실까요" in body and "<Record" in body, "")
+    # ⑤ 누른 번호가 접수에 남는다. '확인됨' 으로 올리지 않는다 —
+    #    남의 폰으로 건 사람도 1번을 누를 수 있다.
+    check("⑤ 1번 → 추정 (확인됨 아님)",
+          row["identity_status"] == "추정" and "1번" in (row["identity_answer"] or ""),
+          f"[{row['identity_status']}] {row['identity_answer']}")
 
-    # ⑥ 보호자 번호에 후보가 둘 이상 — 시드에 없으므로 만들어서 검사한다
-    #    (부부가 한 보호자를 공유하는 실제로 흔한 경우)
-    conn = db.get_conn()
-    conn.execute(
-        "INSERT OR REPLACE INTO profiles (phone,id,name,region,guardian_json) VALUES (?,?,?,?,?)",
-        ("010-5555-0001", "PT1", "테스트순자", "전남 고흥군 ○○면",
-         '{"name":"테스트딸","relation":"딸","phone":"010-9876-5432"}'))
-    conn.commit()
-    conn.close()
-    try:
-        body = say_next(client, PHONE_GUARD, "어머니 모레 정형외과 모시고 가야 해요")
-        check("⑥ 대리(후보 2명 이상) → 성함만 요청",
-              "어느 어르신" in body and "성함" in body and "<Record" in body, "")
-    finally:
-        conn = db.get_conn()
-        conn.execute("DELETE FROM profiles WHERE phone='010-5555-0001'")
-        conn.commit()
-        conn.close()
+    post(client, "/api/voice/recording?who=other", rec_params(PHONE_SELF))
+    check("⑤ 2번 → 확인 필요", newest()["identity_status"] == "확인 필요", "")
 
-    # ⑦ 미등록 번호 → 성함·읍면동
-    body = say_next(client, PHONE_NEW, "내일 병원 좀 가야 해")
-    check("⑦ 미등록 → 성함·읍면동 요청",
-          "성함" in body and "읍면동" in body and "<Record" in body, "")
-
-    # ── 2턴 분기 ─────────────────────────────────────────────
-    conf = f"/api/voice/confirm?intake={intake_id}"
-
-    # ⑧ 답변 없이 끊음 → 확인 필요로 남긴다
-    body = post(client, conf,
-                call_params(PHONE_SELF, RecordingUrl="", RecordingDuration="0", Digits="")).text
-    row = db.get_intake(int(intake_id)) if intake_id else {}
-    check("⑧ 답변 없음 → 확인 필요",
-          "<Hangup/>" in body and (row or {}).get("identity_status") == "확인 필요",
-          f"상태={(row or {}).get('identity_status')}")
-
-    # ⑩ 이름 일치 → 추정 (확인됨이 아니다 — 확정은 사람이 한다)
-    voice._transcribe_url = lambda url: "네 박순자 맞아요"
-    post(client, conf, rec_params(PHONE_SELF))
-    row = db.get_intake(int(intake_id))
-    check("⑩ 이름 일치 → 추정 + 원문 보존",
-          row["identity_status"] == "추정" and "박순자" in (row["identity_answer"] or ""),
-          f"{row['identity_status']} / {row['identity_answer']}")
-
-    # ⑪ 이름 불일치 → 확인 필요
-    voice._transcribe_url = lambda url: "아니야 나는 김철수여"
-    post(client, conf, rec_params(PHONE_SELF))
-    row = db.get_intake(int(intake_id))
-    check("⑪ 이름 불일치 → 확인 필요",
-          row["identity_status"] == "확인 필요" and "김철수" in (row["identity_answer"] or ""),
-          f"{row['identity_status']} / {row['identity_answer']}")
-
-    # ⑨ 확인 답변에서 긴급 → 전환
-    voice._transcribe_url = lambda url: "아이고 숨이 차고 가슴이 답답해"
-    body = post(client, conf, rec_params(PHONE_SELF)).text
-    check("⑨ 확인 답변에서 긴급 → <Dial>", "<Dial" in body and STAFF in body, "")
+    post(client, "/api/voice/recording?who=unknown", rec_params(PHONE_SELF))
+    r = newest()
+    check("⑤ 무입력 → 확인 필요",
+          r["identity_status"] == "확인 필요" and "응답 없음" in (r["identity_answer"] or ""), "")
 
     # ── 긴급 전환 결과 ───────────────────────────────────────
     # 담당자가 못 받은 것을 아무도 모르는 상태가 제일 위험하다.
