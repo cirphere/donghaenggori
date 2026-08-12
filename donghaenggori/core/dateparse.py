@@ -11,6 +11,57 @@ import re
 _WEEKDAYS = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 _REL_DAYS = {"오늘": 0, "낼": 1, "내일": 1, "모레": 2, "모래": 2, "글피": 3}
 
+# 표현이 여러 개 나왔을 때 "마지막 것이 최종"이라고 볼 수 있는 경우는
+# **말을 고쳤을 때뿐**이다. 그 외에는 확정하면 안 된다.
+#
+#   정정   "내일 아니고 모레"        → 모레
+#   선택지 "10시나 11시쯤"          → 확인 필요 (11시로 정하면 안 된다)
+#   범위   "10시부터 11시 사이"      → 확인 필요
+#   부정   "10시는 아니에요"         → 확인 필요
+#
+# 처음에는 무조건 마지막을 채택했는데, 선택지·범위·부정을 전부 확정으로
+# 처리해 버렸다. 어르신은 "화요일이나 수요일" 처럼 말하는 일이 흔하고,
+# 그걸 수요일로 확정하면 헛걸음이 난다.
+_CORRECTION = re.compile(r"아니|말고|말구|아니라|아니고")
+# 마지막 표현 **뒤에** 붙는 부정 — "열 시는 아니에요"
+_TRAILING_NEGATION = re.compile(r"^\s*(?:는|은|이|가)?\s*아니")
+
+
+# 확정하지 못한 사유. 확인 질문 문구가 사유마다 달라야 한다 —
+# "오전인가요 오후인가요"와 "둘 중 언제신가요"는 다른 질문이다.
+AMBIGUOUS_MERIDIEM = "오전·오후 불명"
+AMBIGUOUS_MULTIPLE = "복수 표현"
+AMBIGUOUS_NEGATED = "부정"
+
+
+def _resolve(cands: list[tuple[int, object, str]], text: str,
+             ends: list[int]) -> tuple[object, str, bool, bool, str | None]:
+    """후보들 중 무엇을 채택할지 정한다.
+
+    반환: (값, 표현, corrected, confident, 사유)
+    값이 여럿이면 정정으로 이어진 경우만 마지막을 쓰고, 아니면 확정하지 않는다.
+    """
+    order = sorted(range(len(cands)), key=lambda i: cands[i][0])
+    idx = order[-1]
+    _, value, label = cands[idx]
+
+    # 마지막 표현 바로 뒤가 부정이면 그 값을 근거로 쓸 수 없다
+    if _TRAILING_NEGATION.match(text[ends[idx]:]):
+        return None, label, False, False, AMBIGUOUS_NEGATED
+
+    if len({c[1] for c in cands}) <= 1:
+        return value, label, False, True, None
+
+    # 값이 둘 이상 — 직전 표현과 이 표현 사이에 정정 표현이 있는지 본다
+    between = text[ends[order[-2]]:cands[idx][0]]
+    if _CORRECTION.search(between):
+        return value, label, True, True, None
+
+    # 선택지·범위 — 어느 쪽인지 우리가 고르면 안 된다. 값을 비우고 들은 표현을
+    # 그대로 넘겨서, 확인 질문이 "10시 / 11시 중 언제신가요"가 되게 한다.
+    spoken = " / ".join(dict.fromkeys(cands[i][2] for i in order))
+    return None, spoken, False, False, AMBIGUOUS_MULTIPLE
+
 
 def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
     """발화 텍스트에서 날짜 표현을 찾아 해석한다.
@@ -28,12 +79,13 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
     t = text.replace(" ", "")          # 위치 비교를 위해 공백 제거본 하나로 통일한다
 
     cands: list[tuple[int, str, str]] = []      # (위치, 날짜, 원문 표현)
+    ends: list[int] = []                        # 각 표현이 끝나는 위치
 
     # 1) 오늘/내일/모레/글피
     for word, delta in _REL_DAYS.items():
         for m in re.finditer(re.escape(word), t):
             d = today + datetime.timedelta(days=delta)
-            cands.append((m.start(), d.isoformat(), word))
+            cands.append((m.start(), d.isoformat(), word)); ends.append(m.end())
 
     # 2) (이번주/다음주/담주) + 요일
     for m in re.finditer(r"(이번주|다음주|담주)?([월화수목금토일])요일", t):
@@ -45,12 +97,12 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
             days_ahead = 7
         d = today + datetime.timedelta(days=days_ahead)
         label = (f"{base_week} " if base_week else "") + f"{m.group(2)}요일"
-        cands.append((m.start(), d.isoformat(), label))
+        cands.append((m.start(), d.isoformat(), label)); ends.append(m.end())
 
     # 3) N일 뒤/후
     for m in re.finditer(r"(\d+)일(뒤|후)", t):
         d = today + datetime.timedelta(days=int(m.group(1)))
-        cands.append((m.start(), d.isoformat(), f"{m.group(1)}일 {m.group(2)}"))
+        cands.append((m.start(), d.isoformat(), f"{m.group(1)}일 {m.group(2)}")); ends.append(m.end())
 
     # 4) M월 D일 (연도 없으면 올해, 이미 지났으면 내년)
     for m in re.finditer(r"(\d{1,2})월(\d{1,2})일", t):
@@ -61,16 +113,14 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
             continue
         if d < today:
             d = datetime.date(today.year + 1, month, day)
-        cands.append((m.start(), d.isoformat(), f"{month}월 {day}일"))
+        cands.append((m.start(), d.isoformat(), f"{month}월 {day}일")); ends.append(m.end())
 
     if not cands:
         return None
 
-    cands.sort(key=lambda c: c[0])
-    _, date_value, label = cands[-1]
-    # 표현이 여러 번 나와도 가리키는 날짜가 하나면 정정이 아니다("내일 내일")
-    corrected = len({c[1] for c in cands}) > 1
-    return {"date": date_value, "label": label, "confident": True, "corrected": corrected}
+    value, label, corrected, confident, why = _resolve(cands, t, ends)
+    return {"date": value, "label": label, "confident": confident,
+            "corrected": corrected, "ambiguous": why}
 
 
 # 오후로 읽어야 하는 말들. '낮 1시'는 13시, '낮 12시'는 12시다.
@@ -90,6 +140,7 @@ def parse_time(text: str) -> dict | None:
     """
     t = text.replace(" ", "")
     cands: list[tuple[int, str | None, str]] = []
+    ends: list[int] = []
 
     for m in re.finditer(r"(오전|오후|아침|저녁|밤|낮|새벽)?(\d{1,2})시(?:(\d{1,2})분|(반))?", t):
         meridiem, hour = m.group(1), int(m.group(2))
@@ -114,16 +165,18 @@ def parse_time(text: str) -> dict | None:
             label += f" {m.group(3)}분"
 
         if pending_ambiguous:
-            cands.append((m.start(), None, label))
+            cands.append((m.start(), None, label)); ends.append(m.end())
             continue
 
-        cands.append((m.start(), f"{hour:02d}:{minute:02d}", label))
+        cands.append((m.start(), f"{hour:02d}:{minute:02d}", label)); ends.append(m.end())
 
     if not cands:
         return None
 
-    cands.sort(key=lambda c: c[0])
-    _, value, label = cands[-1]
-    corrected = len({c[1] for c in cands}) > 1
-    return {"time": value, "label": label, "confident": value is not None,
-            "corrected": corrected}
+    value, label, corrected, confident, why = _resolve(cands, t, ends)
+    # 오전·오후를 몰라 value 가 None 인 경우도 확정할 수 없다
+    if confident and value is None:
+        why = AMBIGUOUS_MERIDIEM
+    return {"time": value, "label": label,
+            "confident": confident and value is not None,
+            "corrected": corrected, "ambiguous": why}

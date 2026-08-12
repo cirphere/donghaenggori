@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from . import card as card_mod
 from . import classify as classify_mod
+from . import dateparse
 from . import db
 from . import hospital as hospital_mod
 from . import needlevel as need_mod
@@ -254,13 +255,13 @@ def _build_card(phone, utterance, a, prof, hres, nres,
                          else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
     if not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
-        questions.append("방문 날짜를 한 번 더 확인 부탁드립니다.")
+        questions.append(_ambiguity_question(a.date or {}, "날짜"))
 
     # 시각은 없어도 접수를 막지 않는다. 다만 오전·오후를 알 수 없는 "3시"는
     # 우리가 골라주지 않고 되묻는다 — 잘못 고르면 반나절을 헛걸음한다.
     if a.time and not a.time.get("confident"):
         flags.append("확인 필요: 방문 시각")
-        questions.append(f"말씀하신 {a.time['label']}, 오전인가요 오후인가요?")
+        questions.append(_ambiguity_question(a.time, "시각"))
     elif not a.time:
         questions.append("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.")
 
@@ -290,6 +291,22 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         target_candidates=candidates,
         field_status=_field_status(a, hres, target_status, dept),
         field_evidence=_field_evidence(a, hres, target_evidence, dept))
+
+
+def _ambiguity_question(slot: dict, kind: str) -> str:
+    """왜 확정하지 못했는지에 맞는 질문을 만든다.
+
+    "10시나 11시"에 대고 "오전인가요 오후인가요"를 물으면 어긋난다.
+    어르신이 실제로 말한 표현을 그대로 인용해서 되묻는다.
+    """
+    label, why = slot.get("label") or "", slot.get("ambiguous")
+    if why == dateparse.AMBIGUOUS_MULTIPLE:
+        return f"말씀하신 {label} 중에 어느 쪽으로 잡을까요?"
+    if why == dateparse.AMBIGUOUS_NEGATED:
+        return f"{label} — 아니라고 하셨는데, 그러면 언제로 잡을까요?"
+    if kind == "시각":
+        return f"말씀하신 {label}, 오전인가요 오후인가요?"
+    return "방문 날짜를 한 번 더 확인 부탁드립니다."
 
 
 def _field_status(a, hres, target_status: str, dept) -> dict[str, str]:

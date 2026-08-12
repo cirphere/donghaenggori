@@ -46,6 +46,13 @@ MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "30"))
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
 DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 
+# 시연 전용 — 발표자가 자기 폰으로 걸었을 때 등록된 대상자로 조회되게 한다.
+# 이게 없으면 본선에서 시연 통화가 전부 '신규 대상자(미등록 번호)'로 뜬다.
+# **본인확인이 아니다.** 조회 키를 바꿔 끼우는 것뿐이고, 대상자 확정은
+# 여느 통화와 똑같이 사회복지사가 한다. 두 값이 다 있어야 동작한다.
+DEMO_CALLER_PHONE = os.environ.get("DEMO_CALLER_PHONE", "")
+DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
+
 GREETING = ("안녕하세요, 동행고리 인공지능 서비스입니다. "
             "어느 병원에 언제 가시는지 말씀해 주세요. "
             "많이 아프시거나 급한 상황이면 지금 끊고 119에 전화해 주세요.")
@@ -117,11 +124,19 @@ async def incoming(request: Request) -> Response:
     return _xml(_say(GREETING) + _record(str(request.url_for("voice_recording"))))
 
 
+def _lookup_phone(raw: str) -> str:
+    """조회에 쓸 번호. 시연용 매핑이 걸려 있으면 바꿔 끼운다."""
+    if DEMO_CALLER_PHONE and DEMO_CALLER_TARGET:
+        if db.normalize_phone(raw) == db.normalize_phone(DEMO_CALLER_PHONE):
+            return DEMO_CALLER_TARGET
+    return raw
+
+
 @router.post("/recording", name="voice_recording")
 async def recording(request: Request) -> Response:
     """요청 내용 녹음이 끝났다. 어르신은 아직 통화 중이다."""
     form = await _verify(request)
-    phone = form.get("From") or ""
+    phone = _lookup_phone(form.get("From") or "")
 
     text = _read_recording(form)
     if text is None:
@@ -150,7 +165,7 @@ async def recording(request: Request) -> Response:
 async def confirm(request: Request) -> Response:
     """본인 확인 답변이 녹음됐다. 해석하지 않고 원문을 남긴다."""
     form = await _verify(request)
-    phone = form.get("From") or ""
+    phone = _lookup_phone(form.get("From") or "")
     try:
         intake_id = int(request.query_params.get("intake") or 0)
     except ValueError:
