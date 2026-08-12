@@ -309,17 +309,58 @@ def case19() -> None:
           f"맨위={top['status']} / 처리={changed} 재요청={again} → {row['status']}")
 
 
+# "마지막 표현이 최종"은 **말을 고쳤을 때만** 맞다. 선택지·범위·부정까지
+# 확정해 버리면 헛걸음이 난다 — 어르신은 "화요일이나 수요일"처럼 자주 말한다.
+def case20() -> None:
+    cases = [
+        # (발화, 종류, 값, 확신)
+        ("내일 아니고 모레 가야 해",      "date", "2026-07-09", True),   # 정정
+        ("모레 가야겄어",               "date", "2026-07-09", True),   # 단일
+        ("화요일이나 수요일에 가야지",      "date", None,         False),  # 선택지
+        ("내일부터 모레까지 시간 돼",      "date", None,         False),  # 범위
+        ("10시 말고 11시로 해주쇼",      "time", "11:00",      True),   # 정정
+        ("10시나 11시쯤 가면 돼",       "time", None,         False),  # 선택지
+        ("10시부터 11시 사이에",        "time", None,         False),  # 범위
+        ("10시는 아니에요",            "time", None,         False),  # 부정
+        ("3시에 가야 해",             "time", None,         False),  # 오전·오후 불명
+    ]
+    bad = []
+    for text, kind, want, conf in cases:
+        r = (dateparse.parse_date(text, BASE_DATE) if kind == "date"
+             else dateparse.parse_time(text))
+        got = (r or {}).get("date" if kind == "date" else "time")
+        if got != want or (r or {}).get("confident", False) != conf:
+            bad.append(text)
+
+    # 확인 질문이 사유에 맞아야 한다 — "10시나 11시"에 대고 오전·오후를 물으면 안 된다
+    q = pipeline.run(PHONE_MAIN, "모레 10시나 11시쯤 정형외과").card.confirm_questions
+    right_q = any("어느 쪽" in x for x in q) and not any("오전인가요" in x for x in q)
+
+    check(20, "선택지·범위·부정은 확정하지 않는다", not bad and right_q,
+          (f"실패 {bad}" if bad else "9/9") + f" · 질문={'사유별' if right_q else '어긋남'}")
+
+
+# 통신망은 국가번호를 붙여 준다. 이걸 처리 못 하면 실전화가 오는 순간
+# 모든 통화가 '신규 대상자(미등록 번호)'가 된다.
+def case21() -> None:
+    forms = ["010-1234-5678", "01012345678", "+821012345678", "821012345678"]
+    names = [(db.get_profile(f) or {}).get("name") for f in forms]
+    ok = all(n == names[0] and n for n in names)
+    check(21, "발신번호 국가번호(+82) 정규화", ok,
+          " / ".join(f"{f}→{n or '못 찾음'}" for f, n in zip(forms, names)))
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17, case18, case19):
+               case14, case15, case16, case17, case18, case19, case20, case21):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 7건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 9건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):

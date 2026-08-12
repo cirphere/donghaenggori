@@ -203,9 +203,21 @@ def upsert_profile(conn: sqlite3.Connection, phone: str, p: dict) -> None:
 # ------------------------------------------------------------- 프로필/이력 --
 
 def normalize_phone(phone: str) -> str:
+    """번호 표기를 하나로 맞춘다. 010-1234-5678 형태가 기준이다.
+
+    통신망은 국가번호를 붙여 준다 — 실제 수신 통화의 발신번호는 보통
+    +821012345678 이다. 이걸 그대로 조회하면 등록된 대상자를 못 찾아
+    모든 통화가 '신규 대상자(미등록 번호)'가 된다. 전화 연동을 붙이는
+    순간 케어 프로필 조회가 통째로 깨지는 자리다.
+    """
     digits = "".join(ch for ch in phone if ch.isdigit())
+    # +82 10 xxxx xxxx → 010 xxxx xxxx
+    if digits.startswith("82") and len(digits) >= 11:
+        digits = "0" + digits[2:]
     if len(digits) == 11:
         return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
+    if len(digits) == 10 and digits.startswith("0"):
+        return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
     return phone.strip()
 
 
