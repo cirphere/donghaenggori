@@ -20,9 +20,8 @@ SOURCES = [
     ("광주광역시_사회복지 이용시설 현황_20251231.csv", "C-DS06", "aggregate"),
     ("광주광역시_시내버스 정류소 현황_20241231.csv", "C-DS14", "aggregate"),
     ("광주광역시_대기오염측정망 운영_20260531.csv", "C-DS18", "station"),
-    # 전남 노인복지관 명단. 한글 문서라 csv 가 아니지만, 파생 csv 를 따로 만들면
-    # 원본과 어긋날 수 있어 원본을 그대로 두고 로더가 읽는다.
-    ("전라남도_노인여가시설_경로당_노인복지관_2026.hwpx", "C-DS04", "point"),
+    # 전남 노인복지관. 원본은 한글 문서라 tools/extract_jeonnam_hwpx.py 로 뽑았다.
+    ("전라남도_노인복지관_현황_2026.csv", "C-DS04", "point"),
 ]
 
 
@@ -71,85 +70,28 @@ def load_air_stations(path: str) -> list[dict]:
     return out
 
 
-# 전남 시군 — 표가 이 순서로 묶여 있고, 시설명에서 시군을 못 읽으면 앞 행을 잇는다.
-_JEONNAM_SIGUN = [
-    "목포시", "여수시", "순천시", "나주시", "광양시", "담양군", "곡성군", "구례군",
-    "고흥군", "보성군", "화순군", "장흥군", "강진군", "해남군", "영암군", "무안군",
-    "함평군", "영광군", "장성군", "완도군", "진도군", "신안군",
-]
-_JEONNAM_AREA_CODE = "061"      # 원본 표는 국번을 생략했다
-
-
-def _hwpx_texts(path: str, table_index: int) -> list[str]:
-    """hwpx(zip+XML)에서 표 하나의 텍스트 조각을 순서대로 뽑는다.
-
-    한글 문서라 csv 처럼 열이 정렬돼 있지 않다. 셀 병합(본관·분관)이 있어
-    고정 폭으로 자를 수 없으므로, 조각을 순서대로 받아 연번 기준으로 나눈다.
-    """
-    import re
-    import zipfile
-
-    with zipfile.ZipFile(path) as z:
-        xml = z.read("Contents/section0.xml").decode("utf-8")
-    starts = [m.start() for m in re.finditer(r"<hp:tbl", xml)]
-    if len(starts) <= table_index:
-        return []
-    end = starts[table_index + 1] if len(starts) > table_index + 1 else len(xml)
-    seg = xml[starts[table_index]:end]
-    return [t.strip() for t in re.findall(r"<hp:t>([^<]*)</hp:t>", seg) if t.strip()]
-
-
 def load_jeonnam_senior_centers(path: str) -> list[dict]:
-    """C-DS04 전라남도 노인복지시설 — 노인복지관 개별 명단(2026. 1. 기준).
+    """C-DS04 전라남도 노인복지관 — 개별 시설 레코드(2026. 1. 기준).
 
-    같은 문서의 첫 표(시군별 경로당 등록 수)는 집계표라 쓰지 않는다.
-    두 번째 표가 시설 하나당 한 행인 실제 명단이다.
+    원본은 한글 문서(hwpx)라 저장소에 넣지 않는다 — .gitignore 가 문서 파일을
+    막는다. tools/extract_jeonnam_hwpx.py 로 뽑은 csv 를 읽으며, 원본을 다시
+    받아 재추출하면 같은 파일이 나온다. 같은 문서의 경로당 표는 시군별 집계라
+    시설 검색에 쓸 수 없어 뽑지 않았다.
     """
-    import re
-
-    texts = _hwpx_texts(path, table_index=1)
-    if not texts:
-        return []
-
-    is_phone = re.compile(r"^\d{2,4}-\d{4}$").match
-    is_name = lambda t: any(k in t for k in ("복지관", "복지센터", "복지타운"))
-
-    # 헤더(연번·명칭·시설 소재지·전화번호·계·N개소)를 지나 첫 연번부터 읽는다
-    rows, cur = [], None
-    for t in texts:
-        if t.isdigit() and len(t) <= 2 and not is_phone(t):
-            if cur:
-                rows.append(cur)
-            cur = []
+    out = []
+    for r in _read(path):
+        name = r.get("명칭")
+        if not name:
             continue
-        if cur is not None:
-            cur.append(t)
-    if cur:
-        rows.append(cur)
-
-    out, sigun = [], None
-    for cells in rows:
-        names = [c for c in cells if is_name(c)]
-        phones = [c for c in cells if is_phone(c)]
-        addrs = [c for c in cells if not is_name(c) and not is_phone(c)]
-        if not names:
-            continue
-        name = " / ".join(names)        # 법인명과 시설명이 따로 적힌 행이 있다
-
-        # 시군은 별도 열이 없다. 시설명에서 읽고, 없으면 앞 행을 잇는다
-        # (표가 시군 순으로 묶여 있어 30개소 전부 이 규칙으로 맞는다).
-        found = next((s for s in _JEONNAM_SIGUN
-                      if s in name or s.rstrip("시군") in name), None)
-        sigun = found or sigun
-        region = f"전남 {sigun}" if sigun else "전남"
-
-        addr = addrs[0] if addrs else None
-        phone = f"{_JEONNAM_AREA_CODE}-{phones[0]}" if phones else None
+        sigun = r.get("시군") or ""
+        region = f"전남 {sigun}".strip()
+        addr = r.get("소재지")
         out.append({
             "source": "C-DS04", "name": name, "kind": "노인복지관",
             "region": region,
             "address": f"{region} {addr}" if addr else None,
-            "phone": phone, "lat": None, "lon": None,
+            "phone": r.get("전화번호") or None,
+            "lat": None, "lon": None,
         })
     return out
 
