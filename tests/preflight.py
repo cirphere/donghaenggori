@@ -173,6 +173,32 @@ def check_rbac() -> None:
         log(FAIL, "권한 통제", f"HTTP {code} — 권한 없는 역할이 확정할 수 있음")
 
 
+def check_web_auth() -> None:
+    """화면이 인증 뒤에 있는지 본다. 배포 주소로만 의미가 있는 점검이다.
+
+    localhost 는 nginx 를 거치지 않고 백엔드에 바로 붙으므로 건너뛴다 —
+    거기서 200 이 나오는 것은 정상이다.
+    """
+    if "localhost" in BASE or "127.0.0.1" in BASE:
+        log(WARN, "화면 접근 제한", "로컬 주소라 건너뜀 (배포 주소로 확인할 것)")
+        return
+    try:
+        r = urllib.request.Request(BASE + "/api/dashboard")
+        with urllib.request.urlopen(r, timeout=20) as resp:
+            log(FAIL, "화면 접근 제한",
+                f"HTTP {resp.status} — 인증 없이 접수 목록이 보인다. "
+                ".env 의 STAFF_USER/STAFF_PASSWORD 를 확인할 것")
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            log(OK, "화면 접근 제한", f"인증 필요 (HTTP {e.code})")
+        elif e.code == 302:
+            log(OK, "화면 접근 제한", "Access 로그인으로 유도됨")
+        else:
+            log(WARN, "화면 접근 제한", f"HTTP {e.code}")
+    except Exception as e:
+        log(WARN, "화면 접근 제한", f"확인 실패: {type(e).__name__}")
+
+
 def check_reset_guard() -> None:
     """외부(터널) 요청을 흉내내 초기화가 막히는지 본다. 실제로 지우지 않는다."""
     r = urllib.request.Request(BASE + "/api/reset", data=b"{}", method="POST",
@@ -257,6 +283,7 @@ def main() -> int:
     check_rbac()
     check_summary()
     check_reset_guard()
+    check_web_auth()
     if a.audio:
         check_stt(a.audio)
     else:

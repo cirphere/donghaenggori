@@ -20,6 +20,13 @@ services:
         BUILD_DIR: ${FRONTEND_BUILD_DIR:-dist}
     image: donghaenggori:frontend
     restart: unless-stopped
+    # 기본 인증 자격증명. 비워두면 인증이 꺼지고 기동 로그에 경고가 크게 남는다.
+    # 값은 .env 에만 두고 저장소에 넣지 않는다.
+    environment:
+      STAFF_USER: "${STAFF_USER:-}"
+      STAFF_PASSWORD: "${STAFF_PASSWORD:-}"
+    env_file:
+      - .env
     ports:
       # 로컬 확인용. 터널은 이 포트가 아니라 컨테이너 이름으로 붙는다.
       #

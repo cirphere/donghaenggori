@@ -24,6 +24,11 @@ RUN if [ -f package.json ]; then \
     fi
 
 FROM nginx:alpine
+# htpasswd — 기동 시 .env 값으로 비밀번호 해시를 만든다(저장소에 넣지 않으려고).
+RUN apk add --no-cache apache2-utils
 COPY --from=build /out /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.sh /docker-entrypoint-auth.sh
+RUN chmod +x /docker-entrypoint-auth.sh
 EXPOSE 80
+ENTRYPOINT ["/docker-entrypoint-auth.sh"]
