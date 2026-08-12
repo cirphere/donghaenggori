@@ -159,8 +159,28 @@ table.list td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
 table.list td.dim { color: var(--muted); }
 table.list td.bad { color: var(--need); }
 
-/* 접수 상세 — 행을 누르면 아래로 펼쳐진다 */
+/* ── 팝업 ──────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(20, 26, 23, .45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow: auto;
+}
+.modal {
+  background: var(--paper); border-radius: 10px; width: 100%; max-width: 860px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.22);
+}
+.modal-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--paper); border-radius: 10px 10px 0 0;
+}
+.modal-body { padding: 16px; }
+.modal-body .block:first-child { margin-top: 0; }
+
+/* ── 카드 화면 ─────────────────────────────────────── */
+.card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+td.actions { white-space: nowrap; }
+td.actions button + button { margin-left: 6px; }
 table.list tr.clickable { cursor: pointer; }
 table.list tr.clickable:hover { background: #fafbfa; }
-table.list tr.detail > td { background: #fafbfa; padding: 14px 16px; }
-table.list tr.detail .block:first-child { margin-top: 0; }
