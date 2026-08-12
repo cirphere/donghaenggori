@@ -53,6 +53,14 @@ DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 DEMO_CALLER_PHONE = os.environ.get("DEMO_CALLER_PHONE", "")
 DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
 
+# 우리 서비스의 공개 주소. 2턴 콜백(<Record action=...>)을 만들 때 쓴다.
+#
+# request.url_for 만 쓰면 http:// 가 나온다 — nginx 가 app:8000 에 http 로
+# 붙기 때문이다. 그 주소를 ClawOps 에 주면 Cloudflare 가 301 로 https 에
+# 돌리고, POST 리다이렉트에서 본문이 날아가 확인 단계가 통째로 깨진다.
+# 헤더를 믿는 대신 공개 주소를 직접 적어두는 편이 확실하다.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 GREETING = ("안녕하세요, 동행고리 인공지능 서비스입니다. "
             "어느 병원에 언제 가시는지 말씀해 주세요. "
             "많이 아프시거나 급한 상황이면 지금 끊고 119에 전화해 주세요.")
@@ -61,6 +69,17 @@ BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
+
+def _callback(request: Request, name: str) -> str:
+    """VoiceML 에 넣을 콜백 주소. PUBLIC_BASE_URL 이 있으면 그것을 쓴다."""
+    path = request.url_for(name).path
+    if PUBLIC_BASE_URL:
+        return f"{PUBLIC_BASE_URL}{path}"
+    # 설정이 없으면 요청에서 유추한다. 프록시 뒤에서는 scheme 이 틀릴 수 있어
+    # X-Forwarded-Proto 를 우선한다.
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{proto}://{request.url.netloc}{path}"
+
 
 def _xml(body: str) -> Response:
     return Response(content=f'<?xml version="1.0" encoding="UTF-8"?>\n<Response>{body}</Response>',
@@ -121,7 +140,7 @@ async def _verify(request: Request) -> dict:
 async def incoming(request: Request) -> Response:
     """전화가 걸려왔다. 인사하고 녹음을 시작한다. 대화는 하지 않는다."""
     await _verify(request)
-    return _xml(_say(GREETING) + _record(str(request.url_for("voice_recording"))))
+    return _xml(_say(GREETING) + _record(_callback(request, "voice_recording")))
 
 
 def _lookup_phone(raw: str) -> str:
@@ -155,7 +174,7 @@ async def recording(request: Request) -> Response:
         return _hangup(f"{_receipt(res)} {BYE}")
 
     # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
-    action = f'{request.url_for("voice_confirm")}?intake={intake_id}'
+    action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
     return _xml(_say(question) + _record(action))
 
 

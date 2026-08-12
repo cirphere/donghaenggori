@@ -43,6 +43,8 @@ def sign(url: str, params: dict) -> str:
 def post(client, path, params, *, signed=True):
     url = BASE + path
     headers = {"X-Signature": sign(url, params)} if signed else {}
+    # nginx 뒤에 있는 상태를 흉내낸다 — 스킴은 http, 원래 스킴은 헤더로 온다
+    headers["X-Forwarded-Proto"] = "https"
     return client.post(path, data=params, headers=headers)
 
 
@@ -77,6 +79,20 @@ def main() -> int:
     r = client.post("/api/voice/incoming", data=call_params(PHONE_SELF),
                     headers={"X-Signature": "bogus"})
     check("서명 틀리면 401", r.status_code == 401, f"HTTP {r.status_code}")
+
+    # ── 콜백 주소가 https 로 나가는가 ────────────────────────
+    # nginx 는 app:8000 에 http 로 붙는다. 그대로 두면 콜백이 http 로 나가고,
+    # Cloudflare 가 301 로 돌리면서 POST 본문이 날아가 2턴이 깨진다.
+    voice.PUBLIC_BASE_URL = ""
+    body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
+    check("프록시 뒤에서도 콜백은 https", 'action="https://' in body,
+          body.split('action="')[1].split('"')[0] if 'action="' in body else "없음")
+
+    voice.PUBLIC_BASE_URL = "https://example.test"
+    body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
+    check("PUBLIC_BASE_URL 이 우선한다",
+          'action="https://example.test/api/voice/recording"' in body, "")
+    voice.PUBLIC_BASE_URL = ""
 
     # ── 1턴 인사 ─────────────────────────────────────────────
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
