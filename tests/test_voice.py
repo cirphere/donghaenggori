@@ -216,6 +216,25 @@ def main() -> int:
     audit = [a for a in db.list_audit(10) if a["action"] == "긴급전환"]
     check("전환 결과가 감사 로그에", len(audit) >= 2, f"{len(audit)}건")
 
+    # ── 통화 상태 웹훅 ───────────────────────────────────────
+    r = post(client, "/api/voice/status",
+             call_params(PHONE_SELF, CallStatus="ringing"))
+    check("상태 알림 → 204, 통화 지시 없음",
+          r.status_code == 204 and not r.text.strip(), f"HTTP {r.status_code}")
+
+    # 호전환 결과가 상태 알림으로 오면 그것도 기록한다(action 콜백의 백업)
+    voice._transcribe_url = lambda url: "가슴이 답답하고 숨이 차"
+    post(client, "/api/voice/recording", rec_params(PHONE_SELF))
+    uid2 = db.list_intakes(1)[0]["id"]
+    post(client, "/api/voice/status",
+         call_params(PHONE_SELF, CallStatus="completed", DialCallStatus="busy"))
+    check("상태 알림의 호전환 결과도 기록",
+          db.get_intake(uid2)["transfer_status"] == "통화중",
+          f"{db.get_intake(uid2)['transfer_status']}")
+
+    r = post(client, "/api/voice/status", call_params(PHONE_SELF), signed=False)
+    check("상태 알림도 서명 필요", r.status_code == 401, f"HTTP {r.status_code}")
+
     # ── 중복 접수 표시 ───────────────────────────────────────
     # 방금 PHONE_SELF 로 여러 건 넣었으므로 다음 접수에는 중복 표시가 붙어야 한다
     voice._transcribe_url = lambda url: "모레 정형외과 가야겄어"

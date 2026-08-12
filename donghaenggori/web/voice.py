@@ -129,6 +129,55 @@ def _transfer(request: Request, reason: str, intake_id: int | None = None) -> Re
         f'<Number>{_esc(STAFF_NUMBER)}</Number></Dial>')
 
 
+@router.post("/status", name="voice_status")
+async def call_status(request: Request) -> Response:
+    """통화 상태 알림 — 번호 설정의 '통화 상태 webhook URL' 이 여기로 온다.
+
+    통화 흐름을 지시하지 않는다(VoiceML 을 돌려줄 자리가 아니다). 기록만 한다.
+
+    받을 이벤트 중 실제로 쓰는 것은 **호전환 결과**다. <Dial action> 은 전환이
+    끝나야 오지만 이쪽은 실시간이고, action 콜백이 어떤 이유로 우리에게 닿지
+    못해도 백업이 된다. 담당자가 못 받은 것을 아무도 모르는 상태만은 피해야 한다.
+
+    나머지(발신 시작·벨 울림·응답·종료)는 감사 로그에만 남긴다.
+    """
+    form = await _verify(request)
+    event = (form.get("CallStatus") or form.get("StatusCallbackEvent") or "").strip()
+    raw = (form.get("DialCallStatus") or "").strip().lower()
+
+    if raw:
+        status = _DIAL_STATUS.get(raw, raw)
+        iid = _recent_urgent_intake(form.get("From") or "")
+        if iid:
+            try:
+                db.set_transfer_status(iid, status)
+            except Exception:
+                pass
+    else:
+        try:
+            db.log_audit("전화 시스템", "시스템", "통화상태", "call",
+                         form.get("CallId") or "", event)
+        except Exception:
+            pass
+    # 상태 알림은 통화를 지시하지 않는다 — 빈 응답으로 끝낸다
+    return Response(status_code=204)
+
+
+def _recent_urgent_intake(phone: str) -> int | None:
+    """이 번호의 가장 최근 긴급 접수. 상태 알림에는 intake 를 실을 수 없어서
+    번호로 되짚는다. 통화 한 건이 진행 중인 동안에는 이것으로 충분하다."""
+    if not phone:
+        return None
+    try:
+        rows = db.recent_intakes(phone, minutes=30)
+    except Exception:
+        return None
+    for r in rows:
+        if r.get("status") in ("긴급", "긴급 처리됨"):
+            return r["id"]
+    return None
+
+
 @router.post("/dial-result", name="voice_dial_result")
 async def dial_result(request: Request) -> Response:
     """긴급 전환이 끝났다. 연결됐는지 기록하고, 실패면 119 안내로 마무리한다."""
