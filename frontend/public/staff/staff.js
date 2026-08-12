@@ -29,6 +29,7 @@ document.querySelectorAll(".tab").forEach((t) => {
     document.querySelectorAll(".view").forEach((x) => x.classList.add("hidden"));
     t.classList.add("active");
     $("view-" + t.dataset.view).classList.remove("hidden");
+    closeModal();
     if (t.dataset.view === "queue") loadQueue();
     if (t.dataset.view === "audit") loadAudit();
   };
@@ -83,7 +84,11 @@ async function loadQueue() {
         st.append(b);
       }
       tr.append(st);
-      const act = el("td");
+      const act = el("td", "actions");
+      // 상세보기 — 팝업으로 요약·본인확인·확정결과·카드를 한 번에 본다
+      const detail = el("button", null, "상세보기");
+      detail.onclick = () => openDetail(r.id);
+      act.append(detail);
       if (r.status === "긴급") {
         // 긴급은 접수카드가 없어 확정할 대상이 없다. 사람이 연락을 끝냈다는
         // 표시만 한다 — 안 그러면 목록 맨 위에 쌓여 새 긴급이 묻힌다.
@@ -96,11 +101,12 @@ async function loadQueue() {
         act.append(b);
       }
       tr.append(act);
-      // 행을 누르면 그 접수의 카드를 편다 — 왜 '확인 필요'인지 여기서 본다
+      // 행을 그냥 누르면 한 단계 들어가 카드만 크게 본다.
+      // 팝업은 훑어보는 용도, 이쪽은 들여다보는 용도다.
       tr.classList.add("clickable");
       tr.onclick = (e) => {
         if (e.target.tagName === "BUTTON") return;   // 버튼 클릭과 겹치지 않게
-        toggleDetail(tr, r.id);
+        showCardView(r.id);
       };
       tb.append(tr);
     });
@@ -126,29 +132,83 @@ async function confirmIntake(r) {
   }
 }
 
-// 상세 행 — 한 번 더 누르면 접는다
-async function toggleDetail(tr, id) {
-  const open = tr.nextElementSibling;
-  if (open && open.classList.contains("detail")) { open.remove(); return; }
-  document.querySelectorAll("tr.detail").forEach((x) => x.remove());
+// ── 팝업 ───────────────────────────────────────────────────
+// 접수 목록 위에 겹쳐 띄운다. 목록을 떠나지 않고 훑어볼 수 있게 하려는 것이다.
+function openModal(title) {
+  closeModal();
+  const back = el("div", "modal-backdrop");
+  const box = el("div", "modal");
+  const head = el("div", "modal-head");
+  head.append(el("strong", null, title));
+  const x = el("button", "modal-x", "닫기");
+  x.onclick = closeModal;
+  head.append(x);
+  const body = el("div", "modal-body");
+  box.append(head, body);
+  back.append(box);
+  // 바깥을 누르면 닫는다. 안쪽 클릭은 안 닫히게 타깃을 확인한다.
+  back.onclick = (e) => { if (e.target === back) closeModal(); };
+  document.body.append(back);
+  document.addEventListener("keydown", onEsc);
+  return body;
+}
 
-  const row = el("tr", "detail");
-  const td = el("td");
-  td.colSpan = 6;
-  td.append(el("div", "dim", "불러오는 중…"));
-  row.append(td);
-  tr.after(row);
+function closeModal() {
+  document.querySelectorAll(".modal-backdrop").forEach((x) => x.remove());
+  document.removeEventListener("keydown", onEsc);
+}
 
+function onEsc(e) { if (e.key === "Escape") closeModal(); }
+
+async function openDetail(id) {
+  const body = openModal(`접수 #${id}`);
+  body.append(el("div", "dim", "불러오는 중…"));
   try {
     const d = await api.getIntake(id);
-    td.replaceChildren(renderStored(d));
+    body.replaceChildren(renderStored(d));
   } catch (e) {
-    td.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
+    body.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
   }
 }
 
-// 저장된 접수를 그린다. 새 접수와 달리 응답 모양이 조금 다르다 —
-// 카드는 접수 당시 그대로이고, 확정·본인확인 결과가 따로 붙어 있다.
+// ── 카드 화면 ──────────────────────────────────────────────
+// 행을 누르면 목록을 접고 카드만 크게 띄운다. 확인 전화를 걸면서 볼 화면이라
+// 본인확인·확정결과 같은 관리 정보는 빼고 카드만 남긴다.
+async function showCardView(id) {
+  const view = $("view-card"), body = $("cardBody");
+  document.querySelectorAll(".view").forEach((x) => x.classList.add("hidden"));
+  view.classList.remove("hidden");
+  $("cardTitle").textContent = `접수 #${id}`;
+  body.replaceChildren(el("div", "dim", "불러오는 중…"));
+  try {
+    const d = await api.getIntake(id);
+    body.replaceChildren(d.card
+      ? renderCard({ card: d.card, channel: d.channel, intent: d.intent,
+                     intent_source: "저장된 접수", facilities: [] })
+      : noCardNotice(d));
+  } catch (e) {
+    body.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
+  }
+}
+
+function backToQueue() {
+  document.querySelectorAll(".view").forEach((x) => x.classList.add("hidden"));
+  $("view-queue").classList.remove("hidden");
+}
+
+// 긴급은 카드를 만들지 않는다. 이 기능 이전에 들어온 접수도 카드가 없다.
+function noCardNotice(d) {
+  const b = el("div", "block");
+  b.append(el("div", "dim",
+    d.status === "긴급" || d.status === "긴급 처리됨"
+      ? "긴급 접수는 접수카드를 만들지 않습니다 — 사람에게 바로 넘긴 건입니다."
+      : "이 접수에는 저장된 카드가 없습니다(카드 보존 기능 이전 접수)."));
+  b.append(el("blockquote", null, `“${d.raw_utterance || ""}”`));
+  return b;
+}
+
+// 저장된 접수 전체 — 팝업에서 쓴다. 카드에 더해 전화 본인확인과 확정 결과를
+// 함께 보여준다.
 function renderStored(d) {
   const frag = document.createDocumentFragment();
 
@@ -177,20 +237,10 @@ function renderStored(d) {
     frag.append(b);
   }
 
-  if (!d.card) {
-    // 긴급은 카드를 만들지 않는다. 이 기능 이전에 들어온 접수도 카드가 없다.
-    const b = el("div", "block");
-    b.append(el("div", "dim",
-      d.status === "긴급" || d.status === "긴급 처리됨"
-        ? "긴급 접수는 접수카드를 만들지 않습니다 — 사람에게 바로 넘긴 건입니다."
-        : "이 접수에는 저장된 카드가 없습니다(카드 보존 기능 이전 접수)."));
-    b.append(el("blockquote", null, `“${d.raw_utterance || ""}”`));
-    frag.append(b);
-    return frag;
-  }
-
-  frag.append(renderCard({ card: d.card, channel: d.channel, intent: d.intent,
-                           intent_source: "저장된 접수", facilities: [] }));
+  frag.append(d.card
+    ? renderCard({ card: d.card, channel: d.channel, intent: d.intent,
+                   intent_source: "저장된 접수", facilities: [] })
+    : noCardNotice(d));
   return frag;
 }
 
@@ -472,6 +522,8 @@ async function loadAudit() {
     tb.append(rowOf(el("td", "bad", "불러오지 못했습니다: " + e.message)));
   }
 }
+
+$("btnBack").onclick = backToQueue;
 
 loadStatus();
 loadQueue();
