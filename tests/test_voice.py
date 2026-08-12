@@ -80,6 +80,19 @@ def main() -> int:
                     headers={"X-Signature": "bogus"})
     check("서명 틀리면 401", r.status_code == 401, f"HTTP {r.status_code}")
 
+    # 보내는 쪽이 query 를 빼고 서명했거나 sha256= 접두사를 붙여도 통과해야 한다
+    p2 = call_params(PHONE_SELF)
+    sig_noquery = sign(BASE + "/api/voice/confirm", p2)
+    r = client.post("/api/voice/confirm?intake=1", data=p2,
+                    headers={"X-Signature": sig_noquery,
+                             "X-Forwarded-Proto": "https"})
+    check("query 없이 서명해도 통과", r.status_code == 200, f"HTTP {r.status_code}")
+
+    r = client.post("/api/voice/incoming", data=p2,
+                    headers={"X-Signature": "sha256=" + sign(BASE + "/api/voice/incoming", p2),
+                             "X-Forwarded-Proto": "https"})
+    check("sha256= 접두사도 통과", r.status_code == 200, f"HTTP {r.status_code}")
+
     # ── 콜백 주소가 https 로 나가는가 ────────────────────────
     # nginx 는 app:8000 에 http 로 붙는다. 그대로 두면 콜백이 http 로 나가고,
     # Cloudflare 가 301 로 돌리면서 POST 본문이 날아가 2턴이 깨진다.

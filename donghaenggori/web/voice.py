@@ -32,7 +32,11 @@ import tempfile
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
+import logging
+
 from ..core import db, pipeline
+
+_log = logging.getLogger("donghaenggori.voice")
 
 router = APIRouter(prefix="/api/voice", tags=["전화(ClawOps)"])
 
@@ -201,22 +205,86 @@ async def dial_result(request: Request) -> Response:
 
 # ─────────────────────────────────────────────────── 서명 검증 --
 
-async def _verify(request: Request) -> dict:
-    """X-Signature 검증 후 폼 파라미터를 돌려준다.
+def _sign(data: str) -> str:
+    return base64.b64encode(
+        hmac.new(SIGNING_KEY.encode(), data.encode(), hashlib.sha256).digest()).decode()
 
-    서명: base64(HMAC-SHA256(signingKey, URL + 정렬된 key+value 이어붙이기))
-    키가 없으면 검증할 방법이 없으므로 거절한다. 이 엔드포인트는 인터넷에
-    열려 있어야 하고, 열어둔 채로 두면 누구나 접수를 만들 수 있다.
+
+def _url_candidates(request: Request) -> list[str]:
+    """서명 대상이 됐을 법한 URL 표기들.
+
+    보내는 쪽은 '대시보드에 등록된 주소' 로 서명하는데, 받는 쪽에서 그 문자열을
+    정확히 복원하기가 은근히 어렵다 — 프록시를 거치며 scheme 이 바뀌고,
+    query 를 포함했는지도 알 수 없다. 그래서 후보를 모아 하나라도 맞으면 통과시킨다.
+    맞은 후보는 로그에 남겨, 확인되면 하나로 좁힐 수 있게 한다.
     """
-    form = dict(await request.form())
+    u = request.url
+    path_q = u.path + (f"?{u.query}" if u.query else "")
+    out = [str(u), f"{u.scheme}://{u.netloc}{u.path}"]
+    if PUBLIC_BASE_URL:
+        out += [f"{PUBLIC_BASE_URL}{path_q}", f"{PUBLIC_BASE_URL}{u.path}"]
+    # 프록시 뒤에서 scheme 이 뒤집혀 계산될 수 있다
+    for base in list(out):
+        out.append(base.replace("https://", "http://", 1) if base.startswith("https://")
+                   else base.replace("http://", "https://", 1))
+    return list(dict.fromkeys(out))
+
+
+async def _verify(request: Request) -> dict:
+    """X-Signature 검증 후 파라미터를 돌려준다.
+
+    서명: base64(HMAC-SHA256(signingKey, data)) — data 는 URL 에 정렬된
+    key+value 를 이어붙인 것이다. 키가 없으면 검증할 방법이 없으므로 거절한다.
+    이 엔드포인트는 인터넷에 열려 있어야 하고, 열어둔 채로 두면 누구나 접수를
+    만들 수 있다.
+    """
+    raw = await request.body()
+    try:
+        form = dict(await request.form())
+    except Exception:
+        form = {}
+    if not form and raw:
+        # form 이 아니라 JSON 으로 오는 경우도 대비한다
+        try:
+            import json as _json
+            parsed = _json.loads(raw.decode())
+            if isinstance(parsed, dict):
+                form = {k: str(v) for k, v in parsed.items()}
+        except Exception:
+            pass
+
     if not SIGNING_KEY:
         raise HTTPException(503, "CLAWOPS_SIGNING_KEY 미설정 — 전화 연동이 꺼져 있습니다")
-    data = str(request.url) + "".join(f"{k}{v}" for k, v in sorted(form.items()))
-    expected = base64.b64encode(
-        hmac.new(SIGNING_KEY.encode(), data.encode(), hashlib.sha256).digest()).decode()
-    if not hmac.compare_digest(request.headers.get("X-Signature", ""), expected):
-        raise HTTPException(401, "서명이 올바르지 않습니다")
-    return form
+
+    got = (request.headers.get("X-Signature") or "").strip()
+    if got.lower().startswith("sha256="):        # 접두사를 붙여 보내는 구현도 있다
+        got = got.split("=", 1)[1].strip()
+    if not got:
+        raise HTTPException(401, "X-Signature 헤더가 없습니다")
+
+    joined = "".join(f"{k}{v}" for k, v in sorted(form.items()))
+    tried: list[str] = []
+    for url in _url_candidates(request):
+        for label, data in (("url+params", url + joined), ("url", url)):
+            tried.append(f"{label}:{url}")
+            if hmac.compare_digest(got, _sign(data)):
+                _log.info("서명 확인 — 기준: %s %s", label, url)
+                return form
+    # 본문 그대로, 파라미터만 — 다른 관례도 한 번씩 시도한다
+    for label, data in (("body", raw.decode(errors="replace")), ("params", joined)):
+        tried.append(label)
+        if hmac.compare_digest(got, _sign(data)):
+            _log.info("서명 확인 — 기준: %s", label)
+            return form
+
+    # 이 로그가 유일한 단서다. 보내는 쪽이 어떤 URL 로 서명했는지 알 수 없으니,
+    # 우리가 복원한 URL 들을 그대로 남겨 대조할 수 있게 한다. 키는 넣지 않는다.
+    _log.warning(
+        "서명 불일치\n  받은 서명   : %s…\n  파라미터 키 : %s\n"
+        "  시도한 URL  :\n%s",
+        got[:12], sorted(form),
+        "\n".join(f"    - {u}" for u in _url_candidates(request)))
+    raise HTTPException(401, "서명이 올바르지 않습니다")
 
 
 # ──────────────────────────────────────────────────── 1턴 수신 --
