@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS intakes (
   confirmed INTEGER DEFAULT 0,
   confirmed_hospital TEXT, confirmed_date TEXT, confirmed_level TEXT,
   identity_answer TEXT,   -- 전화에서 '맞으실까요' 에 답한 내용 (원문 그대로)
-  identity_status TEXT    -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
+  identity_status TEXT,   -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
+  card_json TEXT          -- 접수 당시 생성된 카드 전문(근거·확인질문 포함)
 );
 
 CREATE TABLE IF NOT EXISTS post_records (
@@ -157,6 +158,7 @@ _ADDED_COLUMNS = [
     ("profiles", "care_program", "TEXT"),
     ("intakes", "identity_answer", "TEXT"),
     ("intakes", "identity_status", "TEXT"),
+    ("intakes", "card_json", "TEXT"),
 ]
 
 
@@ -283,18 +285,37 @@ def add_history(phone, date, hospital, dept, symptom=None, pharmacy=False, sourc
 
 # ------------------------------------------------------------------ 접수 --
 
+def _card_json(card) -> str | None:
+    """카드를 JSON 으로. 긴급 경로는 카드가 없어(_Stub) None 을 남긴다."""
+    to_dict = getattr(card, "to_dict", None)
+    if not callable(to_dict):
+        return None
+    try:
+        return json.dumps(to_dict(), ensure_ascii=False)
+    except Exception:
+        return None
+
+
 def save_intake(card, phone: str, channel: str = "전화", status: str = "접수 대기") -> int:
+    """접수를 저장한다. **카드 전문을 함께 남긴다.**
+
+    예전에는 평면 필드(병원·날짜·상태)만 저장해서, 목록에서 접수를 열어도
+    왜 '확인 필요'인지 알 수 없었다. 근거·확인 질문·항목별 상태가 만든 즉시
+    사라졌기 때문이다. 나중에 발화로 다시 돌려 만들 수도 있지만, 그건 그때의
+    데이터로 만든 다른 카드다 — 접수 당시 AI가 무엇을 근거로 무엇을 제시했는지
+    그대로 남겨야 사람이 판단하고 감사할 수 있다.
+    """
     init_db()
     conn = get_conn()
     try:
         cur = conn.execute(
             """INSERT INTO intakes
                (created_at,channel,phone,target,raw_utterance,intent,hospital,hospital_status,
-                dept,date_value,date_label,need_level,status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                dept,date_value,date_label,need_level,status,card_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (_now(), channel, normalize_phone(phone), card.target, card.raw_utterance, card.intent,
              card.hospital, card.hospital_status, card.dept, card.date_value, card.date_label,
-             card.need_level, status))
+             card.need_level, status, _card_json(card)))
         conn.commit()
         iid = cur.lastrowid
         return iid
@@ -318,12 +339,22 @@ def confirm_intake(intake_id: int, hospital: str, date: str, level: str,
         conn.close()
 
 
+def _with_card(row: dict) -> dict:
+    """card_json 을 파싱해 card 로 붙인다. 옛 접수는 None 이다."""
+    raw = row.pop("card_json", None)
+    try:
+        row["card"] = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        row["card"] = None
+    return row
+
+
 def get_intake(intake_id: int) -> dict | None:
     init_db()
     conn = get_conn()
     try:
         row = conn.execute("SELECT * FROM intakes WHERE id=?", (intake_id,)).fetchone()
-        return dict(row) if row else None
+        return _with_card(dict(row)) if row else None
     finally:
         conn.close()
 
@@ -376,9 +407,10 @@ def list_intakes(limit: int = 50) -> list[dict]:
     init_db()
     conn = get_conn()
     try:
+        # 목록에는 카드 전문을 싣지 않는다 — 상세는 GET /api/intakes/{id} 로 따로 받는다
         rows = conn.execute(
             f"SELECT * FROM intakes ORDER BY {_ORDER} LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        return [{k: v for k, v in dict(r).items() if k != "card_json"} for r in rows]
     finally:
         conn.close()
 

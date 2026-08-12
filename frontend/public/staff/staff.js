@@ -19,6 +19,9 @@ const el = (tag, cls, text) => {
 };
 const STATUS_CLASS = { "확인됨": "ok", "추정": "guess", "확인 필요": "need" };
 
+// Node.append() 는 undefined 를 돌려주므로 체이닝하면 안 된다
+const rowOf = (td) => { const tr = el("tr"); td.colSpan = 6; tr.append(td); return tr; };
+
 // ── 탭 ─────────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach((t) => {
   t.onclick = () => {
@@ -93,9 +96,15 @@ async function loadQueue() {
         act.append(b);
       }
       tr.append(act);
+      // 행을 누르면 그 접수의 카드를 편다 — 왜 '확인 필요'인지 여기서 본다
+      tr.classList.add("clickable");
+      tr.onclick = (e) => {
+        if (e.target.tagName === "BUTTON") return;   // 버튼 클릭과 겹치지 않게
+        toggleDetail(tr, r.id);
+      };
       tb.append(tr);
     });
-    if (!tb.children.length) tb.append(el("tr")).append(el("td", "dim", "접수 없음"));
+    if (!tb.children.length) tb.append(rowOf(el("td", "dim", "접수 없음")));
   } catch (e) {
     box.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
   }
@@ -115,6 +124,74 @@ async function confirmIntake(r) {
   } catch (e) {
     alert("확정 실패: " + e.message);
   }
+}
+
+// 상세 행 — 한 번 더 누르면 접는다
+async function toggleDetail(tr, id) {
+  const open = tr.nextElementSibling;
+  if (open && open.classList.contains("detail")) { open.remove(); return; }
+  document.querySelectorAll("tr.detail").forEach((x) => x.remove());
+
+  const row = el("tr", "detail");
+  const td = el("td");
+  td.colSpan = 6;
+  td.append(el("div", "dim", "불러오는 중…"));
+  row.append(td);
+  tr.after(row);
+
+  try {
+    const d = await api.getIntake(id);
+    td.replaceChildren(renderStored(d));
+  } catch (e) {
+    td.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
+  }
+}
+
+// 저장된 접수를 그린다. 새 접수와 달리 응답 모양이 조금 다르다 —
+// 카드는 접수 당시 그대로이고, 확정·본인확인 결과가 따로 붙어 있다.
+function renderStored(d) {
+  const frag = document.createDocumentFragment();
+
+  if (d.identity_answer || d.identity_status) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "전화 본인 확인"));
+    const line = el("div", "need");
+    line.append(el("span", "badge " + (d.identity_status === "추정" ? "guess" : "need"),
+                   d.identity_status || "확인 필요"));
+    line.append(el("span", null, d.identity_answer ? `“${d.identity_answer}”` : "답변 없음"));
+    b.append(line);
+    b.append(el("div", "small", "통화에서 들은 말 그대로입니다. AI가 확정한 것이 아닙니다."));
+    frag.append(b);
+  }
+
+  if (d.confirmed) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "확정 결과 (사회복지사)"));
+    const dl = el("dl", "receipt");
+    [["병원", d.confirmed_hospital], ["방문일", d.confirmed_date],
+     ["지원 수준", d.confirmed_level]].forEach(([k, v]) => {
+      dl.append(el("dt", null, k));
+      dl.append(el("dd", null, v || "—"));
+    });
+    b.append(dl);
+    frag.append(b);
+  }
+
+  if (!d.card) {
+    // 긴급은 카드를 만들지 않는다. 이 기능 이전에 들어온 접수도 카드가 없다.
+    const b = el("div", "block");
+    b.append(el("div", "dim",
+      d.status === "긴급" || d.status === "긴급 처리됨"
+        ? "긴급 접수는 접수카드를 만들지 않습니다 — 사람에게 바로 넘긴 건입니다."
+        : "이 접수에는 저장된 카드가 없습니다(카드 보존 기능 이전 접수)."));
+    b.append(el("blockquote", null, `“${d.raw_utterance || ""}”`));
+    frag.append(b);
+    return frag;
+  }
+
+  frag.append(renderCard({ card: d.card, channel: d.channel, intent: d.intent,
+                           intent_source: "저장된 접수", facilities: [] }));
+  return frag;
 }
 
 async function resolveUrgent(r) {
@@ -389,10 +466,10 @@ async function loadAudit() {
       tr.append(el("td", "dim", r.detail || ""));
       tb.append(tr);
     });
-    if (!tb.children.length) tb.append(el("tr")).append(el("td", "dim", "기록 없음"));
+    if (!tb.children.length) tb.append(rowOf(el("td", "dim", "기록 없음")));
   } catch (e) {
     tb.replaceChildren();
-    tb.append(el("tr")).append(el("td", "bad", "불러오지 못했습니다: " + e.message));
+    tb.append(rowOf(el("td", "bad", "불러오지 못했습니다: " + e.message)));
   }
 }
 

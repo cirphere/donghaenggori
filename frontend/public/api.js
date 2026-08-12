@@ -52,6 +52,9 @@ export const api = {
     return req("/api/intakes/from-audio" + q, { method: "POST", form: fd });
   },
 
+  // 접수 상세. 접수 당시 만든 카드 전문(근거·확인질문 포함)이 card 에 들어 있다.
+  getIntake: (id) => req(`/api/intakes/${id}`),
+
   confirmIntake: (id, { hospital, date, level, actor, role }) =>
     req(`/api/intakes/${id}/confirm`,
         { method: "POST", body: { hospital, date, level, actor, role } }),

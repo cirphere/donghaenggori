@@ -158,3 +158,9 @@ table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.list td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
 table.list td.dim { color: var(--muted); }
 table.list td.bad { color: var(--need); }
+
+/* 접수 상세 — 행을 누르면 아래로 펼쳐진다 */
+table.list tr.clickable { cursor: pointer; }
+table.list tr.clickable:hover { background: #fafbfa; }
+table.list tr.detail > td { background: #fafbfa; padding: 14px 16px; }
+table.list tr.detail .block:first-child { margin-top: 0; }
