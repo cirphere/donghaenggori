@@ -150,6 +150,11 @@ def main() -> int:
     ok = ("<Gather" in body and "박순자" in body and "1번" in body and "2번" in body
           and "/api/voice/identity" in body)
     check("등록 대상자 → 1번/2번 묻기", ok, "")
+    # 문구가 <Gather> 안에 있으면 이 회선에서 재생되지 않는다. 밖에 있어야 한다.
+    before_gather = body.split("<Gather")[0]
+    check("확인 문구가 <Gather> 밖에 있음",
+          "맞으신가요" in before_gather and "<Say" not in body.split("<Gather")[1].split("/>")[0],
+          "안에 넣으면 안 들린다")
 
     # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
     check("키 안 눌러도 흘러갈 곳이 있음",

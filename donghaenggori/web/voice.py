@@ -369,11 +369,19 @@ async def incoming(request: Request) -> Response:
     if not prof or not ASK_IDENTITY:
         return _xml(_say(GREETING) + ask)
 
+    # <Say> 를 <Gather> **밖에** 둔다.
+    #
+    # 문서 예제는 <Gather> 안에 <Say> 를 넣는 형식인데, 실통화에서 그 문구가
+    # 재생되지 않았다 — 어르신에게는 곧바로 뒤의 "어디가 편찮으신지" 만 들렸고
+    # 로그에도 /identity 가 찍히지 않았다. 밖에 두면 재생이 보장된다.
+    #
+    # 대신 문구 재생 중에 미리 누르는 것(barge-in)은 안 될 수 있다. 어차피 이
+    # 회선은 DTMF 가 안 먹는 것으로 보여 잃을 것이 없다.
     return _xml(
-        f'<Gather numDigits="1" timeout="7" action="{_esc(_callback(request, "voice_identity"))}">'
-        + _say(f"동행고리입니다. {prof['name']} 님 맞으신가요? "
-               "맞으시면 1번, 아니시면 2번을 눌러 주세요.")
-        + "</Gather>"
+        _say(f"동행고리입니다. {prof['name']} 님 맞으신가요? "
+             "맞으시면 1번, 아니시면 2번을 눌러 주세요.")
+        + f'<Gather numDigits="1" timeout="7" '
+          f'action="{_esc(_callback(request, "voice_identity"))}"/>'
         # 키를 못 눌렀다 — 묻지 말고 바로 증상을 받는다. 대상자는 확인 필요로 남는다.
         + _say(SYMPTOM_PROMPT) + ask)
 
