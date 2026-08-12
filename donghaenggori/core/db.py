@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS intakes (
   confirmed_hospital TEXT, confirmed_date TEXT, confirmed_level TEXT,
   identity_answer TEXT,   -- 전화에서 '맞으실까요' 에 답한 내용 (원문 그대로)
   identity_status TEXT,   -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
-  card_json TEXT          -- 접수 당시 생성된 카드 전문(근거·확인질문 포함)
+  card_json TEXT,         -- 접수 당시 생성된 카드 전문(근거·확인질문 포함)
+  transfer_status TEXT    -- 긴급 전환 결과 (연결됨 | 통화중 | 응답없음 | 실패)
 );
 
 CREATE TABLE IF NOT EXISTS post_records (
@@ -159,6 +160,7 @@ _ADDED_COLUMNS = [
     ("intakes", "identity_answer", "TEXT"),
     ("intakes", "identity_status", "TEXT"),
     ("intakes", "card_json", "TEXT"),
+    ("intakes", "transfer_status", "TEXT"),
 ]
 
 
@@ -385,6 +387,23 @@ def attach_identity_answer(intake_id: int, answer: str, status: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def set_transfer_status(intake_id: int, status: str, actor: str = "전화 시스템") -> None:
+    """긴급 전환 결과를 접수에 남긴다.
+
+    담당자가 못 받은 것을 아무도 모르는 상태가 제일 위험하다. 어르신은
+    "연결이 어렵습니다" 안내를 듣고 끊지만, 그 사실이 어디에도 없으면
+    아무도 다시 걸지 않는다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE intakes SET transfer_status=? WHERE id=?", (status, intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, "시스템", "긴급전환", "intake", str(intake_id), status)
 
 
 def recent_intakes(phone: str, minutes: int = 10, exclude_id: int | None = None) -> list[dict]:

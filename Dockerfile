@@ -45,5 +45,9 @@ USER app
 EXPOSE 8000
 ENTRYPOINT ["docker-entrypoint.sh"]
 # 워커는 1개다. 모델이 프로세스별로 적재되므로 2개면 4GiB 장비에서 OOM 난다.
+# --proxy-headers: nginx 가 넘긴 X-Forwarded-Proto 를 믿는다. 없으면 앱이
+# 자기가 http 로 서비스되는 줄 알고, 콜백 주소를 http 로 만들어 준다.
+# 이 포트는 루프백과 도커 네트워크에만 열려 있어 nginx 외에는 닿지 않는다.
 CMD ["uvicorn", "donghaenggori.web.api:app", \
-     "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+     "--host", "0.0.0.0", "--port", "8000", "--workers", "1", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

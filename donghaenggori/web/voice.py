@@ -53,6 +53,14 @@ DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
 DEMO_CALLER_PHONE = os.environ.get("DEMO_CALLER_PHONE", "")
 DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
 
+# 우리 서비스의 공개 주소. 2턴 콜백(<Record action=...>)을 만들 때 쓴다.
+#
+# request.url_for 만 쓰면 http:// 가 나온다 — nginx 가 app:8000 에 http 로
+# 붙기 때문이다. 그 주소를 ClawOps 에 주면 Cloudflare 가 301 로 https 에
+# 돌리고, POST 리다이렉트에서 본문이 날아가 확인 단계가 통째로 깨진다.
+# 헤더를 믿는 대신 공개 주소를 직접 적어두는 편이 확실하다.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 GREETING = ("안녕하세요, 동행고리 인공지능 서비스입니다. "
             "어느 병원에 언제 가시는지 말씀해 주세요. "
             "많이 아프시거나 급한 상황이면 지금 끊고 119에 전화해 주세요.")
@@ -61,6 +69,17 @@ BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
+
+def _callback(request: Request, name: str) -> str:
+    """VoiceML 에 넣을 콜백 주소. PUBLIC_BASE_URL 이 있으면 그것을 쓴다."""
+    path = request.url_for(name).path
+    if PUBLIC_BASE_URL:
+        return f"{PUBLIC_BASE_URL}{path}"
+    # 설정이 없으면 요청에서 유추한다. 프록시 뒤에서는 scheme 이 틀릴 수 있어
+    # X-Forwarded-Proto 를 우선한다.
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{proto}://{request.url.netloc}{path}"
+
 
 def _xml(body: str) -> Response:
     return Response(content=f'<?xml version="1.0" encoding="UTF-8"?>\n<Response>{body}</Response>',
@@ -84,15 +103,100 @@ def _hangup(text: str) -> Response:
     return _xml(_say(text) + "<Hangup/>")
 
 
-def _transfer(reason: str) -> Response:
+# ClawOps 가 주는 Dial 결과 → 우리 표기
+_DIAL_STATUS = {
+    "completed": "연결됨", "busy": "통화중", "no-answer": "응답없음",
+    "failed": "실패", "canceled": "취소됨",
+}
+
+
+def _transfer(request: Request, reason: str, intake_id: int | None = None) -> Response:
     """긴급 — 통화 중에 담당자로 넘긴다. 응급 여부를 우리가 판정하는 것이 아니라,
-    사람에게 넘길 이유가 생겼다는 뜻이다."""
+    사람에게 넘길 이유가 생겼다는 뜻이다.
+
+    **결과를 반드시 받는다.** 담당자가 못 받은 것을 아무도 모르는 상태가 제일
+    위험하다 — 어르신은 안내를 듣고 끊는데 시스템에는 기록이 없어 아무도 다시
+    걸지 않는다. <Dial action> 으로 연결 여부를 돌려받아 접수에 남긴다.
+    """
     if not STAFF_NUMBER:
         return _hangup(f"{reason} 담당자가 바로 연락드리겠습니다. 급하시면 119에 전화해 주세요.")
+    action = _callback(request, "voice_dial_result")
+    if intake_id:
+        action += f"?intake={intake_id}"
     return _xml(
         _say(f"{reason} 담당자에게 바로 연결해 드리겠습니다. 잠시만 기다려 주세요.")
-        + f'<Dial timeout="30"><Number>{_esc(STAFF_NUMBER)}</Number></Dial>'
-        + _say("연결이 어렵습니다. 급하시면 119에 전화해 주세요."))
+        + f'<Dial timeout="30" action="{_esc(action)}">'
+        f'<Number>{_esc(STAFF_NUMBER)}</Number></Dial>')
+
+
+@router.post("/status", name="voice_status")
+async def call_status(request: Request) -> Response:
+    """통화 상태 알림 — 번호 설정의 '통화 상태 webhook URL' 이 여기로 온다.
+
+    통화 흐름을 지시하지 않는다(VoiceML 을 돌려줄 자리가 아니다). 기록만 한다.
+
+    받을 이벤트 중 실제로 쓰는 것은 **호전환 결과**다. <Dial action> 은 전환이
+    끝나야 오지만 이쪽은 실시간이고, action 콜백이 어떤 이유로 우리에게 닿지
+    못해도 백업이 된다. 담당자가 못 받은 것을 아무도 모르는 상태만은 피해야 한다.
+
+    나머지(발신 시작·벨 울림·응답·종료)는 감사 로그에만 남긴다.
+    """
+    form = await _verify(request)
+    event = (form.get("CallStatus") or form.get("StatusCallbackEvent") or "").strip()
+    raw = (form.get("DialCallStatus") or "").strip().lower()
+
+    if raw:
+        status = _DIAL_STATUS.get(raw, raw)
+        iid = _recent_urgent_intake(form.get("From") or "")
+        if iid:
+            try:
+                db.set_transfer_status(iid, status)
+            except Exception:
+                pass
+    else:
+        try:
+            db.log_audit("전화 시스템", "시스템", "통화상태", "call",
+                         form.get("CallId") or "", event)
+        except Exception:
+            pass
+    # 상태 알림은 통화를 지시하지 않는다 — 빈 응답으로 끝낸다
+    return Response(status_code=204)
+
+
+def _recent_urgent_intake(phone: str) -> int | None:
+    """이 번호의 가장 최근 긴급 접수. 상태 알림에는 intake 를 실을 수 없어서
+    번호로 되짚는다. 통화 한 건이 진행 중인 동안에는 이것으로 충분하다."""
+    if not phone:
+        return None
+    try:
+        rows = db.recent_intakes(phone, minutes=30)
+    except Exception:
+        return None
+    for r in rows:
+        if r.get("status") in ("긴급", "긴급 처리됨"):
+            return r["id"]
+    return None
+
+
+@router.post("/dial-result", name="voice_dial_result")
+async def dial_result(request: Request) -> Response:
+    """긴급 전환이 끝났다. 연결됐는지 기록하고, 실패면 119 안내로 마무리한다."""
+    form = await _verify(request)
+    raw = (form.get("DialCallStatus") or "").strip().lower()
+    status = _DIAL_STATUS.get(raw, raw or "알 수 없음")
+    try:
+        intake_id = int(request.query_params.get("intake") or 0)
+    except ValueError:
+        intake_id = 0
+    if intake_id:
+        try:
+            db.set_transfer_status(intake_id, status)
+        except Exception:
+            pass
+    if raw == "completed":
+        return _xml("<Hangup/>")
+    return _hangup("담당자와 연결하지 못했습니다. "
+                   "급하시면 119에 전화해 주시고, 담당자가 다시 연락드리겠습니다.")
 
 
 # ─────────────────────────────────────────────────── 서명 검증 --
@@ -121,7 +225,7 @@ async def _verify(request: Request) -> dict:
 async def incoming(request: Request) -> Response:
     """전화가 걸려왔다. 인사하고 녹음을 시작한다. 대화는 하지 않는다."""
     await _verify(request)
-    return _xml(_say(GREETING) + _record(str(request.url_for("voice_recording"))))
+    return _xml(_say(GREETING) + _record(_callback(request, "voice_recording")))
 
 
 def _lookup_phone(raw: str) -> str:
@@ -146,8 +250,7 @@ async def recording(request: Request) -> Response:
 
     res = pipeline.run(phone, text, channel="전화")
     if res.urgent:
-        _save(res, phone, text)
-        return _transfer("긴급한 상황으로 보입니다.")
+        return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 
     intake_id = _save(res, phone, text)
     question = _identity_question(res)
@@ -155,7 +258,7 @@ async def recording(request: Request) -> Response:
         return _hangup(f"{_receipt(res)} {BYE}")
 
     # 2턴 — 누구인지 되묻는다. 확인은 하지 않고 답만 받아둔다.
-    action = f'{request.url_for("voice_confirm")}?intake={intake_id}'
+    action = f'{_callback(request, "voice_confirm")}?intake={intake_id}'
     return _xml(_say(question) + _record(action))
 
 
@@ -183,7 +286,7 @@ async def confirm(request: Request) -> Response:
     if c.analysis.urgent:
         if intake_id:
             db.attach_identity_answer(intake_id, text, "확인 필요")
-        return _transfer("긴급한 상황으로 보입니다.")
+        return _transfer(request, "긴급한 상황으로 보입니다.", intake_id or None)
 
     status = _match_status(phone, text)
     if intake_id:

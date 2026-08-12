@@ -43,6 +43,8 @@ def sign(url: str, params: dict) -> str:
 def post(client, path, params, *, signed=True):
     url = BASE + path
     headers = {"X-Signature": sign(url, params)} if signed else {}
+    # nginx 뒤에 있는 상태를 흉내낸다 — 스킴은 http, 원래 스킴은 헤더로 온다
+    headers["X-Forwarded-Proto"] = "https"
     return client.post(path, data=params, headers=headers)
 
 
@@ -77,6 +79,20 @@ def main() -> int:
     r = client.post("/api/voice/incoming", data=call_params(PHONE_SELF),
                     headers={"X-Signature": "bogus"})
     check("서명 틀리면 401", r.status_code == 401, f"HTTP {r.status_code}")
+
+    # ── 콜백 주소가 https 로 나가는가 ────────────────────────
+    # nginx 는 app:8000 에 http 로 붙는다. 그대로 두면 콜백이 http 로 나가고,
+    # Cloudflare 가 301 로 돌리면서 POST 본문이 날아가 2턴이 깨진다.
+    voice.PUBLIC_BASE_URL = ""
+    body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
+    check("프록시 뒤에서도 콜백은 https", 'action="https://' in body,
+          body.split('action="')[1].split('"')[0] if 'action="' in body else "없음")
+
+    voice.PUBLIC_BASE_URL = "https://example.test"
+    body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
+    check("PUBLIC_BASE_URL 이 우선한다",
+          'action="https://example.test/api/voice/recording"' in body, "")
+    voice.PUBLIC_BASE_URL = ""
 
     # ── 1턴 인사 ─────────────────────────────────────────────
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
@@ -176,6 +192,48 @@ def main() -> int:
     voice._transcribe_url = lambda url: "아이고 숨이 차고 가슴이 답답해"
     body = post(client, conf, rec_params(PHONE_SELF)).text
     check("⑨ 확인 답변에서 긴급 → <Dial>", "<Dial" in body and STAFF in body, "")
+
+    # ── 긴급 전환 결과 ───────────────────────────────────────
+    # 담당자가 못 받은 것을 아무도 모르는 상태가 제일 위험하다.
+    voice._transcribe_url = lambda url: "가슴이 답답하고 숨이 차"
+    body = post(client, "/api/voice/recording", rec_params(PHONE_SELF)).text
+    has_action = "<Dial" in body and "action=" in body and "/api/voice/dial-result" in body
+    check("긴급 <Dial> 에 결과 콜백", has_action, "")
+
+    uid = db.list_intakes(1)[0]["id"]
+    dial = f"/api/voice/dial-result?intake={uid}"
+    body = post(client, dial, call_params(PHONE_SELF, DialCallStatus="no-answer")).text
+    row = db.get_intake(uid)
+    check("응답없음 → 기록 + 119 안내",
+          row["transfer_status"] == "응답없음" and "119" in body and "<Hangup/>" in body,
+          f"{row['transfer_status']}")
+
+    body = post(client, dial, call_params(PHONE_SELF, DialCallStatus="completed")).text
+    row = db.get_intake(uid)
+    check("연결됨 → 기록 + 조용히 종료",
+          row["transfer_status"] == "연결됨" and "119" not in body, f"{row['transfer_status']}")
+
+    audit = [a for a in db.list_audit(10) if a["action"] == "긴급전환"]
+    check("전환 결과가 감사 로그에", len(audit) >= 2, f"{len(audit)}건")
+
+    # ── 통화 상태 웹훅 ───────────────────────────────────────
+    r = post(client, "/api/voice/status",
+             call_params(PHONE_SELF, CallStatus="ringing"))
+    check("상태 알림 → 204, 통화 지시 없음",
+          r.status_code == 204 and not r.text.strip(), f"HTTP {r.status_code}")
+
+    # 호전환 결과가 상태 알림으로 오면 그것도 기록한다(action 콜백의 백업)
+    voice._transcribe_url = lambda url: "가슴이 답답하고 숨이 차"
+    post(client, "/api/voice/recording", rec_params(PHONE_SELF))
+    uid2 = db.list_intakes(1)[0]["id"]
+    post(client, "/api/voice/status",
+         call_params(PHONE_SELF, CallStatus="completed", DialCallStatus="busy"))
+    check("상태 알림의 호전환 결과도 기록",
+          db.get_intake(uid2)["transfer_status"] == "통화중",
+          f"{db.get_intake(uid2)['transfer_status']}")
+
+    r = post(client, "/api/voice/status", call_params(PHONE_SELF), signed=False)
+    check("상태 알림도 서명 필요", r.status_code == 401, f"HTTP {r.status_code}")
 
     # ── 중복 접수 표시 ───────────────────────────────────────
     # 방금 PHONE_SELF 로 여러 건 넣었으므로 다음 접수에는 중복 표시가 붙어야 한다
