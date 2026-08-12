@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   guardian_json TEXT,
   caregiver TEXT, mobility TEXT,
   fall_risk INTEGER, lives_alone INTEGER,
-  preferred_time TEXT, notes TEXT
+  preferred_time TEXT, notes TEXT,
+  ltci_grade TEXT,        -- 장기요양등급 1~5 · 인지지원 (공단 판정)
+  care_program TEXT       -- 노인맞춤돌봄서비스 군 (지자체 선정)
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -134,6 +136,7 @@ def init_db(force: bool = False) -> None:
         conn = get_conn()
         try:
             conn.executescript(SCHEMA)
+            _migrate(conn)
             if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:
                 _seed_profiles(conn)
             if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -142,6 +145,22 @@ def init_db(force: bool = False) -> None:
             _inited = True
         finally:
             conn.close()
+
+
+# 나중에 늘어난 컬럼들. CREATE TABLE IF NOT EXISTS 는 이미 있는 테이블을
+# 건드리지 않으므로, 배포된 DB(데스크탑·컨테이너 볼륨)에는 직접 붙여야 한다.
+# 데이터를 지우지 않고 올리기 위한 최소한의 마이그레이션이다.
+_ADDED_COLUMNS = [
+    ("profiles", "ltci_grade", "TEXT"),
+    ("profiles", "care_program", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def _seed_profiles(conn: sqlite3.Connection) -> None:
@@ -165,13 +184,14 @@ def upsert_profile(conn: sqlite3.Connection, phone: str, p: dict) -> None:
     conn.execute(
         """INSERT OR REPLACE INTO profiles
            (phone,id,name,age,region,guardian_json,caregiver,mobility,
-            fall_risk,lives_alone,preferred_time,notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            fall_risk,lives_alone,preferred_time,notes,ltci_grade,care_program)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (phone, p.get("id"), p.get("name"), p.get("age"), p.get("region"),
          json.dumps(p.get("guardian"), ensure_ascii=False) if p.get("guardian") else None,
          p.get("caregiver"), p.get("mobility"),
          int(bool(p.get("fall_risk"))), int(bool(p.get("lives_alone"))),
-         p.get("preferred_time"), p.get("notes")))
+         p.get("preferred_time"), p.get("notes"),
+         p.get("ltci_grade"), p.get("care_program")))
 
 
 # ------------------------------------------------------------- 프로필/이력 --
@@ -201,6 +221,7 @@ def get_profile(phone: str) -> dict | None:
             "caregiver": row["caregiver"], "mobility": row["mobility"],
             "fall_risk": bool(row["fall_risk"]), "lives_alone": bool(row["lives_alone"]),
             "preferred_time": row["preferred_time"], "notes": row["notes"],
+            "ltci_grade": row["ltci_grade"], "care_program": row["care_program"],
             "history": [dict(h) | {"pharmacy": bool(h["pharmacy"])} for h in hist],
         }
     finally:

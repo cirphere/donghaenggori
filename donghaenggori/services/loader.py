@@ -20,6 +20,8 @@ SOURCES = [
     ("광주광역시_사회복지 이용시설 현황_20251231.csv", "C-DS06", "aggregate"),
     ("광주광역시_시내버스 정류소 현황_20241231.csv", "C-DS14", "aggregate"),
     ("광주광역시_대기오염측정망 운영_20260531.csv", "C-DS18", "station"),
+    # 전남 노인복지관. 원본은 한글 문서라 tools/extract_jeonnam_hwpx.py 로 뽑았다.
+    ("전라남도_노인복지관_현황_2026.csv", "C-DS04", "point"),
 ]
 
 
@@ -68,7 +70,34 @@ def load_air_stations(path: str) -> list[dict]:
     return out
 
 
-LOADERS = {"C-DS03": load_welfare_centers, "C-DS18": load_air_stations}
+def load_jeonnam_senior_centers(path: str) -> list[dict]:
+    """C-DS04 전라남도 노인복지관 — 개별 시설 레코드(2026. 1. 기준).
+
+    원본은 한글 문서(hwpx)라 저장소에 넣지 않는다 — .gitignore 가 문서 파일을
+    막는다. tools/extract_jeonnam_hwpx.py 로 뽑은 csv 를 읽으며, 원본을 다시
+    받아 재추출하면 같은 파일이 나온다. 같은 문서의 경로당 표는 시군별 집계라
+    시설 검색에 쓸 수 없어 뽑지 않았다.
+    """
+    out = []
+    for r in _read(path):
+        name = r.get("명칭")
+        if not name:
+            continue
+        sigun = r.get("시군") or ""
+        region = f"전남 {sigun}".strip()
+        addr = r.get("소재지")
+        out.append({
+            "source": "C-DS04", "name": name, "kind": "노인복지관",
+            "region": region,
+            "address": f"{region} {addr}" if addr else None,
+            "phone": r.get("전화번호") or None,
+            "lat": None, "lon": None,
+        })
+    return out
+
+
+LOADERS = {"C-DS03": load_welfare_centers, "C-DS18": load_air_stations,
+           "C-DS04": load_jeonnam_senior_centers}
 
 
 def run(verbose: bool = True) -> dict:

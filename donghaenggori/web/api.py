@@ -337,6 +337,17 @@ def warmup() -> dict:
             done[f"air:{region}"] = "ok" if a.ok else (a.reason or "실패")
         except Exception as e:
             done[f"air:{region}"] = type(e).__name__
+        # 심평원도 예열한다. 이력 없는 대상자의 '거리 기준 참고 후보'(화면 04 4-A)가
+        # 이 API를 타는데, 예열 목록에서 빠져 있어 시연 도중 첫 호출이 타임아웃 났다.
+        # 캐시에 올려두면 발표 중에는 즉시 응답한다.
+        try:
+            from ..services import hira
+            h = hira.nearby(latlon[0], latlon[1], dept=None,
+                            radius_m=pipeline.REFERENCE_RADIUS_M,
+                            rows=pipeline.REFERENCE_ROWS)
+            done[f"hira:{region}"] = "ok" if h.ok else (h.reason or "실패")
+        except Exception as e:
+            done[f"hira:{region}"] = type(e).__name__
 
     return {"elapsed": round(time.time() - t0, 1), "warmed": done}
 

@@ -84,15 +84,52 @@ def _region_keys(region: str | None) -> list[str]:
     return [t for t in _TOKEN.findall(region or "") if len(t) >= 2]
 
 
+# 시도 이름은 목록으로 판별한다. 예전에는 "짧으면 구/군"(len<=3)으로 갈랐는데,
+# '광주광역시'(5) vs '서구'(2)에서는 맞지만 '전남'(2)에서 깨진다 — 전남 대상자에게
+# 전남 어느 시설이든 구/군 일치 가중이 붙어, 신안군(섬) 어르신에게 100km 떨어진
+# 고흥군 복지관이 '관내'로 떴다. 전남 시설을 적재하기 전에는 드러나지 않던 버그다.
+_SIDO_TOKENS = {
+    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
+    "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시",
+    "대전광역시", "울산광역시", "세종특별자치시", "경기도", "강원특별자치도",
+    "충청북도", "충청남도", "전북특별자치도", "전라북도", "전라남도",
+    "경상북도", "경상남도", "제주특별자치도",
+}
+
+
+def _is_sido(token: str) -> bool:
+    return token in _SIDO_TOKENS
+
+
 def _region_score(region: str | None, row: dict) -> float:
     """지역 일치 점수. 구/군 단위 일치가 시도 일치보다 훨씬 크다."""
     rtok = _tokens(row.get("region"))
     score = 0.0
     for k in _region_keys(region):
         if k in rtok:
-            # '광주광역시'는 시도, '서구'는 구 — 짧은 쪽이 보통 구/군이다
-            score += REGION_WEIGHT if len(k) <= 3 else SIDO_WEIGHT
+            score += SIDO_WEIGHT if _is_sido(k) else REGION_WEIGHT
     return score
+
+
+# 지역 일치 정도를 숫자가 아니라 말로 남긴다. 점수만 내려주면 화면이 0.0 을
+# 어떻게 읽어야 할지 모른다 — 실제로 신안군(섬) 대상자에게 100km 떨어진
+# 고흥군 복지관이 아무 표시 없이 1순위로 떴다.
+MATCH_LOCAL = "관내"
+MATCH_SIDO = "같은 시도"
+MATCH_OTHER = "타 지역"
+
+
+def _region_match(region: str | None, row: dict) -> str:
+    if not region:
+        return MATCH_OTHER
+    rtok = _tokens(row.get("region"))
+    keys = _region_keys(region)
+    if any(k in rtok for k in keys if not _is_sido(k)):
+        return MATCH_LOCAL
+    if any(k in rtok for k in keys):
+        return MATCH_SIDO
+    return MATCH_OTHER
 
 
 def search(region: str | None = None, query: str | None = None,
@@ -130,6 +167,7 @@ def search(region: str | None = None, query: str | None = None,
     scored.sort(key=lambda x: (-x[0], x[4]["name"]))
     out = []
     for total, sem, rs, method, r in scored[:limit]:
+        match = _region_match(region, r)
         out.append({
             "name": r["name"], "kind": r["kind"], "region": r["region"],
             "address": r["address"], "phone": r["phone"],
@@ -138,6 +176,12 @@ def search(region: str | None = None, query: str | None = None,
             "region_score": round(rs, 2),
             "semantic": round(sem, 3),
             "method": method,
+            "region_match": match,
+            # 화면에 그대로 띄울 수 있는 한 줄. 관내가 아니면 반드시 밝힌다.
+            "basis": (f"{r['region']} 소재 · 대상자 거주지 관내" if match == MATCH_LOCAL
+                      else f"{r['region']} 소재 · 거주 시군에는 해당 시설이 없어 같은 시도에서 찾음"
+                      if match == MATCH_SIDO
+                      else f"{r['region']} 소재 · 대상자 거주지와 다른 지역"),
         })
     return out
 

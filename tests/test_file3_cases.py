@@ -116,12 +116,21 @@ def case10() -> None:
           (f"({found[0]['name']}, 출처 {found[0]['source']})" if found else ""))
 
 
-# ── 11. 전남 대상자 → 시설 조회 (C-DS04/17 미연동) ──────────────
+# ── 11. 전남 대상자 → 시설 조회 (C-DS04 노인복지관) ─────────────
 def case11() -> None:
-    found = rag.search(region="전남 고흥군", limit=5)
-    ok = True   # 미연동이 정상 — 문서 파일3에도 C-DS04/17 외 전남 시설은 미적재
-    check(11, "전남 시설 조회 [C-DS17 미연동]", ok,
-          f"{len(found)}건 — 전남 시설 데이터 미적재(공공API 연동 대기)")
+    """관내 시설이 있으면 관내로, 없으면 '같은 시도'라고 밝혀야 한다.
+
+    신안군은 표에 노인복지관이 없다. 이때 다른 시군 시설을 아무 표시 없이
+    1순위로 올리면 섬 주민에게 100km 떨어진 곳을 권하는 셈이 된다.
+    """
+    goheung = rag.search(region="전남 고흥군 ○○면", limit=3)
+    sinan = rag.search(region="전남 신안군 ○○면(섬)", limit=3)
+    ok = (len(goheung) > 0 and goheung[0]["region_match"] == "관내"
+          and goheung[0]["source"] == "C-DS04"
+          and len(sinan) > 0 and all(f["region_match"] != "관내" for f in sinan))
+    check(11, "전남 노인복지관 조회 + 관내/타지역 구분", ok,
+          f"고흥 {len(goheung)}건[{goheung[0]['region_match'] if goheung else '—'}] / "
+          f"신안 {len(sinan)}건[{sinan[0]['region_match'] if sinan else '—'}]")
 
 
 # ── 12. 사후기록 요약 5개 항목 ──────────────────────────────────
@@ -251,17 +260,38 @@ def case17() -> None:
           f"교체={alt.intent_source} / 위반 시={bad.analysis.intent}(노트 {len(bad.analysis.notes)}개) / 검증 {violations}/2")
 
 
+# 동행 필요도의 근거가 우리가 지어낸 점수가 아니라 공식 판정에서 나와야 한다.
+# "왜 휠체어가 3점입니까"에 답할 수 없는 상태를 회귀로 막는다.
+def case18() -> None:
+    base = db.get_profile(PHONE_MAIN) or {}
+
+    official = needlevel.assess(base | {"ltci_grade": "2", "care_program": None})
+    program = needlevel.assess(base | {"ltci_grade": None, "care_program": "중점돌봄군"})
+    observed = needlevel.assess(base | {"ltci_grade": None, "care_program": None})
+
+    ok = (official.official and official.basis == needlevel.BASIS_LTCI
+          and official.level == "휠체어·부축 동행"
+          and program.official and program.basis == needlevel.BASIS_CARE_PROGRAM
+          and not observed.official
+          # 공식 등급이 있어도 현장 주의사항(낙상·독거)은 가려지지 않는다
+          and any("낙상" in r for r in official.reasons)
+          # 추정 경로는 확정 전 확인을 반드시 요구한다
+          and any("확정 전 공식 등급 확인" in r for r in observed.reasons))
+    check(18, "동행 필요도 — 공식 판정 우선, 추정이면 표시", ok,
+          f"등급={official.basis}/{official.level} · 돌봄군={program.basis} · 미등록={observed.basis}")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17):
+               case14, case15, case16, case17, case18):
         try:
             fn()
         except Exception as e:
             check(int(fn.__name__[4:]), fn.__name__, False, f"예외: {type(e).__name__}: {e}")
 
-    print(f"\n파일3 샘플 데이터 12건 + 회귀 5건 검증 (기준일 {BASE_DATE})")
+    print(f"\n파일3 샘플 데이터 12건 + 회귀 6건 검증 (기준일 {BASE_DATE})")
     print("=" * 92)
     passed = 0
     for no, name, ok, detail in sorted(results):
