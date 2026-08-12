@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS intakes (
   need_level TEXT,
   status TEXT DEFAULT '접수 대기',        -- 접수 대기 | 확정 | 임시 접수 | 긴급
   confirmed INTEGER DEFAULT 0,
-  confirmed_hospital TEXT, confirmed_date TEXT, confirmed_level TEXT
+  confirmed_hospital TEXT, confirmed_date TEXT, confirmed_level TEXT,
+  identity_answer TEXT,   -- 전화에서 '맞으실까요' 에 답한 내용 (원문 그대로)
+  identity_status TEXT    -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
 );
 
 CREATE TABLE IF NOT EXISTS post_records (
@@ -153,6 +155,8 @@ def init_db(force: bool = False) -> None:
 _ADDED_COLUMNS = [
     ("profiles", "ltci_grade", "TEXT"),
     ("profiles", "care_program", "TEXT"),
+    ("intakes", "identity_answer", "TEXT"),
+    ("intakes", "identity_status", "TEXT"),
 ]
 
 
@@ -320,6 +324,41 @@ def get_intake(intake_id: int) -> dict | None:
     try:
         row = conn.execute("SELECT * FROM intakes WHERE id=?", (intake_id,)).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def attach_identity_answer(intake_id: int, answer: str, status: str) -> None:
+    """전화 2턴에서 받은 본인 확인 답변을 접수에 붙인다.
+
+    답변을 해석해 사람을 확정하지 않는다. 들은 말을 그대로 남기고 상태만
+    조정해서, 사회복지사가 원문을 보고 판단하게 한다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE intakes SET identity_answer=?, identity_status=? WHERE id=?",
+                     (answer, status, intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def recent_intakes(phone: str, minutes: int = 10, exclude_id: int | None = None) -> list[dict]:
+    """같은 번호의 최근 접수. 재전화로 생긴 중복을 사람이 알아보게 하려는 것이다.
+
+    자동으로 합치지 않는다 — 어르신이 정말 두 번 요청했을 수도 있다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        cutoff = (datetime.datetime.now()
+                  - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M")
+        rows = conn.execute(
+            "SELECT * FROM intakes WHERE phone=? AND created_at>=? "
+            "AND (? IS NULL OR id<>?) ORDER BY id DESC",
+            (normalize_phone(phone), cutoff, exclude_id, exclude_id)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

@@ -71,6 +71,14 @@ async function loadQueue() {
       const st = el("td");
       st.append(el("span", "badge " + (r.status === "긴급" ? "need"
         : r.status === "확정" ? "ok" : "guess"), r.status));
+      // 전화 2턴에서 받은 본인 확인 답변. AI가 확정한 것이 아니라 들은 말이다.
+      if (r.identity_answer || r.identity_status) {
+        const b = el("span", "badge " + (r.identity_status === "추정" ? "guess" : "need"),
+                     "본인확인 " + (r.identity_status || "확인 필요"));
+        b.title = r.identity_answer ? `통화 답변: “${r.identity_answer}”` : "답변 없음";
+        st.append(document.createTextNode(" "));
+        st.append(b);
+      }
       tr.append(st);
       const act = el("td");
       if (r.status !== "확정" && r.status !== "긴급") {
