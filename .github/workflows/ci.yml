@@ -42,6 +42,11 @@ jobs:
       - name: 전화 연동 웹훅 테스트
         run: python -m tests.test_voice
 
+      # 이름·주소는 못 잡는 것보다 틀리게 잡는 쪽이 나쁘다. '리' 를 주소 꼬리로
+      # 두면 "허리 아파서" 가 주소로 잡혔다 — 안 뽑아야 하는 경우까지 묶어둔다.
+      - name: 말한 성함·주소 추출 테스트
+        run: python -m tests.test_identity_extract
+
       # compose 는 env_file 이 없으면 에러로 멈춘다(의도된 동작 — 키를 빠뜨린 채
       # 뜨는 것보다 낫다). .env 는 gitignore 라 CI 에는 없으므로 예제를 복사한다.
       # 덤으로 .env.example 이 실제로 쓸 수 있는 파일인지도 함께 검증된다.
