@@ -87,6 +87,21 @@ def case7() -> None:
           f"{c.requester}({c.proxy_relation}) → 후보 {[x['name'] for x in c.target_candidates]} / {c.flags[0]}")
 
 
+# ── 7-b. 대리 요청에 발신자 프로필이 새지 않는가 ────────────────
+# 회귀 방지: "느그 어매 병원 좀" 을 **등록된 대상자가 자기 번호로** 걸면,
+# 대상자 칸에는 '미확인(어머니 대리 요청)' 이라 써 놓고 병원·필요도는 발신자
+# 것으로 채웠다. 딸의 단골이 어머니의 병원으로 '확인됨' 이 됐다.
+# 보호자 번호로 걸 때는 그 번호가 대상자로 등록돼 있지 않아 드러나지 않던 구멍이다.
+def case7b() -> None:
+    r = pipeline.run(PHONE_MAIN, "느그 어매 병원 좀 델꼬 가야 쓰겄는디")
+    c = r.card
+    샘 = (c.hospital is not None or c.need_level != "확인 필요")
+    본인 = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데").card
+    check(15, "대리 요청에 발신자 이력이 안 붙는다",
+          not 샘 and 본인.hospital_status == "확인됨",
+          f"대리: 병원={c.hospital}/{c.need_level} · 본인: {본인.hospital}[{본인.hospital_status}]")
+
+
 # ── 8. 상대 날짜 '다음 주 화요일' ───────────────────────────────
 def case8() -> None:
     d = dateparse.parse_date("다음주 화요일에 병원 가야", today=BASE_DATE)
@@ -410,7 +425,7 @@ def case22() -> None:
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
-               case7, case8, case9, case10, case11, case12, case13,
+               case7, case7b, case8, case9, case10, case11, case12, case13,
                case14, case15, case16, case17, case18, case19, case20, case21, case22):
         try:
             fn()
