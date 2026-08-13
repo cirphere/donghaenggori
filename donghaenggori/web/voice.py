@@ -49,9 +49,31 @@ router = APIRouter(prefix="/api/voice", tags=["전화(ClawOps)"])
 SIGNING_KEY = os.environ.get("CLAWOPS_SIGNING_KEY", "")
 # 긴급 시 연결할 담당자 번호. 없으면 전환하지 않고 안내만 한다.
 STAFF_NUMBER = os.environ.get("CLAWOPS_STAFF_NUMBER", "")
-# 녹음 상한(초). 2턴이 되면서 통화가 길어졌다 — 인사·질문·대기까지 합치면
-# 어르신이 붙들려 있는 시간이 금세 1분을 넘는다. 짧게 잡는다.
-MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "15"))
+# 녹음 상한(초).
+#
+# 한때 15초까지 줄였다. 키가 안 먹던 시절에는 이 값이 곧 어르신이 침묵 속에서
+# 기다리는 시간이어서, 말이 잘릴 위험보다 대기가 더 아팠기 때문이다.
+#
+# 키가 먹는 것을 확인한 뒤 1분으로 늘렸다. 이제 어르신이 말을 마치고 아무 키나
+# 누르면 그 자리에서 끝나므로, 상한은 '대기 시간'이 아니라 '천천히 말해도 되는
+# 여유'가 된다. 어르신은 병원 이름을 떠올리는 데 시간이 걸리고, 15초에서 말이
+# 잘리면 접수 자체가 반쪽이 된다.
+#
+# **빈 값도 '미설정'으로 본다.** .env 는 `KEY=` 로 비워두는 일이 흔한데,
+# os.environ.get 은 그때 빈 문자열을 돌려주므로 int("") 가 터진다. 전화가
+# 아니라 앱 전체가 못 뜬다.
+def _int_env(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        _log.warning("%s 값이 숫자가 아니라 기본값 %d 를 쓴다: %r", name, default, raw)
+        return default
+
+
+MAX_RECORD_SECONDS = _int_env("CLAWOPS_MAX_RECORD_SECONDS", 60)
 
 # 녹음을 끝내는 키. 기본은 **아무 키나**다.
 #
@@ -59,16 +81,14 @@ MAX_RECORD_SECONDS = int(os.environ.get("CLAWOPS_MAX_RECORD_SECONDS", "15"))
 # 통화 중에 폰을 떼고 정확히 우물 정자를 찾아 누르는 것 자체가 어렵고, 회선에
 # 따라 DTMF 가 제대로 전달되지 않기도 한다. 아무 키나 받으면 잘못 눌러도 넘어간다.
 #
-# 실통화에서 **어떤 키도 먹지 않았다.** 회선이 DTMF 를 전달하지 않는 것으로
-# 보인다. 그래서 안내에서 키를 빼고 "잠시 기다리시면 됩니다"로 바꿨다 —
-# 눌렀는데 반응이 없으면 어르신이 당황해서 끊어 버린다.
-# finishOnKey 는 남겨둔다. 다른 회선에서는 먹을 수 있고, 먹으면 그만큼 빨라진다.
+# 한동안 어떤 키도 먹지 않아 회선 문제로 의심했는데, 원인은 다른 데 있었다
+# (DEMO_CALLER_PHONE 미설정 → 미등록 분기). 실통화에서 정상 동작을 확인했다.
 #
-# 이제 상한이 곧 대기 시간이라 15초로 줄였다. "모레 정형외과 가야겄어" 는
-# 3초면 끝나므로 말이 잘릴 위험보다 침묵이 긴 쪽이 더 아프다.
+# 그래서 안내에 키를 다시 넣었다. 무음 종료가 없는 이상 키가 유일한 종료
+# 수단이고, 이게 먹어야 상한을 1분까지 늘려도 어르신이 기다리지 않는다.
 FINISH_ON_KEY = os.environ.get("CLAWOPS_FINISH_ON_KEY", "1234567890*#")
 # 같은 번호의 재전화를 중복 후보로 표시할 시간 범위(분)
-DUPLICATE_WINDOW_MIN = int(os.environ.get("CLAWOPS_DUPLICATE_WINDOW_MIN", "10"))
+DUPLICATE_WINDOW_MIN = _int_env("CLAWOPS_DUPLICATE_WINDOW_MIN", 10)
 
 # 통화 앞에서 누른 번호 → 접수에 남길 답변과 상태.
 # '확인됨' 은 쓰지 않는다. 버튼을 눌렀다는 것이 본인이라는 증거는 아니다.
@@ -101,10 +121,8 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 #
 # **"다 말씀하시면 어떻게 하세요"를 반드시 넣는다.** <Record> 에는 침묵 감지가
 # 없어서(maxLength·finishOnKey·playBeep·action 뿐) 말을 마쳐도 저절로 끝나지
-# 않는다. 안내가 없으면 어르신은 30초를 기다리거나 끊어 버린다.
+# 않는다. 안내가 없으면 어르신은 상한(1분)까지 기다리거나 끊어 버린다.
 #
-# 끊으면 2턴(본인 확인)을 못 하므로 우물정자를 안내한다. 급한 경우의 119 안내는
-# STT 를 기다리지 않는 유일한 경로라 짧게라도 남긴다.
 # 시연장에서 문구를 다듬을 수 있도록 환경변수로 뺐다.
 # 미등록 번호용 인사. 등록된 번호는 이름을 확인하는 문장이 따로 나간다.
 #
@@ -120,9 +138,26 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 119 안내는 넣지 않는다. 접수 전화에 대고 끊으라고 하는 것이 어색하고,
 # 안내가 길어지면 어르신이 끝까지 듣지 않는다. 긴급은 발화에서 감지해
 # 담당자로 넘기고, **전환이 실패했을 때만** 119 를 안내한다.
-GREETING = os.environ.get("CLAWOPS_GREETING") or (
+# 말을 마쳤을 때 어떻게 하는지. 세 안내가 모두 같은 문장을 쓰도록 묶어둔다 —
+# 한 군데만 고쳐서 어긋나면, 어르신은 안내받은 대로 했는데 반응이 없게 된다.
+#
+# 무음 종료가 없으므로 키가 유일한 종료 수단이다. 안 누르면 상한까지 간다.
+DONE_HINT = "마치시면 아무 번호나 눌러 주세요."
+
+def _with_done_hint(text: str) -> str:
+    """종료 방법 안내가 없으면 붙인다.
+
+    시연장에서 `CLAWOPS_GREETING` 으로 인사말을 갈아끼우는데, 그때 종료 안내가
+    통째로 빠지기 쉽다. 무음 종료가 없으므로 그러면 어르신은 말을 마치고도
+    상한(1분)까지 침묵 속에 붙들려 있다가 끊어 버린다. 문구를 어떻게 다듬든
+    "누르세요"는 남아야 한다.
+    """
+    return text if "눌러" in text or "누르" in text else f"{text.rstrip()} {DONE_HINT}"
+
+
+GREETING = _with_done_hint(os.environ.get("CLAWOPS_GREETING") or (
     "동행고리입니다. 처음 연락 주셨네요. 삐 소리 후 어르신 성함과 사시는 읍면동, "
-    "그리고 어느 병원에 언제 가시는지 말씀해 주세요. 마치시면 잠시 기다리시면 됩니다.")
+    f"그리고 어느 병원에 언제 가시는지 말씀해 주세요. {DONE_HINT}"))
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
@@ -131,9 +166,20 @@ BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 ASK_IDENTITY = os.environ.get("CLAWOPS_ASK_IDENTITY", "1").strip() not in ("0", "false", "no")
 
 SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는지 말씀해 주세요. "
-                  "마치시면 잠시 기다리시면 됩니다.")
+                  + DONE_HINT)
 OTHER_PROMPT = ("어르신 성함과 사시는 읍면동, 그리고 어느 병원에 언제 가시는지 "
-                "말씀해 주세요. 마치시면 잠시 기다리시면 됩니다.")
+                "말씀해 주세요. " + DONE_HINT)
+
+# 기동할 때 **실제로 적용된 값**을 남긴다.
+#
+# .env 가 코드 기본값을 조용히 덮어써서 하루에 두 번 헤맸다 — 이름 확인이
+# 안 나온 것(DEMO_CALLER_PHONE 미설정)도, 녹음이 30 초에서 잘리는 것도
+# 코드만 봐서는 알 수 없다. 소스에 60 이라 적혀 있어도 배포본이 그 값으로
+# 도는지는 별개다. 통화 한 번 걸어보기 전에 로그로 확인할 수 있어야 한다.
+_log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 본인확인 %s · 시연매핑 %s",
+          MAX_RECORD_SECONDS, FINISH_ON_KEY or "(없음)",
+          "켬" if ASK_IDENTITY else "끔",
+          "켬" if (DEMO_CALLER_PHONE and DEMO_CALLER_TARGET) else "끔")
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
