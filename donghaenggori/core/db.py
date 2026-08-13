@@ -476,7 +476,8 @@ def intake_counts() -> dict:
     conn = get_conn()
     try:
         today = datetime.date.today().isoformat()
-        q = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
+        def q(sql, *a):
+            return conn.execute(sql, a).fetchone()[0]
         out = {
             "today": q("SELECT COUNT(*) FROM intakes WHERE substr(created_at,1,10)=?", today),
             "waiting": q("SELECT COUNT(*) FROM intakes WHERE status='접수 대기'"),
@@ -575,7 +576,8 @@ def log_audit(actor: str, role: str, action: str, target_type: str,
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO audit_log (at,actor,role,action,target_type,target_id,detail) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO audit_log (at,actor,role,action,target_type,target_id,detail)"
+            " VALUES (?,?,?,?,?,?,?)",
             (_now(), actor, role, action, target_type, target_id, detail))
         conn.commit()
     finally:
@@ -616,12 +618,16 @@ def search_facilities(region: str | None = None, kind: str | None = None,
         sql = "SELECT * FROM facilities WHERE 1=1"
         args: list = []
         if region:
-            sql += " AND region LIKE ?"; args.append(f"%{region}%")
+            sql += " AND region LIKE ?"
+            args.append(f"%{region}%")
         if kind:
-            sql += " AND kind LIKE ?"; args.append(f"%{kind}%")
+            sql += " AND kind LIKE ?"
+            args.append(f"%{kind}%")
         if keyword:
-            sql += " AND (name LIKE ? OR address LIKE ?)"; args += [f"%{keyword}%"] * 2
-        sql += " LIMIT ?"; args.append(limit)
+            sql += " AND (name LIKE ? OR address LIKE ?)"
+            args += [f"%{keyword}%"] * 2
+        sql += " LIMIT ?"
+        args.append(limit)
         rows = conn.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
     finally:

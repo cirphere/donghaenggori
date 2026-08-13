@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 import sys
 
-from donghaenggori.core import db, dateparse, hospital, needlevel, pipeline
+from donghaenggori.core import dateparse, db, hospital, needlevel, pipeline
 from donghaenggori.services import rag, summarize
 
 BASE_DATE = datetime.date(2026, 7, 7)      # 문서 기준 접수일 (화)
@@ -181,10 +181,10 @@ def case14() -> None:
              ("내일 내일 꼭 가야 해", "2026-07-08", False)]   # 같은 날짜 반복은 정정이 아니다
     got = [dateparse.parse_date(t, BASE_DATE) for t, _, _ in cases]
     ok = all(g and g["date"] == d and g["corrected"] == c
-             for g, (_, d, c) in zip(got, cases))
+             for g, (_, d, c) in zip(got, cases, strict=True))
     check(14, "날짜 자기수정 — 마지막 표현 채택", ok,
           " / ".join(f"{t.split()[0]}…→{g['date']}(정정={g['corrected']})"
-                     for (t, _, _), g in zip(cases, got)))
+                     for (t, _, _), g in zip(cases, got, strict=True)))
 
 
 # 시각은 예약에 필요하지만, 오전·오후를 모르는 "3시"를 우리가 골라주면 안 된다.
@@ -199,7 +199,7 @@ def case15() -> None:
     ]
     got = [dateparse.parse_time(t) for t, _, _ in checks]
     ok = all(g and g["time"] == v and g["confident"] == c
-             for g, (_, v, c) in zip(got, checks))
+             for g, (_, v, c) in zip(got, checks, strict=True))
 
     r = pipeline.run(PHONE_MAIN, "모레 오후 2시에 정형외과 가야 해")
     ok = ok and r.card.time_value == "14:00"
@@ -284,7 +284,7 @@ def case18() -> None:
 # 긴급이 목록 맨 위에 오고, 처리하면 내려가야 한다. 최신순만 쓰면 긴급이
 # 이후 접수에 밀려 묻히고, 처리 표시가 없으면 반대로 영원히 맨 위를 덮는다.
 def case19() -> None:
-    r = pipeline.run(PHONE_MAIN, "가슴이 답답하고 숨이 차")
+    pipeline.run(PHONE_MAIN, "가슴이 답답하고 숨이 차")
     class _Stub:
         target, raw_utterance, intent = "박순자", "가슴이 답답하고 숨이 차", "긴급"
         hospital = hospital_status = dept = None
@@ -347,7 +347,7 @@ def case21() -> None:
     names = [(db.get_profile(f) or {}).get("name") for f in forms]
     ok = all(n == names[0] and n for n in names)
     check(21, "발신번호 국가번호(+82) 정규화", ok,
-          " / ".join(f"{f}→{n or '못 찾음'}" for f, n in zip(forms, names)))
+          " / ".join(f"{f}→{n or '못 찾음'}" for f, n in zip(forms, names, strict=True)))
 
 
 # 어르신이 병원 이름을 직접 대면 그것이 과거 이력보다 우선이다.

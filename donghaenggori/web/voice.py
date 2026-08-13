@@ -26,14 +26,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import tempfile
 import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
-
-import logging
 
 from ..core import db, pipeline
 from ..core.korean import josa

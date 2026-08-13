@@ -366,7 +366,7 @@ def main() -> int:
     # 방금 PHONE_SELF 로 여러 건 넣었으므로 다음 접수에는 중복 표시가 붙어야 한다
     voice._transcribe_url = lambda url: "모레 정형외과 가야겄어"
     post(client, "/api/voice/recording", rec_params(PHONE_SELF))
-    latest = db.list_intakes(limit=1)[0]
+    db.list_intakes(limit=1)
     dup = db.recent_intakes(PHONE_SELF, minutes=10)
     check("중복 재전화 → 합치지 않고 표시", len(dup) > 0, f"최근 {len(dup)}건 감지")
 
