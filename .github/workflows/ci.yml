@@ -86,6 +86,33 @@ jobs:
           print("설정 값에 주석 없음")
           PY
 
+      # 예제를 그대로 복사해도 기존 설정이 지워지지 않아야 한다.
+      #
+      # env_file 은 나중 파일이 이기는데, 빈 `KEY=` 도 '빈 값으로 덮어쓰기' 다.
+      # 예제에 `CLAWOPS_SIGNING_KEY=` 가 있으면 복사만으로 기존 키가 지워져
+      # 전화가 503 이 된다. 그래서 예제의 빈 키는 `#` 으로 주석 처리해 둔다.
+      - name: 예제 복사가 기존 설정을 지우지 않는지
+        run: |
+          cp .env.app.example .env.app
+          cp .env.frontend.example .env.frontend
+          printf 'CLAWOPS_SIGNING_KEY=LEGACY\nDATA_GO_KR_KEY=LEGACY\nSTAFF_PASSWORD=LEGACY\n' >> .env
+          docker compose -f docker-compose.yml -f docker-compose.frontend.yml \
+            config --format json > /tmp/legacy.json
+          python - <<'PY'
+          import json, sys
+          svc = json.load(open("/tmp/legacy.json"))["services"]
+          env = svc["app"].get("environment") or {}
+          lost = [k for k in ("CLAWOPS_SIGNING_KEY", "DATA_GO_KR_KEY")
+                  if env.get(k) != "LEGACY"]
+          if lost:
+              sys.exit("예제 복사만으로 기존 값이 지워졌다: "
+                       + ", ".join(f"{k}={env.get(k)!r}" for k in lost)
+                       + "\n예제의 빈 키는 '#' 으로 주석 처리할 것")
+          print("예제를 복사해도 기존 설정이 남는다")
+          PY
+          # 뒤 단계가 깨끗한 상태에서 돌도록 .env 를 예제로 되돌린다
+          cp .env.example .env
+
       - name: compose 파일 문법 검사
         run: |
           docker compose -f docker-compose.yml config -q
