@@ -36,6 +36,7 @@ from fastapi.responses import Response
 import logging
 
 from ..core import db, pipeline
+from ..core.korean import josa
 
 # uvicorn 로거를 빌려 쓴다. 자체 이름으로 만들면 루트로 propagate 되는데
 # uvicorn 은 루트에 핸들러를 달지 않아 INFO 가 조용히 사라진다(WARNING 만
@@ -579,8 +580,11 @@ def _receipt(res) -> str:
         return "접수했습니다."
     when = c.date_label or "말씀하신 날짜"
     if c.hospital and c.hospital_status == "확인됨":
-        return f"{when} {c.hospital}으로 접수했습니다."
-    return f"{when}로 접수했습니다."
+        # 조사를 붙박이로 두면 "행복정형외과으로" 가 된다. ~내과·~치과·~안과 처럼
+        # 받침 없이 끝나는 의원 이름이 흔한데, 이게 어르신이 통화에서 마지막으로
+        # 듣는 문장이다. korean.josa 가 받침을 보고 '으로/로' 를 고른다.
+        return f"{when} {josa(c.hospital, '로')} 접수했습니다."
+    return f"{josa(when, '로')} 접수했습니다."
 
 
 def _save(res, phone: str, text: str) -> int | None:

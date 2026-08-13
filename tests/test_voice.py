@@ -176,6 +176,19 @@ def main() -> int:
           V.DONE_HINT)
     check("안내가 키를 누르라고 말한다", "눌러" in V.DONE_HINT, V.DONE_HINT)
 
+    # 어르신이 통화에서 마지막으로 듣는 문장이다. 조사를 붙박이로 두면
+    # ~내과·~치과처럼 받침 없이 끝나는 흔한 의원 이름이 "정형외과으로" 가 된다.
+    class _C:
+        def __init__(s, d, h, st): s.date_label, s.hospital, s.hospital_status = d, h, st
+    class _R:
+        def __init__(s, c): s.card = c
+    for hosp, want in (("송정병원", "송정병원으로"), ("행복정형외과", "행복정형외과로"),
+                       ("서울내과", "서울내과로")):
+        said = V._receipt(_R(_C("내일", hosp, "확인됨")))
+        check(f"접수 안내 조사 — {hosp}", want in said, said)
+    check("병원 없으면 날짜만", V._receipt(_R(_C("내일", None, None))) == "내일로 접수했습니다.",
+          V._receipt(_R(_C("내일", None, None))))
+
     # .env 가 코드 기본값을 덮어써서 두 번 헤맸다. 빈 값은 '미설정'이어야 한다.
     import os
     for raw, want in (("", 60), ("  ", 60), ("45", 45), ("이상한값", 60)):
