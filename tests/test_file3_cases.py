@@ -102,6 +102,24 @@ def case7b() -> None:
           f"대리: 병원={c.hospital}/{c.need_level} · 본인: {본인.hospital}[{본인.hospital_status}]")
 
 
+# ── 7-c. 대리 판별이 낱말 경계를 지키는가 ───────────────────────
+# 부분문자열로만 보던 시절 "어머니날에 병원 가야" 가 어머니 대리 요청이 됐다.
+# 대리로 잡히면 발신자 프로필을 버리므로(case7b), 오탐의 대가가 크다.
+def case7c() -> None:
+    from donghaenggori.core import nlu
+
+    대리 = ["느그 어매 병원 좀 델꼬 가야", "어머니 모시고 병원", "아버지 병원 좀",
+           "집사람 병원 데려다", "딸이 대신 전화했어요", "어르신 모시고 병원 가야",
+           "우리 어른 병원 좀"]
+    본인 = ["무릎이 아파서 병원 가야", "모레 정형외과 가야겄어",
+           "어머니날에 병원 가야", "엄마손 식당 앞 병원", "할머니회 모임 갔다가",
+           "어르신 병원 동행 신청합니다"]     # '어르신' 단독은 대상자 호칭이다
+    틀림 = ([t for t in 대리 if nlu.detect_proxy(t)[0] != "대리"]
+           + [t for t in 본인 if nlu.detect_proxy(t)[0] != "본인"])
+    check(16, "대리 판별 — 낱말 경계", not 틀림,
+          f"{len(대리) + len(본인)}건 중 틀림 {len(틀림)}: {틀림[:2]}")
+
+
 # ── 8. 상대 날짜 '다음 주 화요일' ───────────────────────────────
 def case8() -> None:
     d = dateparse.parse_date("다음주 화요일에 병원 가야", today=BASE_DATE)
@@ -425,7 +443,7 @@ def case22() -> None:
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
-               case7, case7b, case8, case9, case10, case11, case12, case13,
+               case7, case7b, case7c, case8, case9, case10, case11, case12, case13,
                case14, case15, case16, case17, case18, case19, case20, case21, case22):
         try:
             fn()

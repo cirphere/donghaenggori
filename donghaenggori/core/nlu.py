@@ -41,17 +41,43 @@ class Analysis:
     proxy_relation: str | None = None  # 어머니 | 아버지 | 조부모 | 배우자 | 기타
 
 
+# 관계 호칭 뒤에 올 수 있는 말. 여기 없는 글자가 이어지면 **다른 낱말**이다 —
+# "어머니날", "엄마손", "할머니회" 를 대리 요청으로 보면 안 된다.
+_AFTER_RELATION = ("가", "이", "는", "은", "를", "을", "도", "만", "의", "와", "과",
+                   "랑", "한테", "에게", "께", "하고", "님", "요", ",", ".", "!", "?")
+
+
+def _mentions_relation(text: str, word: str) -> bool:
+    """관계 호칭이 **낱말로** 나왔는가.
+
+    부분문자열로만 보면 "어머니날에 병원 가야" 가 어머니 대리 요청이 된다.
+    호칭 뒤가 조사·공백·문장 끝이어야 진짜 호칭으로 본다.
+    """
+    start = 0
+    while (i := text.find(word, start)) != -1:
+        end = i + len(word)
+        if end >= len(text) or text[end].isspace() or text.startswith(_AFTER_RELATION, end):
+            return True
+        start = i + 1
+    return False
+
+
 def detect_proxy(text: str) -> tuple[str, str | None]:
     """대리 요청 여부와 추정 관계를 판별한다.
 
     "느그 어매 병원 좀 델꼬 가야 쓰겄는디" → ("대리", "어머니")
     관계 호칭만 있어도 대리로 본다. 대상자 확정은 사회복지사가 한다.
+
+    **놓치는 쪽이 더 나쁘다.** 대리를 못 잡으면 발신자의 병원 이력과 등급이
+    남의 접수에 붙는다(pipeline 이 대리일 때 프로필을 버린다). 반대로 잘못
+    잡으면 카드가 '확인 필요' 로 남을 뿐이라, 애매하면 대리로 본다.
+    다만 낱말 경계는 지킨다 — 그건 애매한 게 아니라 그냥 오탐이다.
     """
     pk = TERMS.get("proxy_keywords") or {}
     for relation, words in (pk.get("relation") or {}).items():
         if relation.startswith("_"):
             continue
-        if any(w in text for w in words):
+        if any(_mentions_relation(text, w) for w in words):
             return "대리", relation
     if any(v in text for v in (pk.get("proxy_verbs") or [])):
         return "대리", None
