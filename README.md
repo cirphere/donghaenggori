@@ -106,7 +106,10 @@ arm64(Oracle Ampere)든 그대로 만들어진다 — 의존성은 양쪽 휠을
 for f in .env .env.app .env.frontend .env.tunnel; do cp "$f.example" "$f"; done
 docker compose up -d --build
 docker compose logs -f                      # 첫 기동은 모델 다운로드로 오래 걸린다
-curl -X POST localhost:8000/api/warmup      # 시연 전 반드시 — 안 하면 첫 요청이 30초
+# 예열은 기동과 함께 자동으로 돈다(WARMUP_ON_START=1). 기동을 막지 않으므로
+# 30~40초 동안은 요청이 느릴 수 있다. 로그로 확인:
+#     docker compose logs app | grep 예열
+curl -X POST localhost:8000/api/warmup      # 다시 돌리고 싶을 때만
 ```
 
 | | |

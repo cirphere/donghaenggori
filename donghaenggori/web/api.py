@@ -50,9 +50,49 @@ app.include_router(voice.router)
 
 
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     db.init_db()
     _log_ai_placement()
+    _schedule_warmup()
+
+
+def _schedule_warmup() -> None:
+    """WARMUP_ON_START 가 켜져 있으면 기동 직후 예열을 돌린다.
+
+    예열은 모델 로드와 외부 API 캐시 채우기라 30초 넘게 걸린다. 사람이
+    `curl -X POST /api/warmup` 을 잊으면, 시연 첫 요청이 그 시간을 대신 문다.
+
+    **기동을 막지 않는다.** 별도 스레드로 돌려서 서버는 곧바로 요청을 받고
+    헬스체크도 통과한다. 예열 전에 들어온 요청은 느릴 뿐 실패하지 않는다.
+
+    도커에서만 켠다(docker-compose.yml). 로컬 실행과 테스트에서 매번 모델을
+    받으면 곤란해서 코드 기본값은 꺼둔다.
+    """
+    import asyncio
+    import logging
+    import os
+    import time
+
+    if (os.environ.get("WARMUP_ON_START") or "").strip().lower() not in ("1", "true", "yes"):
+        return
+    log = logging.getLogger("uvicorn.error")
+
+    async def _run() -> None:
+        t0 = time.monotonic()
+        log.info("예열 시작 — 모델 로드와 외부 API 캐시 (수십 초, 요청은 그동안에도 받는다)")
+        try:
+            res = await asyncio.to_thread(warmup)
+        except Exception as e:                     # 예열 실패가 서비스를 막지 않는다
+            log.warning("예열 실패 — %s: %s", type(e).__name__, e)
+            return
+        bad = {k: v for k, v in (res.get("warmed") or {}).items()
+               if isinstance(v, str) and v not in ("ok", "loaded", "BERT", "TF-IDF")}
+        if bad:
+            log.warning("예열 완료 (%.1f초) — 확인 필요: %s", time.monotonic() - t0, bad)
+        else:
+            log.info("예열 완료 (%.1f초) — 전부 정상", time.monotonic() - t0)
+
+    asyncio.get_running_loop().create_task(_run())
 
 
 def _log_ai_placement() -> None:
@@ -363,13 +403,31 @@ def warmup() -> dict:
     done["intent_model"] = ("BERT" if intent_model.bert_available()
                             else "TF-IDF" if intent_model.available() else "미학습")
 
+    # 음성 인식 모델 로드.
+    #
+    # 예열 목록에서 빠져 있었다. 전화가 오면 /recording 안에서 처음 로드되는데,
+    # 그동안 어르신은 통화 중에 그냥 기다린다(medium 기준 수십 초). 예열이
+    # '시연 중 멈춤을 없애는 것' 이라면 여기가 가장 큰 구간이다.
+    try:
+        from ..services import stt
+        if stt.available():
+            stt._get_model()
+            done["stt_model"] = "loaded"
+        else:
+            done["stt_model"] = "faster-whisper 미설치"
+    except Exception as e:
+        done["stt_model"] = f"{type(e).__name__}: {e}"[:120]
+
     # RAG 임베딩 모델 로드 + 인덱싱 (최초 20초가량 걸린다)
     try:
         from ..services import rag
         rag.search(region="광주광역시 서구", query="예열", limit=1)
-        done["rag_embedding"] = "loaded" if rag.available() else "폴백(토큰겹침)"
+        # 폴백으로 내려앉았으면 **이유까지** 싣는다. 예전에는 "폴백(토큰겹침)"
+        # 한마디뿐이라, 패키지가 없는 건지 모델을 못 받은 건지 알 수 없었다.
+        done["rag_embedding"] = ("loaded" if rag.available()
+                                 else f"폴백(토큰겹침) — {rag.load_reason() or '원인 불명'}")
     except Exception as e:
-        done["rag_embedding"] = type(e).__name__
+        done["rag_embedding"] = f"{type(e).__name__}: {e}"[:120]
 
     # 시연에 쓰이는 지역만 예열
     for region in ("전남 고흥군", "전남 보성군", "광주광역시 서구"):
