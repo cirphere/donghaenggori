@@ -230,6 +230,21 @@ def check_compose_stack() -> None:
         log(WARN, "컨테이너 구성", "compose 설정을 읽지 못함 (저장소 밖에서 실행했는지 확인)")
         return
 
+    # **도커로 띄운 배포일 때만 따진다.**
+    #
+    # 개발용 기기에서는 uvicorn 을 직접 띄우고 .env 도 없다. 그때 "프론트·터널이
+    # 없다" 며 FAIL 을 내면, 시연하지 말라는 문구가 아무 의미 없이 뜬다 —
+    # 그런 실패가 쌓이면 진짜 FAIL 도 무시하게 된다.
+    try:
+        running = subprocess.run(
+            ["docker", "compose", "ps", "--services", "--filter", "status=running"],
+            capture_output=True, text=True, timeout=30)
+    except Exception:
+        running = None
+    if running is None or "app" not in running.stdout.split():
+        log(WARN, "컨테이너 구성", "도커로 띄운 배포가 아니라 건너뜀 (배포 기기에서 확인할 것)")
+        return
+
     services = set(out.stdout.split())
     missing = {"frontend", "cloudflared"} - services
     if not missing:
