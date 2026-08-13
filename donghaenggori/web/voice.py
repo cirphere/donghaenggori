@@ -76,6 +76,9 @@ _IDENTITY_ANSWER = {
     "self": ("1번(본인 맞다고 응답)", "추정"),
     "other": ("2번(본인이 아니라고 응답) — 성함·주소를 말로 남김", "확인 필요"),
     "unknown": ("응답 없음(키 입력 없이 진행)", "확인 필요"),
+    # 등록된 대상자가 아니다. 이름을 물을 수 없어 확인 질문 자체를 건너뛰었고,
+    # 대신 성함·읍면동을 말로 받았다. 대상자 등록은 복지사가 판단한다.
+    "new": ("미등록 번호 — 성함·읍면동을 말로 남김 · 대상자 등록 필요", "확인 필요"),
 }
 
 # 시연 전용 — 발표자가 자기 폰으로 걸었을 때 등록된 대상자로 조회되게 한다.
@@ -105,12 +108,21 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 시연장에서 문구를 다듬을 수 있도록 환경변수로 뺐다.
 # 미등록 번호용 인사. 등록된 번호는 이름을 확인하는 문장이 따로 나간다.
 #
+# **성함과 읍면동을 먼저 묻는다.** 예전에는 미등록 번호에도 증상만 물었고,
+# 그러면 복지사에게 "누구인지 모르는 접수"가 남아 발신번호로 되걸어 보는 수밖에
+# 없었다. 처음 연락한 어르신일수록 놓치면 안 되는 쪽이다.
+#
+# 여기서 받은 이름으로 대상자를 **자동 등록하지는 않는다.** 대상자 자격은
+# 장기요양등급 같은 근거로 정해지고 발신번호는 본인확인이 못 된다(남의 폰·
+# 공중전화). 게다가 이름·주소가 STT 로 들어와 오인식될 수 있다. 통화는 받아만
+# 적고, 등록은 사회복지사가 확인한 뒤에 한다.
+#
 # 119 안내는 넣지 않는다. 접수 전화에 대고 끊으라고 하는 것이 어색하고,
 # 안내가 길어지면 어르신이 끝까지 듣지 않는다. 긴급은 발화에서 감지해
 # 담당자로 넘기고, **전환이 실패했을 때만** 119 를 안내한다.
 GREETING = os.environ.get("CLAWOPS_GREETING") or (
-    "동행고리입니다. 삐 소리 후 어느 병원에 언제 가시는지 말씀해 주세요. "
-    "마치시면 잠시 기다리시면 됩니다.")
+    "동행고리입니다. 처음 연락 주셨네요. 삐 소리 후 어르신 성함과 사시는 읍면동, "
+    "그리고 어느 병원에 언제 가시는지 말씀해 주세요. 마치시면 잠시 기다리시면 됩니다.")
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
@@ -371,10 +383,16 @@ async def incoming(request: Request) -> Response:
     # DEMO_CALLER_PHONE 미설정이거나 번호 표기가 다른 경우다.
     _log.info("발신 %s → 조회 %s → %s", raw, db.normalize_phone(lookup),
               prof["name"] if prof else "등록 없음(미등록 안내로 진행)")
-    ask = _record(_callback(request, "voice_recording") + "?who=unknown")
+    def ask(who: str) -> str:
+        return _record(_callback(request, "voice_recording") + f"?who={who}")
 
-    if not prof or not ASK_IDENTITY:
-        return _xml(_say(GREETING) + ask)
+    # 미등록 번호 — 이름을 모르니 확인할 것도 없다. 성함·읍면동부터 받는다.
+    if not prof:
+        return _xml(_say(GREETING) + ask("new"))
+
+    # 등록된 번호인데 확인 질문을 꺼둔 경우. 이름은 이미 아니까 증상만 받는다.
+    if not ASK_IDENTITY:
+        return _xml(_say(SYMPTOM_PROMPT) + ask("unknown"))
 
     # <Say> 를 <Gather> **밖에** 둔다.
     #
@@ -390,7 +408,7 @@ async def incoming(request: Request) -> Response:
         + f'<Gather numDigits="1" timeout="7" '
           f'action="{_esc(_callback(request, "voice_identity"))}"/>'
         # 키를 못 눌렀다 — 묻지 말고 바로 증상을 받는다. 대상자는 확인 필요로 남는다.
-        + _say(SYMPTOM_PROMPT) + ask)
+        + _say(SYMPTOM_PROMPT) + ask("unknown"))
 
 
 @router.post("/identity", name="voice_identity")

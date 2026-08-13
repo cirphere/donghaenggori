@@ -156,6 +156,16 @@ def main() -> int:
           "맞으신가요" in before_gather and "<Say" not in body.split("<Gather")[1].split("/>")[0],
           "안에 넣으면 안 들린다")
 
+    # 미등록 번호 — 이름을 모르니 확인 질문은 건너뛰고 성함·읍면동부터 받는다.
+    new_body = post(client, "/api/voice/incoming",
+                    {"CallId": "CNEW", "From": "010-7777-0000",
+                     "To": "070", "Direction": "inbound"}).text
+    check("미등록: 성함·읍면동을 묻는다",
+          "성함" in new_body and "읍면동" in new_body, new_body[:150])
+    check("미등록: 확인 질문 없음",
+          "맞으신가요" not in new_body and "<Gather" not in new_body, new_body[:150])
+    check("미등록: who=new 로 녹음", "who=new" in new_body, new_body[:200])
+
     # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
     check("키 안 눌러도 흘러갈 곳이 있음",
           "<Record" in body and "who=unknown" in body,
