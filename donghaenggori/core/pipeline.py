@@ -123,6 +123,18 @@ def run(phone: str, utterance: str, channel: str = "전화",
             urgent_message=msg, urgent_confident=confident,
             intent_source=source, intent_confidence=conf)
 
+    # 대리 요청이면 발신자의 프로필을 카드에 쓰지 않는다.
+    #
+    # "느그 어매 병원 좀 델꼬 가야" 는 **어머니**의 동행 요청이다. 그런데 발신자가
+    # 등록된 대상자면 그 사람의 병원 이력과 장기요양등급이 그대로 붙었다 —
+    # 대상자 칸에는 '미확인 대상자(어머니 대리 요청)' 이라고 써 놓고 병원은
+    # 딸의 단골을 '확인됨' 으로 내놨다. 복지사가 그 표시를 놓치면 어머니를
+    # 딸 기준으로 준비하게 된다. identity_denied 와 같은 문제다.
+    #
+    # 보호자 번호로 걸면 그 번호는 대상자로 등록돼 있지 않아 원래도 비어 있었다.
+    # 등록된 대상자가 자기 번호로 남을 대신 요청할 때만 새는 구멍이었다.
+    if a.requester == "대리":
+        prof = None
     hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital)   # ⑥
     nres = need_mod.assess(prof)
 
