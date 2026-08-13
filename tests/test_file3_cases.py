@@ -77,7 +77,7 @@ def case6() -> None:
 # ── 7. 보호자 대리 전화 (문서상 '보완') ─────────────────────────
 def case7() -> None:
     """보호자가 자기 폰으로 대신 접수 — 대상자를 확정하지 않고 후보만 제시해야 한다."""
-    r = pipeline.run("010-9876-5432", "느그 어매 병원 좀 델꼬 가야 쓰겄는디")  # 박순자의 딸
+    r = pipeline.run("010-9876-5432", "우리 어매 병원 좀 델꼬 가야 쓰겄는디")  # 박순자의 딸
     c = r.card
     ok = (c.requester == "대리" and c.proxy_relation == "어머니"
           and len(c.target_candidates) == 1
@@ -88,12 +88,12 @@ def case7() -> None:
 
 
 # ── 7-b. 대리 요청에 발신자 프로필이 새지 않는가 ────────────────
-# 회귀 방지: "느그 어매 병원 좀" 을 **등록된 대상자가 자기 번호로** 걸면,
+# 회귀 방지: "우리 어매 병원 좀" 을 **등록된 대상자가 자기 번호로** 걸면,
 # 대상자 칸에는 '미확인(어머니 대리 요청)' 이라 써 놓고 병원·필요도는 발신자
 # 것으로 채웠다. 딸의 단골이 어머니의 병원으로 '확인됨' 이 됐다.
 # 보호자 번호로 걸 때는 그 번호가 대상자로 등록돼 있지 않아 드러나지 않던 구멍이다.
 def case7b() -> None:
-    r = pipeline.run(PHONE_MAIN, "느그 어매 병원 좀 델꼬 가야 쓰겄는디")
+    r = pipeline.run(PHONE_MAIN, "우리 어매 병원 좀 델꼬 가야 쓰겄는디")
     c = r.card
     샘 = (c.hospital is not None or c.need_level != "확인 필요")
     본인 = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데").card
@@ -108,7 +108,7 @@ def case7b() -> None:
 def case7c() -> None:
     from donghaenggori.core import nlu
 
-    대리 = ["느그 어매 병원 좀 델꼬 가야", "어머니 모시고 병원", "아버지 병원 좀",
+    대리 = ["우리 어매 병원 좀 델꼬 가야", "어머니 모시고 병원", "아버지 병원 좀",
            "집사람 병원 데려다", "딸이 대신 전화했어요", "어르신 모시고 병원 가야",
            "우리 어른 병원 좀"]
     본인 = ["무릎이 아파서 병원 가야", "모레 정형외과 가야겄어",
@@ -118,6 +118,36 @@ def case7c() -> None:
            + [t for t in 본인 if nlu.detect_proxy(t)[0] != "본인"])
     check(16, "대리 판별 — 낱말 경계", not 틀림,
           f"{len(대리) + len(본인)}건 중 틀림 {len(틀림)}: {틀림[:2]}")
+
+
+# ── 7-d. 긴급 발화에서도 대리를 판별하는가 ──────────────────────
+# 규칙이 긴급을 만나면 곧바로 반환해서 detect_proxy 가 아예 돌지 않았다.
+# "우리 어매가 쓰러졌어" 가 발신자 본인 이름으로 응급 기록에 남았다 —
+# 그 기록을 보고 사람이 엉뚱한 어르신을 찾아간다.
+def case7d() -> None:
+    from donghaenggori.core import nlu
+
+    a = nlu.analyze("우리 어매가 쓰러졌어 숨을 못 쉬어", use_llm=False)
+    r = pipeline.run(PHONE_MAIN, "우리 어매가 쓰러졌어 숨을 못 쉬어")
+    본인긴급 = pipeline.run(PHONE_MAIN, "가슴이 답답하고 숨이 차")
+    check(17, "긴급 + 대리 → 발신자를 대상자로 쓰지 않는다",
+          a.urgent and a.requester == "대리" and r.profile is None
+          and 본인긴급.profile is not None,
+          f"대리={a.requester} 프로필={r.profile} · 본인긴급 프로필={bool(본인긴급.profile)}")
+
+
+# ── 7-e. 병원명도 정정을 따르는가 ───────────────────────────────
+# 날짜는 "내일 아니고 모레" 를 처리하는데 병원은 첫 번째를 잡고 있었다.
+def case7e() -> None:
+    from donghaenggori.core import nlu
+
+    쌍 = [("송정병원 말고 목포한국병원으로 가야", "목포한국병원"),
+         ("송정병원 아니고 순천의료원", "순천의료원"),
+         ("목포 병원 말고 송정병원", "송정병원"),
+         ("내일 아니고 모레 송정병원", "송정병원"),        # 날짜 정정은 병원과 무관
+         ("전남대학교 병원 갔다가 목포한국병원도", "전남대학교병원")]  # 정정이 아니면 첫 번째
+    틀림 = [t for t, want in 쌍 if nlu.detect_hospital(t) != want]
+    check(18, "병원명 정정 — 나중 것 채택", not 틀림, f"틀림 {len(틀림)}: {틀림[:2]}")
 
 
 # ── 8. 상대 날짜 '다음 주 화요일' ───────────────────────────────
@@ -404,12 +434,12 @@ def case22() -> None:
            # 가족 호칭. 대리 접수에서 가장 흔한 말투인데 '어매병원' 이라는 없는
            # 병원을 만들어 '확인됨' 으로 띄웠다. 대리 판별은 '어매' 를 어머니로
            # 알고 있었는데 병원명 쪽만 몰랐다 — 목록을 한 곳에서 가져오게 했다.
-           ("느그 어매 병원 좀 델꼬 가야 쓰겄는디", None),
+           ("우리 어매 병원 좀 델꼬 가야 쓰겄는디", None),
            ("우리 엄마 병원 모시고 가야 해", None),
            ("할머니 병원 데리고 가야 돼", None),
            ("우리 아들 병원 갔다", None),
            # 호칭이 있어도 진짜 병원 이름을 대면 그건 잡아야 한다
-           ("느그 어매 송정병원 델꼬 가야 쓰겄는디", "송정병원"),
+           ("우리 어매 송정병원 델꼬 가야 쓰겄는디", "송정병원"),
            # **띄어 쓴 '병원' 은 대개 상호가 아니다.** 차단 목록으로는 감당이
            # 안 됐다 — 흔한 발화 24개 중 20개가 없는 병원을 만들어냈다.
            # 한국어 어미를 다 셀 수는 없어서, 붙여 쓴 것만 상호로 본다.
@@ -443,7 +473,7 @@ def case22() -> None:
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
-               case7, case7b, case7c, case8, case9, case10, case11, case12, case13,
+               case7, case7b, case7c, case7d, case7e, case8, case9, case10, case11, case12, case13,
                case14, case15, case16, case17, case18, case19, case20, case21, case22):
         try:
             fn()
