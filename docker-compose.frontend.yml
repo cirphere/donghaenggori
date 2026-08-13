@@ -20,13 +20,20 @@ services:
         BUILD_DIR: ${FRONTEND_BUILD_DIR:-dist}
     image: donghaenggori:frontend
     restart: unless-stopped
-    # 기본 인증 자격증명. 비워두면 인증이 꺼지고 기동 로그에 경고가 크게 남는다.
-    # 값은 .env 에만 두고 저장소에 넣지 않는다.
-    environment:
-      STAFF_USER: "${STAFF_USER:-}"
-      STAFF_PASSWORD: "${STAFF_PASSWORD:-}"
+    # 기본 인증 자격증명(STAFF_USER·STAFF_PASSWORD). 비워두면 인증이 꺼지고
+    # 기동 로그에 경고가 크게 남는다. 값은 .env.frontend 에만 두고 저장소에
+    # 넣지 않는다.
+    #
+    # environment: 로 옮겨 담지 않는다 — 그러면 env_file 을 이겨서 .env.frontend
+    # 를 고쳐도 반영되지 않는다. 컨테이너 안에서 entrypoint 가 읽어 쓰므로
+    # env_file 만으로 충분하다.
+    #
+    # 루트 .env 도 함께 읽는 것은 옮기기 전 배포본 호환용이다. 나중 파일이 이긴다.
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: .env.frontend
+        required: false
     ports:
       # 로컬 확인용. 터널은 이 포트가 아니라 컨테이너 이름으로 붙는다.
       #

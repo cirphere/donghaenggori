@@ -14,25 +14,34 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = ROOT / ".env"
+
+# 설정 파일은 컨테이너별로 나뉘어 있다. 도커로 띄우면 compose 의 env_file 이
+# 알맞은 파일만 넣어 주지만, 도커 없이 직접 실행할 때는 여기서 읽어야 한다.
+#
+# .env 를 먼저 읽는 것은 예전 통합 파일 호환용이다. setdefault 라 **먼저 읽은
+# 쪽이 이긴다** — 옮기는 중에 양쪽에 같은 키가 있으면 옛 값이 남는다. 옮긴 뒤에는
+# 루트 .env 에서 지우는 것이 맞고, 기동 로그의 "전화 설정 —" 줄로 확인한다.
+ENV_PATHS = [ROOT / ".env", ROOT / ".env.app"]
+ENV_PATH = ENV_PATHS[0]          # 예전 이름 — 이 값을 참조하는 코드가 있다
 
 
 def _load_env() -> None:
     """python-dotenv가 있으면 사용하고, 없으면 직접 파싱한다(의존성 0 폴백)."""
-    if not ENV_PATH.exists():
-        return
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(ENV_PATH, override=False)
-        return
-    except ImportError:
-        pass
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    for path in ENV_PATHS:
+        if not path.exists():
             continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(path, override=False)
+            continue
+        except ImportError:
+            pass
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 _load_env()

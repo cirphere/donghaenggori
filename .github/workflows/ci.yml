@@ -55,20 +55,44 @@ jobs:
       - name: 말한 성함·주소 추출 테스트
         run: python -m tests.test_identity_extract
 
-      # compose 는 env_file 이 없으면 에러로 멈춘다(의도된 동작 — 키를 빠뜨린 채
-      # 뜨는 것보다 낫다). .env 는 gitignore 라 CI 에는 없으므로 예제를 복사한다.
-      # 덤으로 .env.example 이 실제로 쓸 수 있는 파일인지도 함께 검증된다.
-      - name: .env 준비
-        run: cp .env.example .env
+      # 설정 파일은 컨테이너별로 나뉘어 있고 전부 gitignore 라 CI 에는 없다.
+      # 예제를 복사해 채운다 — 덤으로 각 .example 이 실제로 쓸 수 있는 파일인지
+      # 함께 검증된다(주석 오타로 파싱이 깨지는 것을 여기서 잡는다).
+      - name: 설정 파일 준비
+        run: |
+          for f in .env .env.app .env.frontend .env.tunnel; do
+            cp "$f.example" "$f"
+          done
 
       - name: compose 파일 문법 검사
         run: |
           docker compose -f docker-compose.yml config -q
-          CF_TUNNEL_TOKEN=dummy docker compose \
+          docker compose \
             -f docker-compose.yml \
             -f docker-compose.gpu.yml \
             -f docker-compose.tunnel.yml \
             -f docker-compose.frontend.yml config -q
+
+      # 나눈 의미가 있는지 본다 — app 컨테이너가 콘솔 비밀번호나 터널 토큰을
+      # 보면 안 된다. 나중에 누가 편하다고 한 파일로 되돌리면 여기서 걸린다.
+      - name: 컨테이너별 비밀 격리 확인
+        run: |
+          rm -f .env                      # 옛 통합 파일이 없는 상태로 본다
+          printf 'STAFF_PASSWORD=LEAK_PW\n'     >> .env.frontend
+          printf 'TUNNEL_TOKEN=LEAK_TOKEN\n'    >> .env.tunnel
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.tunnel.yml \
+            -f docker-compose.frontend.yml config --format json > /tmp/cfg.json
+          python - <<'PY'
+          import json, sys
+          svc = json.load(open("/tmp/cfg.json"))["services"]
+          leaked = [k for k, v in (svc["app"].get("environment") or {}).items()
+                    if isinstance(v, str) and v.startswith("LEAK")]
+          if leaked:
+              sys.exit(f"app 컨테이너가 남의 비밀을 본다: {leaked}")
+          print("app 컨테이너는 자기 설정만 본다")
+          PY
 
       - name: Dockerfile 빌드 (CPU 이미지)
         run: docker build -f Dockerfile -t donghaenggori:ci .

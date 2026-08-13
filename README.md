@@ -14,7 +14,8 @@
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env          # 키가 없어도 동작합니다 (규칙 기반·미연동 폴백)
+# 설정 파일은 컨테이너별로 나뉘어 있다. 로컬 실행에는 .env.app 만 있으면 된다.
+cp .env.app.example .env.app  # 키가 없어도 동작합니다 (규칙 기반·미연동 폴백)
 
 python -m donghaenggori.services.seed      # 시드 20명 · 이력 60건
 python -m donghaenggori.services.loader    # 공공데이터 적재
@@ -101,7 +102,8 @@ python -m tests.test_file3_cases     # 제출 문서(파일3) 12건 회귀 검�
 arm64(Oracle Ampere)든 그대로 만들어진다 — 의존성은 양쪽 휠을 모두 확인했다.
 
 ```bash
-cp .env.example .env          # 최초 1회. 이미 있으면 실행하지 말 것 (키가 지워진다)
+# 최초 1회만. **이미 있으면 실행하지 말 것** — 채워둔 키가 지워진다.
+for f in .env .env.app .env.frontend .env.tunnel; do cp "$f.example" "$f"; done
 docker compose up -d --build
 docker compose logs -f                      # 첫 기동은 모델 다운로드로 오래 걸린다
 curl -X POST localhost:8000/api/warmup      # 시연 전 반드시 — 안 하면 첫 요청이 30초
@@ -184,7 +186,21 @@ docker compose logs app | grep -i cuda      # 로드 오류가 없어야 한다
 
 ## 환경변수
 
-`.env.example` 참고. 전부 없어도 동작하며, 없으면 아래처럼 폴백한다.
+컨테이너별로 나눠 둔다. 터널 토큰 하나로 집 네트워크가 열리고 콘솔 비밀번호로
+어르신 정보가 열리는데, 한 파일에 두면 팀원에게 하나를 공유할 때 나머지까지
+같이 넘어간다.
+
+| 파일 | 쓰는 컨테이너 | 담긴 것 |
+|---|---|---|
+| `.env` | (compose 자체) | `COMPOSE_FILE`, `FRONTEND_BUILD_DIR` |
+| `.env.app` | app | 공공데이터·Claude 키, STT, 전화 연동 |
+| `.env.frontend` | frontend | 콘솔 로그인 계정 |
+| `.env.tunnel` | cloudflared | Cloudflare 터널 토큰 |
+
+`.env` 에 남은 둘은 compose 가 `${}` 치환에 쓰는 값이라 옮길 수 없다 —
+치환에는 루트 `.env` 만 읽히고 `env_file` 은 안 읽힌다.
+
+각 `.example` 참고. 전부 없어도 동작하며, 없으면 아래처럼 폴백한다.
 
 | 변수 | 없을 때 |
 |---|---|
