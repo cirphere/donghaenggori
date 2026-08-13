@@ -89,7 +89,8 @@ def _classify(utterance: str, use_llm: bool | None,
 def run(phone: str, utterance: str, channel: str = "전화",
         use_llm: bool | None = None, with_rag: bool = True,
         classifier: classify_mod.Classifier | None = None,
-        identity_denied: bool = False) -> Result:
+        identity_denied: bool = False,
+        identity_utterance: str | None = None) -> Result:
     """identity_denied — 발신자가 **번호 주인이 아니라고 직접 밝힌** 경우.
 
     전화에서 "박순자 님 맞으신가요"에 2번을 누른 상황이다. 그때도 번호 주인의
@@ -99,6 +100,12 @@ def run(phone: str, utterance: str, channel: str = "전화",
 
     아니라고 밝혔으면 그 말을 따른다. 프로필을 카드에 쓰지 않고, 발화에서 얻은
     것만 남긴다. 대상자 확정은 원문을 듣고 복지사가 한다.
+
+    identity_utterance — 성함·읍면동을 **따로 물어 받은 답**. 전화에서는 문의
+    내용과 다른 녹음으로 들어온다. 여기서 이름·주소를 뽑고, 접수 원문(utterance)
+    에는 넣지 않는다 — 원문에 신상 이야기가 섞이면 복지사가 문의 내용을 찾아
+    읽어야 한다. 없으면 문의 발화에서 뽑는 예전 방식으로 떨어진다(웹 등 한 번에
+    받는 경로).
     """
     owner = db.get_profile(phone)                                  # ③④
     prof = None if identity_denied else owner
@@ -129,7 +136,8 @@ def run(phone: str, utterance: str, channel: str = "전화",
             facilities = []
 
     c = _build_card(phone, utterance, a, prof, hres, nres, channel,
-                    denied_owner=owner if identity_denied else None)  # ⑧
+                    denied_owner=owner if identity_denied else None,
+                    identity_utterance=identity_utterance)  # ⑧
     c.outing_checklist = _outing_checklist(prof, a)
     if hres.status == "확인 필요" and not (prof or {}).get("history"):
         c.reference_candidates = _reference_candidates(prof, a)
@@ -213,7 +221,8 @@ GUARDIAN_CHANNEL = "앱·웹(보호자)"
 
 
 def _build_card(phone, utterance, a, prof, hres, nres,
-                channel: str = "전화", denied_owner: dict | None = None) -> card_mod.Card:
+                channel: str = "전화", denied_owner: dict | None = None,
+                identity_utterance: str | None = None) -> card_mod.Card:
     # 보호자 웹으로 들어온 요청은 채널 자체가 '대리'라는 사실이다. 발화에서
     # 관계 호칭을 못 찾아도 마찬가지다 — 예전에는 "무릎이 아파서 정형외과
     # 가야 해요"처럼 호칭 없이 쓰면 본인 접수로 처리돼, 딸의 번호를 대상자
@@ -248,10 +257,20 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     #
     # 물어놓고 답을 안 담으면 복지사가 매번 원문을 읽어야 한다 — 물어본 이유가
     # 화면에 없었다. 값은 언제나 '확인 필요' 이고 확정은 사람이 한다.
+    #
+    # 전화는 성함을 **따로 물어 받는다**(identity_utterance). 짧은 전용 답변이라
+    # 긴 문장에서 골라내는 것보다 훨씬 정확하다. 없으면 문의 발화에서 뽑는다 —
+    # 웹처럼 한 번에 받는 경로가 그렇다.
     spoken_name = spoken_region = None
     if prof is None:
-        spoken_name = identity_mod.detect_name(utterance)
-        spoken_region = identity_mod.detect_region(utterance)
+        if identity_utterance:
+            # 전용 답변이다 — 문장 전체가 답이라 훨씬 느슨하게 봐도 된다.
+            # "이영희요" 처럼 이름만 툭 말하는 형태가 오히려 흔하다.
+            spoken_name, spoken_region = identity_mod.parse_identity_answer(
+                identity_utterance)
+        else:
+            spoken_name = identity_mod.detect_name(utterance)
+            spoken_region = identity_mod.detect_region(utterance)
 
     # 대리 접수 — 발신자와 대상자가 다르다. 대상자를 확정하지 않고 후보만 제시한다.
     candidates: list[dict] = []

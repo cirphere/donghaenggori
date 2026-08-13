@@ -156,9 +156,18 @@ def _with_done_hint(text: str) -> str:
     return text if "눌러" in text or "누르" in text else f"{text.rstrip()} {DONE_HINT}"
 
 
-GREETING = _with_done_hint(os.environ.get("CLAWOPS_GREETING") or (
-    "동행고리입니다. 처음 연락 주셨네요. 삐 소리 후 어르신 성함과 사시는 읍면동, "
-    f"그리고 어느 병원에 언제 가시는지 말씀해 주세요. {DONE_HINT}"))
+# 인사만 한다. 종료 안내는 붙이지 않는다 — 바로 뒤에 성함 질문이 오고, 녹음
+# 직전 안내는 그쪽이 갖는다. 여기에도 붙이면 "누르라"는 말이 두 번 나온다.
+GREETING = os.environ.get("CLAWOPS_GREETING") or "동행고리입니다. 처음 연락 주셨네요."
+
+# 성함·읍면동만 따로 받는다. 문의와 한 번에 받으면 이름을 긴 문장에서 골라내야
+# 하고, 접수 원문에 신상 이야기가 섞인다.
+WHO_PROMPT = _with_done_hint(
+    "삐 소리 후 어르신 성함과 사시는 읍면동을 말씀해 주세요.")
+
+# 이 답은 짧다 — "이영희요, 목포시 용당동" 이면 끝이다. 문의 녹음(1분)만큼
+# 줄 이유가 없고, 길게 두면 키를 안 누른 어르신이 그만큼 더 기다린다.
+IDENTITY_SECONDS = _int_env("CLAWOPS_IDENTITY_SECONDS", 20)
 
 BYE = "담당자가 확인한 뒤 연락드리겠습니다. 감사합니다."
 
@@ -168,8 +177,8 @@ ASK_IDENTITY = os.environ.get("CLAWOPS_ASK_IDENTITY", "1").strip() not in ("0", 
 
 SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는지 말씀해 주세요. "
                   + DONE_HINT)
-OTHER_PROMPT = ("어르신 성함과 사시는 읍면동, 그리고 어느 병원에 언제 가시는지 "
-                "말씀해 주세요. " + DONE_HINT)
+# OTHER_PROMPT 는 없앴다. 성함과 문의를 한 문장으로 몰아 묻던 것인데, 이제
+# 성함은 앞 단계(WHO_PROMPT)에서 따로 받고 여기서는 문의만 묻는다.
 
 # 기동할 때 **실제로 적용된 값**을 남긴다.
 #
@@ -209,8 +218,8 @@ def _say(text: str) -> str:
     return f'<Say language="ko">{_esc(text)}</Say>'
 
 
-def _record(action: str) -> str:
-    return (f'<Record maxLength="{MAX_RECORD_SECONDS}" playBeep="true" '
+def _record(action: str, seconds: int | None = None) -> str:
+    return (f'<Record maxLength="{seconds or MAX_RECORD_SECONDS}" playBeep="true" '
             f'finishOnKey="{_esc(FINISH_ON_KEY)}" action="{_esc(action)}"/>')
 
 
@@ -435,7 +444,7 @@ async def incoming(request: Request) -> Response:
 
     # 미등록 번호 — 이름을 모르니 확인할 것도 없다. 성함·읍면동부터 받는다.
     if not prof:
-        return _xml(_say(GREETING) + ask("new"))
+        return _xml(_say(GREETING) + _ask_identity_first(request, "new"))
 
     # 등록된 번호인데 확인 질문을 꺼둔 경우. 이름은 이미 아니까 증상만 받는다.
     if not ASK_IDENTITY:
@@ -464,9 +473,71 @@ async def identity(request: Request) -> Response:
     form = await _verify(request)
     digit = (form.get("Digits") or "").strip()
     who = "self" if digit == "1" else "other" if digit == "2" else "unknown"
+    if who == "other":
+        # 번호 주인이 아니라고 했다 — 누구인지부터 따로 받는다.
+        return _xml(_say(WHO_PROMPT) + _ask_identity_first(request, "other", say=False))
     action = _callback(request, "voice_recording") + f"?who={who}"
-    prompt = SYMPTOM_PROMPT if who == "self" else OTHER_PROMPT
-    return _xml(_say(prompt) + _record(action))
+    return _xml(_say(SYMPTOM_PROMPT) + _record(action))
+
+
+def _ask_identity_first(request: Request, who: str, say: bool = True) -> str:
+    """성함·읍면동을 **문의 내용과 따로** 받는다.
+
+    한 번에 받으면 두 가지가 나빠진다. 이름을 긴 문장에서 규칙으로 골라내야
+    해서 정확도가 떨어지고("저는 이영희고요 목포시 용당동 사는데 무릎이…"),
+    접수 카드의 원문에 신상 이야기가 섞여 복지사가 문의 내용을 찾아 읽어야
+    한다. 따로 받으면 짧은 전용 답변에서 뽑고, 원문에는 문의만 남는다.
+
+    이 녹음은 짧다. 상한을 문의 녹음(1분)만큼 줄 이유가 없다.
+    """
+    action = _callback(request, "voice_identity_record") + f"?who={who}"
+    return (_say(WHO_PROMPT) if say else "") + _record(action, IDENTITY_SECONDS)
+
+
+@router.post("/identity-record", name="voice_identity_record")
+async def identity_record(request: Request) -> Response:
+    """성함·읍면동 녹음이 끝났다. 곧바로 문의 내용을 묻는다.
+
+    **여기서 실패해도 통화를 끊지 않는다.** 이름을 못 받는 것보다 문의를 통째로
+    놓치는 쪽이 훨씬 나쁘다. 전사가 안 되면 조용히 넘기고 문의만 받는다.
+    """
+    form = await _verify(request)
+    who = (request.query_params.get("who") or "new").strip()
+    call_id = (form.get("CallId") or "").strip()
+
+    text = ""
+    try:
+        text = (_read_recording(form) or "").strip()
+    except Exception as e:                       # 전사 실패는 통화를 막지 않는다
+        _log.warning("성함 녹음 처리 실패 — %s: %s", type(e).__name__, e)
+    if text and call_id:
+        _remember_identity(call_id, text)
+
+    action = _callback(request, "voice_recording") + f"?who={who}"
+    return _xml(_say(SYMPTOM_PROMPT) + _record(action))
+
+
+# 통화 한 건 안에서만 쓰는 임시 보관 — CallId → 성함·주소 발화.
+#
+# 신원 녹음과 문의 녹음이 **다른 웹훅**으로 들어와서, 앞 단계 결과를 뒤로 넘길
+# 자리가 필요하다. DB 에 넣지 않는 이유는 접수로 이어지지 못한 통화(중간에
+# 끊김)의 신상 발화가 남지 않게 하기 위해서다.
+_IDENTITY_SAID: dict[str, tuple[float, str]] = {}
+_IDENTITY_TTL = 600      # 통화 하나가 이보다 길 이유가 없다
+
+
+def _remember_identity(call_id: str, text: str) -> None:
+    now = time.monotonic()
+    # 끊긴 통화가 쌓이지 않게 지날 때마다 오래된 것을 턴다.
+    for k in [k for k, (t, _) in _IDENTITY_SAID.items() if now - t > _IDENTITY_TTL]:
+        _IDENTITY_SAID.pop(k, None)
+    _IDENTITY_SAID[call_id] = (now, text)
+
+
+def _take_identity(call_id: str) -> str | None:
+    """한 번 꺼내면 지운다 — 접수에 실었으면 더 들고 있을 이유가 없다."""
+    got = _IDENTITY_SAID.pop(call_id, None)
+    return got[1] if got else None
 
 
 def _lookup_phone(raw: str) -> str:
@@ -502,7 +573,12 @@ async def recording(request: Request) -> Response:
     # 그대로 두면 필요도(장기요양등급)와 병원 추천이 번호 주인 것으로 붙는데,
     # 카드에 '확인 필요' 가 떠도 내용 자체가 남의 정보라 복지사가 그 표시를
     # 놓치면 엉뚱한 기준으로 동행을 준비하게 된다.
-    res = pipeline.run(phone, text, channel="전화", identity_denied=(who == "other"))
+    # 앞 단계에서 받은 성함·읍면동 발화. 문의 원문과 **섞지 않는다** — 접수
+    # 카드의 원문은 문의 내용만 담아야 복지사가 찾아 읽지 않는다.
+    said_who = _take_identity((form.get("CallId") or "").strip())
+
+    res = pipeline.run(phone, text, channel="전화",
+                       identity_denied=(who == "other"), identity_utterance=said_who)
     if res.urgent:
         return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 

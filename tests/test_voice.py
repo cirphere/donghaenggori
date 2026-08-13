@@ -163,7 +163,14 @@ def main() -> int:
           "성함" in new_body and "읍면동" in new_body, new_body[:150])
     check("미등록: 확인 질문 없음",
           "맞으신가요" not in new_body and "<Gather" not in new_body, new_body[:150])
-    check("미등록: who=new 로 녹음", "who=new" in new_body, new_body[:200])
+    # 성함은 문의와 **다른 녹음**으로 받는다. 한 번에 받으면 접수 원문에
+    # 신상 이야기가 섞여, 복지사가 문의 내용을 찾아 읽어야 한다.
+    check("미등록: 성함 녹음이 따로 있다",
+          "/api/voice/identity-record" in new_body and "who=new" in new_body,
+          new_body[:220])
+    check("미등록: 성함 녹음은 짧다",
+          f'maxLength="{voice.IDENTITY_SECONDS}"' in new_body
+          and voice.IDENTITY_SECONDS < voice.MAX_RECORD_SECONDS, new_body[:220])
 
     # 무음 종료가 없어 키가 유일한 종료 수단이다. 세 안내가 모두 같은 문장을
     # 써야 한다 — 안내대로 눌렀는데 안 끝나면 어르신이 끊어 버린다.
@@ -171,10 +178,28 @@ def main() -> int:
     check("녹음 상한 60초", f'maxLength="{V.MAX_RECORD_SECONDS}"' in body
           and V.MAX_RECORD_SECONDS == 60, f"현재 {V.MAX_RECORD_SECONDS}")
     check("아무 키나 종료", all(c in V.FINISH_ON_KEY for c in "1234567890*#"), V.FINISH_ON_KEY)
-    check("세 안내 모두 종료 방법을 알린다",
-          all(V.DONE_HINT in t for t in (V.GREETING, V.SYMPTOM_PROMPT, V.OTHER_PROMPT)),
+    # 녹음 직전 안내에는 반드시 종료 방법이 들어가야 한다. 인사(GREETING)는
+    # 뒤에 성함 질문이 또 오므로 여기서 빠진다 — 넣으면 두 번 나온다.
+    check("녹음 직전 안내가 종료 방법을 알린다",
+          all(V.DONE_HINT in t for t in (V.WHO_PROMPT, V.SYMPTOM_PROMPT)),
           V.DONE_HINT)
+    check("인사에는 종료 안내를 넣지 않는다", V.DONE_HINT not in V.GREETING, V.GREETING)
     check("안내가 키를 누르라고 말한다", "눌러" in V.DONE_HINT, V.DONE_HINT)
+
+    # 성함 녹음 콜백 — 여기서 실패해도 통화를 끊지 않는다. 이름을 못 받는 것보다
+    # 문의를 통째로 놓치는 쪽이 훨씬 나쁘다.
+    ir = post(client, "/api/voice/identity-record?who=new",
+              {"CallId": "CID1", "From": PHONE_NEW, "To": "070",
+               "RecordingUrl": "", "RecordingDuration": "0"})
+    check("성함 녹음이 비어도 문의는 받는다",
+          ir.status_code == 200 and "<Record" in ir.text
+          and "who=new" in ir.text and "<Hangup" not in ir.text, ir.text[:160])
+    check("성함 녹음 뒤엔 문의를 묻는다", "어디가 편찮으신지" in ir.text, ir.text[:160])
+
+    # 앞 단계에서 받은 성함은 접수 원문에 섞이지 않는다.
+    voice._remember_identity("CID2", "이영희요 목포시 용당동 삽니다")
+    check("성함 발화는 CallId 로 넘긴다", voice._take_identity("CID2") is not None)
+    check("한 번 꺼내면 지운다", voice._take_identity("CID2") is None)
 
     # 어르신이 통화에서 마지막으로 듣는 문장이다. 조사를 붙박이로 두면
     # ~내과·~치과처럼 받침 없이 끝나는 흔한 의원 이름이 "정형외과으로" 가 된다.
@@ -237,8 +262,9 @@ def main() -> int:
           "편찮으신지" in b1 and "who=self" in b1, "")
 
     b2 = post(client, "/api/voice/identity", call_params(PHONE_SELF, Digits="2")).text
-    check("2번 → 성함·읍면동을 묻고 who=other",
-          "성함" in b2 and "읍면동" in b2 and "who=other" in b2, "")
+    check("2번 → 성함을 따로 녹음받고 who=other",
+          "성함" in b2 and "읍면동" in b2 and "who=other" in b2
+          and "/api/voice/identity-record" in b2, b2[:200])
 
     b3 = post(client, "/api/voice/identity", call_params(PHONE_SELF, Digits="")).text
     check("엉뚱한 입력 → who=unknown", "who=unknown" in b3, "")

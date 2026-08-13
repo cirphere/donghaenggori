@@ -94,7 +94,46 @@ check("못 뽑았으면 칸을 만들지 않는다",
       "spoken_name" not in 없음 and "spoken_region" not in 없음,
       str(list(없음)))
 
+# 전화는 성함을 **따로 물어 받는다**. 문장 전체가 답이라 "이영희요" 처럼 이름만
+# 툭 말하는 형태가 흔한데, 정형 발화를 전제한 detect_name 은 그걸 못 잡는다.
+print()
 print("=" * 78)
-total = 8 + 9 + 6 + 2
+print("  성함만 따로 물었을 때의 답")
+print("=" * 78)
+
+from donghaenggori.core.identity import parse_identity_answer  # noqa: E402
+
+for text, want in [
+    ("이영희요 목포시 용당동 삽니다", ("이영희", "목포시 용당동")),
+    ("김말순입니다 신안군 압해읍", ("김말순", "신안군 압해읍")),
+    ("박순자", ("박순자", None)),
+    ("네 박순자입니다", ("박순자", None)),
+    ("제 이름은 정순덕이고 하의면 살아요", ("정순덕", "하의면")),
+    ("박순자요 목포시 용당동이요", ("박순자", "목포시 용당동")),
+    # 이름을 못 알아들어도 주소는 건진다
+    ("목포시 용당동 삽니다", (None, "목포시 용당동")),
+    # 이름이 아닌 말을 이름으로 잡으면 안 된다. 차단 목록만으로는 "이름은",
+    # "잠깐만" 이 차례로 빠져나가서, 성씨로 시작하는지까지 본다.
+    ("몰라요", (None, None)),
+    ("네 이름이요", (None, None)),
+    ("어 잠깐만요", (None, None)),
+    ("그러니까요", (None, None)),
+    ("잘 안 들리는데요", (None, None)),
+]:
+    got = parse_identity_answer(text)
+    check(f"전용 답변 — {text[:18]}", got == want, f"{got} (기대 {want})")
+
+# 전화 접수는 문의 원문에 신상 이야기가 섞이지 않아야 한다.
+r = pipeline.run("010-7777-0000", "무릎이 아파서 내일 송정병원 가야 해요",
+                 channel="전화", identity_utterance="이영희요 목포시 용당동 삽니다")
+f = r.card.to_dict()["fields"]
+check("따로 받은 성함이 실린다", f.get("spoken_name", {}).get("value") == "이영희",
+      str(f.get("spoken_name")))
+check("원문에는 문의만 남는다",
+      "이영희" not in r.card.raw_utterance and "용당동" not in r.card.raw_utterance,
+      r.card.raw_utterance)
+
+print("=" * 78)
+total = 8 + 9 + 6 + 2 + 12 + 2
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)
