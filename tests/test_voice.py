@@ -150,11 +150,20 @@ def main() -> int:
     ok = ("<Gather" in body and "박순자" in body and "1번" in body and "2번" in body
           and "/api/voice/identity" in body)
     check("등록 대상자 → 1번/2번 묻기", ok, "")
-    # 문구가 <Gather> 안에 있으면 이 회선에서 재생되지 않는다. 밖에 있어야 한다.
-    before_gather = body.split("<Gather")[0]
-    check("확인 문구가 <Gather> 밖에 있음",
-          "맞으신가요" in before_gather and "<Say" not in body.split("<Gather")[1].split("/>")[0],
-          "안에 넣으면 안 들린다")
+    # 확인 문구는 <Gather> 안에 있어야 barge-in 이 걸린다(문서). 밖으로 빼면
+    # 문장이 다 끝날 때까지 키를 못 누른다.
+    inside = body.split("<Gather")[1].split("</Gather>")[0]
+    check("확인 문구가 <Gather> 안에 있음", "맞으신가요" in inside, inside[:120])
+
+    # 미등록 번호 — 이름을 모르니 확인 질문은 건너뛰고 성함·읍면동부터 받는다.
+    new_body = post(client, "/api/voice/incoming",
+                    {"CallId": "CNEW", "From": "010-7777-0000",
+                     "To": "070", "Direction": "inbound"}).text
+    check("미등록: 성함·읍면동을 묻는다",
+          "성함" in new_body and "읍면동" in new_body, new_body[:150])
+    check("미등록: 확인 질문 없음",
+          "맞으신가요" not in new_body and "<Gather" not in new_body, new_body[:150])
+    check("미등록: who=new 로 녹음", "who=new" in new_body, new_body[:200])
 
     # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
     check("키 안 눌러도 흘러갈 곳이 있음",
