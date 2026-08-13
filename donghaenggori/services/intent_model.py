@@ -19,7 +19,10 @@ import os
 from dataclasses import dataclass, field
 
 INTENTS = ["병원동행", "약국", "보호자연락", "긴급"]
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
+# 모델 위치. 컨테이너 안에서 학습할 때를 위해 환경변수로 뺐다 — compose 는
+# 이 디렉터리를 읽기 전용으로 마운트하므로 그대로 두면 학습 저장이 실패한다.
+MODEL_DIR = os.environ.get("MODEL_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "data", "models")
 INTENT_PATH = os.path.join(MODEL_DIR, "intent_clf.pkl")
 URGENT_PATH = os.path.join(MODEL_DIR, "urgent_clf.pkl")
 

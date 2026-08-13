@@ -23,6 +23,20 @@ TF-IDF 기준선(정확도 96.2% / 긴급 재현율 100%)과 같은 조건에서
   긴급 재현율 둘 다 1.000
   긴급 정밀도 TF-IDF 0.582 < BERT 0.800  ← 놓침 없이 오탐이 절반 이하로
   판단: 지금은 TF-IDF 유지. Training 라벨로 데이터가 4~5배 되면 재실험.
+
+합성 데이터 보강 (평가 1,404건, 2026-08-13)
+  병원동행 템플릿이 전부 진료과를 끼고 있어서, 증상만 말한 문장이 통째로
+  긴급으로 분류됐다. 진료과 없는 템플릿을 넣고 다시 학습한 결과:
+
+                 이전      이후
+    정확도       0.971  →  0.994
+    긴급 재현율   0.9928 →  0.9928   ← 놓친 2건 그대로
+    긴급 정밀도   0.875  →  0.975
+    긴급 오탐     39건   →  7건
+    임계값       0.06   →  0.14     ← 목표 재현율 0.99 에 맞춰 자동 튜닝
+
+  놓치는 것을 늘리지 않고 헛경보만 줄였다. 임계값은 사람이 고른 값이 아니라
+  홀드아웃에서 목표 재현율을 맞춘 결과다.
 """
 from __future__ import annotations
 
@@ -31,7 +45,11 @@ import os
 import time
 
 MODEL_NAME = os.environ.get("BERT_MODEL", "klue/roberta-base")
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "bert")
+# 저장 위치. 컨테이너 안에서 학습할 때를 위해 환경변수로 뺐다 — compose 는
+# data/models 를 **읽기 전용**으로 마운트하므로(운영 중 모델이 바뀌면 안 된다)
+# 그대로 두면 --save 가 실패한다. 쓰기 가능한 경로를 주고 끝난 뒤 옮긴다.
+OUT_DIR = os.environ.get("BERT_OUT_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "data", "models", "bert")
 MAX_LEN = 256
 TARGET_URGENT_RECALL = 0.99
 
