@@ -102,8 +102,8 @@ python -m tests.test_file3_cases     # 제출 문서(파일3) 12건 회귀 검�
 arm64(Oracle Ampere)든 그대로 만들어진다 — 의존성은 양쪽 휠을 모두 확인했다.
 
 ```bash
-# 최초 1회만. **이미 있으면 실행하지 말 것** — 채워둔 키가 지워진다.
 for f in .env .env.app .env.frontend .env.tunnel; do cp "$f.example" "$f"; done
+# 채울 값은 각 파일에서 맨 앞 `#` 을 지우고 적는다.
 docker compose up -d --build
 docker compose logs -f                      # 첫 기동은 모델 다운로드로 오래 걸린다
 # 예열은 기동과 함께 자동으로 돈다(WARMUP_ON_START=1). 기동을 막지 않으므로
@@ -202,6 +202,10 @@ docker compose logs app | grep -i cuda      # 로드 오류가 없어야 한다
 
 `.env` 에 남은 둘은 compose 가 `${}` 치환에 쓰는 값이라 옮길 수 없다 —
 치환에는 루트 `.env` 만 읽히고 `env_file` 은 안 읽힌다.
+
+예제의 빈 키는 `#` 으로 주석 처리돼 있다. `env_file` 은 나중 파일이 이기는데
+빈 `KEY=` 도 '빈 값으로 덮어쓰기' 라서, 주석이 없으면 예제를 복사하는 것만으로
+기존 `.env` 의 키가 지워진다(전화가 503 이 된다). CI 가 이걸 검사한다.
 
 > ⚠️ **`.env` 파일 자체를 지우면 안 된다.** 값을 `.env.app` 등으로 옮긴 뒤에도
 > `COMPOSE_FILE` 은 남겨야 한다. 없으면 `docker compose up -d` 가 기본 파일만
