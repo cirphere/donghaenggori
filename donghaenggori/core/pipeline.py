@@ -87,8 +87,20 @@ def _classify(utterance: str, use_llm: bool | None,
 
 def run(phone: str, utterance: str, channel: str = "전화",
         use_llm: bool | None = None, with_rag: bool = True,
-        classifier: classify_mod.Classifier | None = None) -> Result:
-    prof = db.get_profile(phone)                                   # ③④
+        classifier: classify_mod.Classifier | None = None,
+        identity_denied: bool = False) -> Result:
+    """identity_denied — 발신자가 **번호 주인이 아니라고 직접 밝힌** 경우.
+
+    전화에서 "박순자 님 맞으신가요"에 2번을 누른 상황이다. 그때도 번호 주인의
+    프로필로 카드를 채우면, 필요도(장기요양등급)와 병원 추천이 **다른 사람 것**
+    으로 붙는다. 카드에는 '확인 필요' 가 뜨지만 내용 자체가 남의 정보라, 복지사가
+    그 표시를 놓치면 엉뚱한 기준으로 동행을 준비하게 된다.
+
+    아니라고 밝혔으면 그 말을 따른다. 프로필을 카드에 쓰지 않고, 발화에서 얻은
+    것만 남긴다. 대상자 확정은 원문을 듣고 복지사가 한다.
+    """
+    owner = db.get_profile(phone)                                  # ③④
+    prof = None if identity_denied else owner
     c = _classify(utterance, use_llm, classifier)                  # ⑤
     a, source, conf, confident = c.analysis, c.source, c.confidence, c.urgent_confident
 
@@ -115,7 +127,8 @@ def run(phone: str, utterance: str, channel: str = "전화",
         except Exception:
             facilities = []
 
-    c = _build_card(phone, utterance, a, prof, hres, nres, channel)  # ⑧
+    c = _build_card(phone, utterance, a, prof, hres, nres, channel,
+                    denied_owner=owner if identity_denied else None)  # ⑧
     c.outing_checklist = _outing_checklist(prof, a)
     if hres.status == "확인 필요" and not (prof or {}).get("history"):
         c.reference_candidates = _reference_candidates(prof, a)
@@ -199,7 +212,7 @@ GUARDIAN_CHANNEL = "앱·웹(보호자)"
 
 
 def _build_card(phone, utterance, a, prof, hres, nres,
-                channel: str = "전화") -> card_mod.Card:
+                channel: str = "전화", denied_owner: dict | None = None) -> card_mod.Card:
     # 보호자 웹으로 들어온 요청은 채널 자체가 '대리'라는 사실이다. 발화에서
     # 관계 호칭을 못 찾아도 마찬가지다 — 예전에는 "무릎이 아파서 정형외과
     # 가야 해요"처럼 호칭 없이 쓰면 본인 접수로 처리돼, 딸의 번호를 대상자
@@ -209,12 +222,22 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         requester = "대리"
 
     target = prof["name"] if prof else "신규 대상자(미등록 번호)"
+    # 번호 주인이 아니라고 직접 밝혔다. 누구인지는 원문에만 있으므로 비워 두되,
+    # 어느 번호로 왔는지는 남긴다 — 복지사가 되걸 곳이 그 번호뿐이다.
+    if denied_owner is not None:
+        target = f"미확인 ({denied_owner['name']} 님 번호)"
     # 표시 문자열과 별개로 상태를 필드로 남긴다. 예전에는 "대상자 후보 3명 —
     # 확인 필요" 같은 한글 문장이 유일한 단서라, 화면이 상태를 알려면 그 문장을
     # 파싱해야 했다.
     target_status = "확인됨" if prof else "확인 필요"
     target_evidence = ([f"발신번호가 등록된 케어 프로필과 일치 — {prof['name']}"] if prof
                        else ["발신번호가 등록된 대상자와 일치하지 않음"])
+    if denied_owner is not None:
+        target_evidence = [
+            f"발신번호는 {denied_owner['name']} 님으로 등록돼 있으나, 통화에서 "
+            "본인이 아니라고 응답(2번)",
+            f"{denied_owner['name']} 님의 필요도·병원 이력은 적용하지 않음 — 원문 확인 필요",
+        ]
 
     # 대리 접수 — 발신자와 대상자가 다르다. 대상자를 확정하지 않고 후보만 제시한다.
     candidates: list[dict] = []

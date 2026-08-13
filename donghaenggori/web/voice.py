@@ -496,7 +496,13 @@ async def recording(request: Request) -> Response:
     if not text:
         return _hangup("말씀을 알아듣지 못했습니다. 담당자가 확인 후 연락드리겠습니다.")
 
-    res = pipeline.run(phone, text, channel="전화")
+    who = (request.query_params.get("who") or "unknown").strip()
+
+    # 2번을 눌렀다 — 번호 주인이 아니라고 **직접 밝혔다.** 그 말을 따른다.
+    # 그대로 두면 필요도(장기요양등급)와 병원 추천이 번호 주인 것으로 붙는데,
+    # 카드에 '확인 필요' 가 떠도 내용 자체가 남의 정보라 복지사가 그 표시를
+    # 놓치면 엉뚱한 기준으로 동행을 준비하게 된다.
+    res = pipeline.run(phone, text, channel="전화", identity_denied=(who == "other"))
     if res.urgent:
         return _transfer(request, "긴급한 상황으로 보입니다.", _save(res, phone, text))
 
@@ -506,7 +512,6 @@ async def recording(request: Request) -> Response:
     # 본인확인이 아니다 — 남의 폰으로 건 사람도 1번을 누를 수 있다. 최대 '추정'
     # 이고 확정은 사회복지사가 한다.
     if intake_id:
-        who = (request.query_params.get("who") or "unknown").strip()
         answer, status = _IDENTITY_ANSWER.get(who, _IDENTITY_ANSWER["unknown"])
         try:
             db.attach_identity_answer(intake_id, answer, status)
