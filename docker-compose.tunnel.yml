@@ -24,6 +24,17 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     # --no-autoupdate: 시연 기간에 제멋대로 판올림하다 끊기는 일을 막는다
-    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:?CF_TUNNEL_TOKEN 을 .env 에 넣으세요}
+    #
+    # 토큰을 --token 인자로 넘기지 않는다. cloudflared 가 원래 읽는 TUNNEL_TOKEN
+    # 환경변수를 쓰면 `docker inspect` 나 프로세스 목록에 토큰이 찍히지 않는다.
+    # 이 토큰 하나로 집 네트워크에 터널이 열리므로 노출면을 줄여둔다.
+    command: tunnel --no-autoupdate run
+    # 예전 배포본은 루트 .env 에 CF_TUNNEL_TOKEN 으로 넣어 뒀다. 이름이 바뀌었으니
+    # .env.tunnel 에 TUNNEL_TOKEN 으로 옮긴다(.env.tunnel.example 참조).
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.tunnel
+        required: false
     depends_on:
       - app
