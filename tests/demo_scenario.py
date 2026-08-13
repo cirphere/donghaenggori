@@ -224,7 +224,7 @@ def main(full: bool = False) -> int:
 
     # B-2' 보호자 대리 전화
     r, _ = api("POST", "/api/intakes",
-               json={"phone": GUARDIAN, "utterance": "느그 어매 병원 좀 델꼬 가야 쓰겄는디"})
+               json={"phone": GUARDIAN, "utterance": "우리 어매 병원 좀 델꼬 가야 쓰겄는디"})
     b2b = r.json()["card"] if r.status_code == 200 else {}
     cands = b2b.get("target_candidates") or []
     ok = b2b.get("requester") == "대리" and len(cands) == 1

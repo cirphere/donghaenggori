@@ -65,7 +65,7 @@ def _mentions_relation(text: str, word: str) -> bool:
 def detect_proxy(text: str) -> tuple[str, str | None]:
     """대리 요청 여부와 추정 관계를 판별한다.
 
-    "느그 어매 병원 좀 델꼬 가야 쓰겄는디" → ("대리", "어머니")
+    "우리 어매 병원 좀 델꼬 가야 쓰겄는디" → ("대리", "어머니")
     관계 호칭만 있어도 대리로 본다. 대상자 확정은 사회복지사가 한다.
 
     **놓치는 쪽이 더 나쁘다.** 대리를 못 잡으면 발신자의 병원 이력과 등급이
@@ -101,7 +101,7 @@ _NOT_A_NAME = {"그", "저", "저번", "지난번", "예전", "전", "전에", "
                "오늘", "낼", "내일", "모레", "모래", "글피", "어제", "그제",
                "아까", "이따", "지금", "이번주", "다음주", "담주", "저번주",
                "이번달", "다음달", "요번", "이번", "매주", "곧",
-               # 가족 호칭. "느그 어매 병원 좀 델꼬 가야 쓰겄는디" 가 '어매병원'
+               # 가족 호칭. "우리 어매 병원 좀 델꼬 가야 쓰겄는디" 가 '어매병원'
                # 이라는 없는 병원을 만들어 '확인됨' 으로 띄웠다. 대리 접수에서
                # 가장 흔한 말투인데, 정작 그 말을 병원 이름으로 먹었다.
                "아들", "딸", "며느리", "사위", "손자", "손녀", "형", "누나",
@@ -120,6 +120,9 @@ _NOT_A_NAME |= {
 # 경우를 그대로 인정하지는 않는다(아래 _is_real_name 참조).
 _HOSPITAL_RE = re.compile(
     r"([가-힣A-Za-z0-9]+)(\s*)(" + "|".join(_HOSPITAL_SUFFIX) + r")")
+
+# 어르신은 말하면서 고친다 — "송정병원 말고 목포한국병원". 날짜 파서와 같은 기준.
+_CORRECTION = re.compile(r"아니|말고|말구|아니라|아니고")
 
 # 띄어 쓰지 않은 '병원/의원/클리닉' 은 상호로 본다("송정병원"). 띄어 쓴 것은
 # 대개 상호가 아니라 설명이다("좋아서 병원", "목포 병원", "어매 병원").
@@ -145,6 +148,7 @@ def detect_hospital(text: str) -> str | None:
     다른 병원을 '확인됨' 으로 내놓은 적이 있다 — 직접 말한 것을 무시하면
     엉뚱한 곳으로 배차된다.
     """
+    found: list[tuple[int, int, str]] = []
     for m in _HOSPITAL_RE.finditer(text):
         name, gap, suffix = m.group(1), m.group(2), m.group(3)
         if name in _NOT_A_NAME:
@@ -172,8 +176,18 @@ def detect_hospital(text: str) -> str | None:
         # 같은 실제 상호는 놓치는데, 그건 이력 경로가 받아준다 — 놓치는 쪽이 낫다.
         if name in TERMS["dept_keywords"]:
             continue
-        return name + suffix
-    return None
+        found.append((m.start(), m.end(), name + suffix))
+
+    if not found:
+        return None
+    # 어르신은 말하면서 고친다 — "송정병원 말고 목포한국병원으로".
+    # 날짜는 이미 정정을 처리하는데(dateparse) 병원만 첫 번째를 잡고 있었다.
+    # 두 병원 사이에 정정하는 말이 있으면 **나중 것**이 최종이다.
+    best = found[0][2]
+    for (_, prev_end, _), (start, _, name) in zip(found, found[1:], strict=False):
+        if _CORRECTION.search(text[prev_end:start]):
+            best = name
+    return best
 
 
 # ---------------------------------------------------------------- 규칙 기반 ----
@@ -186,6 +200,11 @@ def _rule_based(text: str) -> Analysis:
         if kw in text:
             a.urgent = True
             a.intent = "긴급"
+            # **누가 쓰러졌는지는 긴급일수록 중요하다.**
+            # 예전에는 여기서 바로 돌려보내 대리 판별이 아예 돌지 않았고,
+            # "우리 어매가 쓰러졌어" 가 발신자 본인 이름으로 기록됐다.
+            # 응급 기록에 엉뚱한 사람이 적히면 사람이 그걸 보고 움직인다.
+            a.requester, a.proxy_relation = detect_proxy(text)
             return a
 
     # 진료과: 직접 언급 우선
