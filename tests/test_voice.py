@@ -189,6 +189,22 @@ def main() -> int:
     check("병원 없으면 날짜만", V._receipt(_R(_C("내일", None, None))) == "내일로 접수했습니다.",
           V._receipt(_R(_C("내일", None, None))))
 
+    # 2번(번호 주인이 아님)을 눌렀으면 그 말을 따른다. 번호 주인의 필요도·이력을
+    # 그대로 붙이면, '확인 필요' 표시를 놓친 복지사가 남의 기준으로 동행을
+    # 준비하게 된다. 발화에서 직접 얻은 것(병원명)은 그대로 남는다.
+    from donghaenggori.core import pipeline as P
+    말 = "저는 이영희인데요, 무릎이 아파서 내일 송정병원 가야 해요"
+    본인 = P.run("010-1234-5678", 말, channel="전화")
+    아님 = P.run("010-1234-5678", 말, channel="전화", identity_denied=True)
+    check("본인이면 프로필 그대로", 본인.card.target == "박순자"
+          and 본인.card.need_level != "확인 필요", 본인.card.target)
+    check("2번이면 대상자를 비운다", "미확인" in 아님.card.target
+          and "박순자" in 아님.card.target, 아님.card.target)
+    check("2번이면 남의 필요도를 안 붙인다", 아님.card.need_level == "확인 필요",
+          str(아님.card.need_level))
+    check("2번이어도 말한 병원은 남는다", 아님.card.hospital == "송정병원",
+          str(아님.card.hospital))
+
     # .env 가 코드 기본값을 덮어써서 두 번 헤맸다. 빈 값은 '미설정'이어야 한다.
     import os
     for raw, want in (("", 60), ("  ", 60), ("45", 45), ("이상한값", 60)):
