@@ -200,6 +200,12 @@ docker compose logs app | grep -i cuda      # 로드 오류가 없어야 한다
 `.env` 에 남은 둘은 compose 가 `${}` 치환에 쓰는 값이라 옮길 수 없다 —
 치환에는 루트 `.env` 만 읽히고 `env_file` 은 안 읽힌다.
 
+> ⚠️ **`.env` 파일 자체를 지우면 안 된다.** 값을 `.env.app` 등으로 옮긴 뒤에도
+> `COMPOSE_FILE` 은 남겨야 한다. 없으면 `docker compose up -d` 가 기본 파일만
+> 읽어 **`app` 하나만 뜬다** — 에러도 경고도 없이 프론트와 터널이 사라진다.
+> 접수는 되는데 화면과 공개 주소만 죽어 있어 알아채기 어렵다.
+> `python -m tests.preflight` 의 '컨테이너 구성' 항목이 이걸 잡는다.
+
 각 `.example` 참고. 전부 없어도 동작하며, 없으면 아래처럼 폴백한다.
 
 | 변수 | 없을 때 |
