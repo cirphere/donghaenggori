@@ -83,8 +83,25 @@ class LoadReport:
         return "\n".join(L)
 
 
+# AI-Hub 가 나눠 둔 학습/검증 구분. 폴더 이름이 TL*/VL* 로 시작한다.
+#
+# 예전에는 root 아래를 통째로 읽어 TL·VL 을 섞은 뒤 8:2 로 무작위 분할했다.
+# 그 홀드아웃 숫자 자체는 유효하지만(학습에 안 쓴 데이터), **공식 검증셋으로
+# 평가했다고 말할 수는 없다** — VL 일부가 학습에 들어갔기 때문이다.
+# 제출 문서가 "검증셋 129,029건 전량" 을 측정 방법으로 적어 뒀으므로,
+# 그 기준을 그대로 지킬 수 있게 split 을 가른다.
+def _split_of(path: pathlib.Path) -> str | None:
+    for part in path.parts:
+        if part.startswith("TL"):
+            return "TL"
+        if part.startswith("VL"):
+            return "VL"
+    return None
+
+
 def load_sessions(root: str | pathlib.Path, opening: int | None = None,
-                  speaker: str = "고객") -> tuple[list[str], list[str], LoadReport]:
+                  speaker: str = "고객",
+                  split: str | None = None) -> tuple[list[str], list[str], LoadReport]:
     """세션(통화) 단위로 묶어 (텍스트, 의도) 쌍을 만든다.
 
     라벨이 통화 단위로 붙어 있으므로 발화 단위 학습은 노이즈가 크다.
@@ -93,12 +110,15 @@ def load_sessions(root: str | pathlib.Path, opening: int | None = None,
     opening: 앞쪽 N개 고객 발화만 사용. 우리 서비스는 어르신의 짧은 첫 요청을
              분류하므로, 통화 전체보다 도입부가 실사용에 가깝다.
              None이면 통화 전체를 이어붙인다.
+    split:   "TL"(학습) / "VL"(검증) 만 읽는다. None 이면 전부.
     """
     root = pathlib.Path(root)
     rep = LoadReport()
     sessions: dict[pathlib.Path, dict] = {}
 
     for p in root.rglob("*.json"):
+        if split and _split_of(p) != split:
+            continue
         rep.total_files += 1
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
@@ -136,10 +156,12 @@ def load_sessions(root: str | pathlib.Path, opening: int | None = None,
 
 
 def load(root: str | pathlib.Path, speaker: str | None = "고객",
-         limit: int | None = None) -> tuple[list[str], list[str], LoadReport]:
+         limit: int | None = None,
+         split: str | None = None) -> tuple[list[str], list[str], LoadReport]:
     """발화 단위 로더 — 라벨 노이즈가 크므로 참고용. 학습에는 load_sessions를 쓴다.
 
     speaker: '고객'만 쓰려면 그대로. None이면 화자 구분 없이 전부.
+    split:   "TL"/"VL" 만 읽는다. 제출 문서의 '검증셋 전량' 기준이 이쪽이다.
     """
     root = pathlib.Path(root)
     rep = LoadReport()
@@ -147,6 +169,8 @@ def load(root: str | pathlib.Path, speaker: str | None = "고객",
     y: list[str] = []
 
     for p in root.rglob("*.json"):
+        if split and _split_of(p) != split:
+            continue
         rep.total_files += 1
         if limit and rep.parsed >= limit:
             break
@@ -178,3 +202,28 @@ def load(root: str | pathlib.Path, speaker: str | None = "고객",
         rep.parsed += 1
 
     return X, y, rep
+
+
+def load_export(path: str, kind: str, split: str) -> tuple[list[str], list[str]]:
+    """tools.export_cds01 이 만든 작은 파일에서 (텍스트, 라벨)을 읽는다.
+
+    원본 C-DS01 은 JSON 파일 200만 개(7.8GB)라 학습 기기로 옮기기 어렵다.
+    쓰는 텍스트만 뽑아 두면 1MB 남짓이라 어디로든 옮길 수 있다.
+
+    **읽기는 여기 두고 쓰기는 tools/ 에 둔다.** 컨테이너 이미지에는 tools/ 가
+    들어가지 않아서(Dockerfile 이 donghaenggori 와 tests 만 복사한다), 학습을
+    컨테이너에서 돌리면 tools 를 import 하는 순간 깨진다.
+    """
+    import gzip
+    import json
+
+    X: list[str] = []
+    y: list[str] = []
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
+        for line in f:
+            d = json.loads(line)
+            if d["kind"] == kind and d["split"] == split:
+                X.append(d["text"])
+                y.append(d["label"])
+    return X, y
