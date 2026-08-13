@@ -16,13 +16,12 @@ from dataclasses import dataclass, field
 
 from . import card as card_mod
 from . import classify as classify_mod
-from . import dateparse
-from . import db
-from .korean import josa, particle
+from . import dateparse, db
 from . import hospital as hospital_mod
 from . import identity as identity_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
+from .korean import josa, particle
 
 CHANNELS = ("전화", "앱·웹(보호자)", "직접(기관)")
 

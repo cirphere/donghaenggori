@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from donghaenggori.core import pipeline           # noqa: E402
+from donghaenggori.core import pipeline  # noqa: E402
 from donghaenggori.core.identity import detect_name, detect_region  # noqa: E402
 
 _fail = 0

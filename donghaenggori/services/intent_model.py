@@ -102,7 +102,7 @@ def train(texts: list[str], labels: list[str], test_size: float = 0.2,
     """
     import joblib
     import numpy as np
-    from sklearn.metrics import classification_report, accuracy_score, f1_score
+    from sklearn.metrics import accuracy_score, classification_report, f1_score
     from sklearn.model_selection import train_test_split
 
     X_tr, X_te, y_tr, y_te = train_test_split(
@@ -125,7 +125,8 @@ def train(texts: list[str], labels: list[str], test_size: float = 0.2,
     proba = urgent_clf.predict_proba(X_te)[:, 1]
     thr = _tune_threshold(yb_te, proba, TARGET_URGENT_RECALL)
     ub = proba >= thr
-    tp = int((ub & (yb_te == 1)).sum()); fn = int((~ub & (yb_te == 1)).sum())
+    tp = int((ub & (yb_te == 1)).sum())
+    fn = int((~ub & (yb_te == 1)).sum())
     fp = int((ub & (yb_te == 0)).sum())
 
     report = TrainReport(
@@ -205,6 +206,7 @@ def _load_bert():
         return None
     try:
         import json
+
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         meta = json.load(open(meta_path, encoding="utf-8"))
@@ -238,7 +240,7 @@ def _predict_bert(text: str) -> Prediction | None:
         p = torch.softmax(model(**enc).logits, dim=-1)[0]
     idx = int(p.argmax())
     label = _bert["id2label"][idx]
-    urgent_idx = next((i for i, l in _bert["id2label"].items() if l == "긴급"), None)
+    urgent_idx = next((i for i, name in _bert["id2label"].items() if name == "긴급"), None)
     u = float(p[urgent_idx]) if urgent_idx is not None else 0.0
     is_urgent = u >= _bert["thr"]
     return Prediction(intent="긴급" if is_urgent else str(label),

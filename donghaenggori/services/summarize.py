@@ -257,7 +257,7 @@ class StubClient:
 
 def _selftest() -> None:
     MEMO = "오늘 무릎 주사 맞았고, 다음 진료는 2주 뒤. 약국 들러서 약 받았어요. 계단 힘들어하셨습니다."
-    kw = dict(target="박순자 어르신", dept="정형외과")
+    kw = {"target": "박순자 어르신", "dept": "정형외과"}
 
     print("① 규칙 기반 (키 없이 항상 동작)")
     for k, v in summarize(MEMO, **kw, use_llm=False).as_dict().items():

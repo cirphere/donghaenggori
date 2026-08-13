@@ -85,7 +85,8 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
     for word, delta in _REL_DAYS.items():
         for m in re.finditer(re.escape(word), t):
             d = today + datetime.timedelta(days=delta)
-            cands.append((m.start(), d.isoformat(), word)); ends.append(m.end())
+            cands.append((m.start(), d.isoformat(), word))
+            ends.append(m.end())
 
     # 2) (이번주/다음주/담주) + 요일
     for m in re.finditer(r"(이번주|다음주|담주)?([월화수목금토일])요일", t):
@@ -97,12 +98,14 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
             days_ahead = 7
         d = today + datetime.timedelta(days=days_ahead)
         label = (f"{base_week} " if base_week else "") + f"{m.group(2)}요일"
-        cands.append((m.start(), d.isoformat(), label)); ends.append(m.end())
+        cands.append((m.start(), d.isoformat(), label))
+        ends.append(m.end())
 
     # 3) N일 뒤/후
     for m in re.finditer(r"(\d+)일(뒤|후)", t):
         d = today + datetime.timedelta(days=int(m.group(1)))
-        cands.append((m.start(), d.isoformat(), f"{m.group(1)}일 {m.group(2)}")); ends.append(m.end())
+        cands.append((m.start(), d.isoformat(), f"{m.group(1)}일 {m.group(2)}"))
+        ends.append(m.end())
 
     # 4) M월 D일 (연도 없으면 올해, 이미 지났으면 내년)
     for m in re.finditer(r"(\d{1,2})월(\d{1,2})일", t):
@@ -113,7 +116,8 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
             continue
         if d < today:
             d = datetime.date(today.year + 1, month, day)
-        cands.append((m.start(), d.isoformat(), f"{month}월 {day}일")); ends.append(m.end())
+        cands.append((m.start(), d.isoformat(), f"{month}월 {day}일"))
+        ends.append(m.end())
 
     if not cands:
         return None
@@ -165,10 +169,12 @@ def parse_time(text: str) -> dict | None:
             label += f" {m.group(3)}분"
 
         if pending_ambiguous:
-            cands.append((m.start(), None, label)); ends.append(m.end())
+            cands.append((m.start(), None, label))
+            ends.append(m.end())
             continue
 
-        cands.append((m.start(), f"{hour:02d}:{minute:02d}", label)); ends.append(m.end())
+        cands.append((m.start(), f"{hour:02d}:{minute:02d}", label))
+        ends.append(m.end())
 
     if not cands:
         return None

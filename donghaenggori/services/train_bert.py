@@ -48,7 +48,7 @@ def pick_device():
 def _encode(tok, texts, labels, label2id):
     import torch
     enc = tok(texts, truncation=True, max_length=MAX_LEN, padding=True, return_tensors="pt")
-    y = torch.tensor([label2id[l] for l in labels])
+    y = torch.tensor([label2id[name] for name in labels])
     return enc, y
 
 
@@ -99,8 +99,8 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
     X_tr, y_tr = X_tr + Xs, y_tr + ys          # 합성은 학습에만
 
     labels = sorted(set(y_tr) | set(y_te))
-    label2id = {l: i for i, l in enumerate(labels)}
-    id2label = {i: l for l, i in label2id.items()}
+    label2id = {name: i for i, name in enumerate(labels)}
+    id2label = {i: name for name, i in label2id.items()}
 
     print(f"장비: {device} · 모델: {MODEL_NAME}")
     print(f"학습 {len(X_tr):,}건 (실데이터 {len(X_tr)-len(Xs):,} + 합성 {len(Xs):,}) "
@@ -129,8 +129,11 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
             batch = {k: v[bidx].to(device) for k, v in enc_tr.items()}
             out = model(**batch, labels=ytr[bidx].to(device))
             out.loss.backward()
-            opt.step(); sched.step(); opt.zero_grad()
-            tot += out.loss.item(); step += 1
+            opt.step()
+            sched.step()
+            opt.zero_grad()
+            tot += out.loss.item()
+            step += 1
         print(f"  epoch {ep+1}/{epochs}  loss {tot/max(1,step/ (ep+1)):.4f}")
     train_sec = time.time() - t0
 
@@ -150,11 +153,12 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
     urgent_i = label2id.get("긴급")
     urec = uprec = uthr = None
     if urgent_i is not None:
-        yb = np.array([1 if l == "긴급" else 0 for l in y_te])
+        yb = np.array([1 if name == "긴급" else 0 for name in y_te])
         pu = P[:, urgent_i]
         uthr = _tune_threshold(yb, pu, TARGET_URGENT_RECALL)
         ub = pu >= uthr
-        tp = int((ub & (yb == 1)).sum()); fn = int((~ub & (yb == 1)).sum())
+        tp = int((ub & (yb == 1)).sum())
+        fn = int((~ub & (yb == 1)).sum())
         fp = int((ub & (yb == 0)).sum())
         urec = tp / (tp + fn) if (tp + fn) else 0.0
         uprec = tp / (tp + fp) if (tp + fp) else 0.0
@@ -170,7 +174,8 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
 
     if save:
         os.makedirs(OUT_DIR, exist_ok=True)
-        model.save_pretrained(OUT_DIR); tok.save_pretrained(OUT_DIR)
+        model.save_pretrained(OUT_DIR)
+        tok.save_pretrained(OUT_DIR)
         import json
         json.dump({"urgent_threshold": uthr, "labels": labels},
                   open(os.path.join(OUT_DIR, "meta.json"), "w", encoding="utf-8"),

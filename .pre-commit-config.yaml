@@ -1,0 +1,25 @@
+# 커밋 전에 ruff 를 돌린다. CI 에서 같은 검사를 하므로, 여기서 걸리면
+# 푸시하고 1분 반 기다렸다가 다시 고치는 왕복을 아낀다.
+#
+#   pip install pre-commit && pre-commit install     ← 한 번만
+#
+# 설치하지 않아도 무방하다. 최종 관문은 CI 이고 이건 편의 장치다.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff                       # 규칙·줄 길이는 pyproject.toml 을 따른다
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      # .env 를 실수로 커밋하는 사고가 제일 아프다. gitignore 가 막고 있지만
+      # 한 겹 더 둔다 — 키가 한 번 올라가면 되돌릴 수 없다.
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=2048]           # 모델 파일(425MB)이 올라가는 것을 막는다
+      - id: check-yaml
+      - id: check-toml

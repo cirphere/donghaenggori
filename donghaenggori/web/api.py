@@ -238,7 +238,7 @@ def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/
         return stt.transcribe(tmp.name).to_dict()
     except stt.AudioTooLong as e:
         # 413 — 받아서 죽느니 거절한다 (메모리가 음성 길이에 비례해 늘어난다)
-        raise HTTPException(413, str(e))
+        raise HTTPException(413, str(e)) from e
     finally:
         os.unlink(tmp.name)
 
@@ -352,6 +352,7 @@ def warmup() -> dict:
     시작 전에 미리 불러 캐시에 올려둔다(실측: 예열 전 13.3s → 예열 후 즉시).
     """
     import time
+
     from ..core import geo
     from ..services import airquality, intent_model, weather
 

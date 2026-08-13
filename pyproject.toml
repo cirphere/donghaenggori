@@ -1,0 +1,94 @@
+# 동행고리 AI — 패키지 메타데이터와 도구 설정.
+#
+# requirements.txt 는 그대로 둔다. Dockerfile 과 CI 가 그 파일을 캐시 키로 쓰고
+# 있어서, 지금 옮기면 배포 경로를 건드리게 된다 — 본선을 앞두고 그럴 이유가 없다.
+# 여기 [project.dependencies] 는 같은 목록을 패키지 관점에서 선언한 것이고,
+# 둘이 어긋나지 않는지는 CI 가 검사한다(tools/check_deps.py).
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "donghaenggori"
+version = "0.1.0"
+description = "병원동행 사회복지사 Copilot — 어르신 전화 접수를 정리해 접수카드로 만든다"
+requires-python = ">=3.12"
+
+# 없으면 서비스가 뜨지 않는 것들만 여기 둔다. 무거운 AI 의존성은 optional 로
+# 뺐다 — 셋 다 없어도 규칙 기반으로 접수가 되고, CI 는 그 상태로 돈다.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+]
+
+[project.optional-dependencies]
+# 로컬 추론용. 모델 파일(425MB)은 저장소에 없고, 없으면 폴백이 돈다.
+ai = [
+    "faster-whisper>=1.1",
+    "sentence-transformers>=3.0",
+    "transformers>=4.44",
+    "torch>=2.2",
+]
+# 발화 이해 보강. ANTHROPIC_API_KEY 가 있을 때만 실제로 호출된다.
+# 기본은 키를 비워 꺼둔다 — 어르신 발화가 외부로 나가지 않는 것이 설계다.
+llm = ["anthropic>=0.113"]
+dev = ["ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["donghaenggori*"]
+
+[tool.setuptools.package-data]
+donghaenggori = ["data/**/*.json", "data/**/*.csv"]
+
+# ── ruff ──────────────────────────────────────────────────────────────────
+#
+# 줄 길이 110.
+#
+# 이 저장소는 주석이 한국어인데 한글은 한 글자가 한 칸을 넘게 차지해서, 88~92 로
+# 두면 설명 문장이 계속 잘린다. 왜 그렇게 했는지를 적어두는 것이 이 코드베이스의
+# 규칙이라 그쪽을 우선했다.
+#
+# 실제로 재보고 정했다 — 92 면 100건, 100 이면 37건, 110 이면 12건이 걸렸다.
+# 110 에서 남은 12건은 전부 '접어서 나아지지 않는' 것들이었다(아래 예외 참조).
+# 한계를 낮추고 무더기로 접는 것은 본선을 앞두고 SQL 문자열에 오타를 넣을
+# 위험만 만든다.
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = [".venv", "frontend", "donghaenggori/data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes — 안 쓰는 import·변수
+    "I",        # isort — import 순서
+    "B",        # bugbear — 실수하기 쉬운 패턴
+    "UP",       # pyupgrade
+    "C4",       # comprehension
+]
+ignore = [
+    # 예외를 삼키는 자리가 여럿 있는데, 전부 의도적이다 — 접수 저장이나 감사
+    # 로그가 실패해도 어르신 통화를 끊지 않는다. 개별 주석으로 설명해 두었다.
+    "B008",     # FastAPI 의 Depends(...) 기본값 관용구
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 아래는 모두 **문자열 안에 든 내용**이라 줄을 접을 수 없다. `# noqa` 도 못
+# 붙인다 — 주석이 문자열 내용에 그대로 섞여 들어간다.
+#
+# 테스트는 한국어 변수명과 표 형태의 케이스 목록을 쓴다. 케이스를 한 줄에
+# 하나씩 두는 편이 훨씬 읽기 좋아서 일부러 그렇게 뒀다.
+"tests/*" = ["E501"]
+# 시연용 대상자·이력 데이터. 한 행이 한 줄인 표라서 접으면 오히려 안 보인다.
+"donghaenggori/services/seed.py" = ["E501"]
+# 개발자 확인용 데모 페이지의 HTML·CSS·JS 가 파이썬 문자열로 들어 있다.
+"donghaenggori/web/api.py" = ["E501"]
+# 학습 스크립트의 라벨 목록·리포트 출력 서식.
+"donghaenggori/services/intent_model.py" = ["E501"]
