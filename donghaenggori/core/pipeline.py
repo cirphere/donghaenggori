@@ -20,6 +20,7 @@ from . import dateparse
 from . import db
 from .korean import josa, particle
 from . import hospital as hospital_mod
+from . import identity as identity_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
 
@@ -239,6 +240,19 @@ def _build_card(phone, utterance, a, prof, hres, nres,
             f"{denied_owner['name']} 님의 필요도·병원 이력은 적용하지 않음 — 원문 확인 필요",
         ]
 
+    # 통화에서 성함·읍면동을 물었으면 그 답을 담는다.
+    #
+    # **번호로 대상자를 확정하지 못한 접수에서만** 채운다(미등록 번호, 본인이
+    # 아니라고 응답). 박순자 님이 본인 번호로 걸어 "저는 박순자고요" 라고 말한
+    # 것까지 따로 칸을 만들면 화면만 시끄러워진다.
+    #
+    # 물어놓고 답을 안 담으면 복지사가 매번 원문을 읽어야 한다 — 물어본 이유가
+    # 화면에 없었다. 값은 언제나 '확인 필요' 이고 확정은 사람이 한다.
+    spoken_name = spoken_region = None
+    if prof is None:
+        spoken_name = identity_mod.detect_name(utterance)
+        spoken_region = identity_mod.detect_region(utterance)
+
     # 대리 접수 — 발신자와 대상자가 다르다. 대상자를 확정하지 않고 후보만 제시한다.
     candidates: list[dict] = []
     if requester == "대리":
@@ -313,6 +327,7 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         manager_notes=mnotes, flags=flags,
         requester=requester, proxy_relation=a.proxy_relation,
         target_candidates=candidates,
+        spoken_name=spoken_name, spoken_region=spoken_region,
         field_status=_field_status(a, hres, target_status, dept),
         field_evidence=_field_evidence(a, hres, target_evidence, dept))
 

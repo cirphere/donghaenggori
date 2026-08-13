@@ -18,13 +18,18 @@ def mask_phone(phone: str) -> str:
 # 필드 이름 → 카드 속성. to_dict 의 fields 블록을 만들 때 쓴다.
 FIELD_VALUE_ATTRS = {
     "target": "target",
+    # 통화에서 성함·읍면동을 물었을 때 어르신이 말한 답. 대상자를 확정하지
+    # 못한 접수(미등록 번호·본인 아님)에서만 채워진다. 언제나 '확인 필요' 다.
+    "spoken_name": "spoken_name",
+    "spoken_region": "spoken_region",
     "hospital": "hospital",
     "dept": "dept",
     "date": "date_value",
     "time": "time_value",
 }
-FIELD_LABELS = {"target": "대상자", "hospital": "병원", "dept": "진료과",
-                "date": "방문일", "time": "방문 시각"}
+FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
+                "spoken_region": "말한 주소", "hospital": "병원",
+                "dept": "진료과", "date": "방문일", "time": "방문 시각"}
 
 
 @dataclass
@@ -65,6 +70,11 @@ class Card:
     # 동행 지원 수준을 무엇에 근거해 냈는가 — 공식 판정인지 우리 추정인지
     need_basis: str = "정보 없음"
     need_official: bool = False
+    # 통화에서 어르신이 직접 말한 성함·사는 곳. 대상자를 번호로 확정하지 못한
+    # 접수에서만 채운다. **절대 '확인됨' 이 되지 않는다** — 이름은 STT 오인식이
+    # 잦고, 틀린 이름을 확정으로 띄우면 복지사가 그대로 부르게 된다.
+    spoken_name: str | None = None
+    spoken_region: str | None = None
 
     def fields_view(self) -> dict[str, dict]:
         """항목별 {값·상태·근거}. 평면 키(hospital, date_value…)는 그대로 두고 덧붙인다.
@@ -84,6 +94,17 @@ class Card:
         # 날짜·시각은 어르신이 말한 표현을 함께 보여줘야 확인 전화가 쉬워진다
         out["date"]["spoken"] = self.date_label
         out["time"]["spoken"] = self.time_label
+
+        # 말한 성함·주소는 **어떤 경로로도 '확인됨' 이 되지 않는다.**
+        # 위 기본 로직은 값이 있으면 확인됨으로 올리는데, 이 둘은 8kHz 전화
+        # 음질에서 규칙으로 뽑은 값이라 그 대우를 받으면 안 된다. 틀린 이름이
+        # 확정으로 뜨면 복지사가 어르신을 그대로 잘못 부른다.
+        # 값이 없으면 아예 빈 항목으로 두어 화면에서 사라지게 한다.
+        for k in ("spoken_name", "spoken_region"):
+            if out[k]["value"]:
+                out[k]["status"] = "확인 필요"
+            else:
+                out.pop(k)
         return out
 
     def to_dict(self) -> dict:
