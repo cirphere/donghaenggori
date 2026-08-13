@@ -176,6 +176,22 @@ def main() -> int:
           V.DONE_HINT)
     check("안내가 키를 누르라고 말한다", "눌러" in V.DONE_HINT, V.DONE_HINT)
 
+    # .env 가 코드 기본값을 덮어써서 두 번 헤맸다. 빈 값은 '미설정'이어야 한다.
+    import os
+    for raw, want in (("", 60), ("  ", 60), ("45", 45), ("이상한값", 60)):
+        os.environ["_T_REC"] = raw
+        check(f"빈/잘못된 설정도 안 터짐 ({raw!r} → {want})",
+              V._int_env("_T_REC", 60) == want, str(V._int_env("_T_REC", 60)))
+    os.environ.pop("_T_REC", None)
+
+    # 시연장에서 인사말을 갈아끼울 때 종료 안내가 빠지면 1분을 기다리게 된다.
+    check("커스텀 인사말에도 종료 안내가 붙는다",
+          "눌러" in V._with_done_hint("동행고리입니다. 말씀해 주세요."),
+          V._with_done_hint("동행고리입니다. 말씀해 주세요."))
+    check("이미 안내가 있으면 덧붙이지 않는다",
+          V._with_done_hint("말씀 후 아무 번호나 누르세요.") == "말씀 후 아무 번호나 누르세요.",
+          V._with_done_hint("말씀 후 아무 번호나 누르세요."))
+
     # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
     check("키 안 눌러도 흘러갈 곳이 있음",
           "<Record" in body and "who=unknown" in body,
