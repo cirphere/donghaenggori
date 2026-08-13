@@ -64,6 +64,28 @@ jobs:
             cp "$f.example" "$f"
           done
 
+      # `KEY=   # 설명` 은 값이 비어 있을 때 docker compose 가 주석을 **값으로**
+      # 읽는다. HF_TOKEN 이 '# 모델 다운로드…' 가 되어 HTTP 헤더에서 터졌고,
+      # CLAWOPS_GREETING 은 전화 인사말로 그 주석이 그대로 읽혔다.
+      # 값이 있으면 잘라내므로 눈으로는 구분이 안 된다 — compose 에게 물어본다.
+      - name: 설정 값에 주석이 새지 않는지
+        run: |
+          docker compose -f docker-compose.yml \
+            -f docker-compose.tunnel.yml \
+            -f docker-compose.frontend.yml config --format json > /tmp/env.json
+          python - <<'PY'
+          import json, sys
+          bad = []
+          for name, svc in json.load(open("/tmp/env.json"))["services"].items():
+              for k, v in (svc.get("environment") or {}).items():
+                  if isinstance(v, str) and v.lstrip().startswith("#"):
+                      bad.append(f"{name}.{k} = {v[:40]!r}")
+          if bad:
+              sys.exit("주석이 값으로 새어 들어감 (주석을 키 위 줄로 옮길 것):\n  "
+                       + "\n  ".join(bad))
+          print("설정 값에 주석 없음")
+          PY
+
       - name: compose 파일 문법 검사
         run: |
           docker compose -f docker-compose.yml config -q
