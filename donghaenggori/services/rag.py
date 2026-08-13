@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -27,8 +28,9 @@ SIDO_WEIGHT = 1.0          # 같은 시도 일치 가중
 SEMANTIC_WEIGHT = 2.0      # 의미 유사도 가중 (코사인 0~1에 곱함)
 
 _TOKEN = re.compile(r"[가-힣A-Za-z0-9]+")
+_log = logging.getLogger("uvicorn.error")
 _lock = threading.Lock()
-_state: dict = {"model": None, "emb": None, "rows": None, "tried": False}
+_state: dict = {"model": None, "emb": None, "rows": None, "tried": False, "reason": ""}
 
 
 # ------------------------------------------------------------- 임베딩 --
@@ -44,9 +46,21 @@ def _load_model():
         try:
             from sentence_transformers import SentenceTransformer
             _state["model"] = SentenceTransformer(MODEL_NAME)
-        except Exception:
+        except Exception as e:
+            # **이유를 남긴다.** 예전에는 통째로 삼켜서, 의미 검색이 토큰 겹침으로
+            # 내려앉아도 "폴백" 이라는 말만 보였다. 패키지가 없는 것인지, 모델을
+            # 못 받은 것인지, 디스크가 찬 것인지 구분이 안 되면 고칠 수가 없다.
             _state["model"] = None
+            _state["reason"] = f"{type(e).__name__}: {e}"[:200]
+            _log.warning("RAG 임베딩 모델 로드 실패 — 토큰 겹침으로 폴백 (%s: %s)",
+                         MODEL_NAME, _state["reason"])
         return _state["model"]
+
+
+def load_reason() -> str:
+    """임베딩을 못 쓰는 이유. 정상이면 빈 문자열."""
+    _load_model()
+    return _state["reason"]
 
 
 def _doc_text(r: dict) -> str:

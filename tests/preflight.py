@@ -110,10 +110,14 @@ def check_warmup() -> None:
         log(FAIL, "워밍업", f"HTTP {code}")
         return
     warmed = w.get("warmed") or {}
-    bad = [k for k, v in warmed.items() if isinstance(v, str) and v not in ("ok", "loaded", "BERT", "TF-IDF")]
+    bad = {k: v for k, v in warmed.items()
+           if isinstance(v, str) and v not in ("ok", "loaded", "BERT", "TF-IDF")}
     el = time.time() - t
     if bad:
-        log(WARN, "워밍업", f"{el:.1f}s · 실패 {len(bad)}건: {bad[:3]}")
+        # 이름만 찍으면 왜 실패했는지 서버 로그를 다시 뒤져야 한다. 이 스크립트는
+        # 시연 직전에 도는 것이라, 한 줄로 원인까지 보여야 바로 고칠 수 있다.
+        detail = " · ".join(f"{k}={v}" for k, v in list(bad.items())[:2])
+        log(WARN, "워밍업", f"{el:.1f}s · 실패 {len(bad)}건 — {detail}")
     else:
         log(OK, "워밍업", f"{el:.1f}s · 전부 정상")
 

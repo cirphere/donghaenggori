@@ -34,6 +34,12 @@ services:
       # env_file 을 이기기 때문에, 여기 적으면 .env.app 으로 못 바꾼다.
       # 배포 기본값은 .env.app.example 에 적어뒀다(base/cpu/2스레드).
       # GPU 오버레이의 environment 는 여전히 이긴다 — 의도한 대로다.
+      # 기동 직후 예열한다 — 모델 로드와 외부 API 캐시.
+      #
+      # 사람이 curl 로 부르는 것을 잊으면 시연 첫 요청이 30초 넘게 걸린다.
+      # 기동을 막지 않으므로(별도 스레드) 헬스체크는 그대로 통과한다.
+      # 로컬 실행·테스트에서는 매번 모델을 받지 않도록 코드 기본값이 꺼져 있다.
+      WARMUP_ON_START: "1"
       HF_HOME: /models/hf
       DONGHAENGGORI_DB: /data/donghaenggori.db
     volumes:
