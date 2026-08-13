@@ -96,7 +96,16 @@ def _tune_threshold(y_true, proba_urgent, target_recall: float) -> float:
 
 
 def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
-        seed: int = 42, save: bool = False, opening: int = 5) -> dict:
+        seed: int = 42, save: bool = False, opening: int = 5,
+        export: str | None = None, official_split: bool = False) -> dict:
+    """export        — tools.export_cds01 로 뽑은 작은 파일(원본 7.8GB 대신).
+    official_split — AI-Hub 가 나눠 둔 TL 로 학습하고 VL 로 평가한다.
+
+    예전에는 TL·VL 을 섞어 읽고 8:2 로 무작위 분할했다. 그 홀드아웃 숫자 자체는
+    유효하지만(학습에 안 쓴 데이터), **공식 검증셋으로 평가했다고 말할 수는 없다**
+    — VL 일부가 학습에 들어갔기 때문이다. 제출 문서가 검증셋을 측정 방법으로
+    적어 뒀으므로 그 기준을 그대로 지킬 수 있게 한다.
+    """
     import numpy as np
     import torch
     from sklearn.metrics import accuracy_score, classification_report, f1_score
@@ -109,17 +118,39 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
     device = pick_device()
 
     # ── 데이터 ─────────────────────────────────────────────
-    Xr, yr, rep = cds01.load_sessions(data_path, opening=opening)
-    Xs, ys = train_intent.synthetic(train_intent._COUNTS_SUPPLEMENT, 0)
+    if export:
+        def _load(split):
+            return cds01.load_export(export, "session", split)
+    else:
+        def _load(split):
+            X, y, _ = cds01.load_sessions(data_path, opening=opening, split=split)
+            return X, y
 
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        Xr, yr, test_size=0.2, random_state=seed, stratify=yr)
-    X_tr, y_tr = X_tr + Xs, y_tr + ys          # 합성은 학습에만
+    if official_split:
+        X_tr, y_tr = _load("TL")
+        X_te, y_te = _load("VL")
+        basis = "AI-Hub 공식 분할 (TL 학습 / VL 평가)"
+    else:
+        if export:
+            Xr, yr = [], []
+            for sp in ("TL", "VL"):
+                a, b = _load(sp)
+                Xr += a
+                yr += b
+        else:
+            Xr, yr, _ = cds01.load_sessions(data_path, opening=opening)
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            Xr, yr, test_size=0.2, random_state=seed, stratify=yr)
+        basis = "TL·VL 혼합 8:2 무작위 분할"
+
+    Xs, ys = train_intent.synthetic(train_intent._COUNTS_SUPPLEMENT, 0)
+    X_tr, y_tr = list(X_tr) + Xs, list(y_tr) + ys      # 합성은 학습에만
 
     labels = sorted(set(y_tr) | set(y_te))
     label2id = {name: i for i, name in enumerate(labels)}
     id2label = {i: name for name, i in label2id.items()}
 
+    print(f"평가 기준: {basis}")
     print(f"장비: {device} · 모델: {MODEL_NAME}")
     print(f"학습 {len(X_tr):,}건 (실데이터 {len(X_tr)-len(Xs):,} + 합성 {len(Xs):,}) "
           f"/ 평가 {len(X_te):,}건 (실데이터만)")
@@ -208,7 +239,10 @@ def run(data_path: str, epochs: int = 3, batch_size: int = 16, lr: float = 2e-5,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="KLUE-RoBERTa 파인튜닝 (의도 분류)")
-    ap.add_argument("--data", required=True, help="C-DS01 라벨 디렉터리")
+    ap.add_argument("--data", help="C-DS01 라벨 디렉터리 (--export 를 쓰면 불필요)")
+    ap.add_argument("--export", help="tools.export_cds01 로 뽑은 파일(원본 대신)")
+    ap.add_argument("--official-split", action="store_true",
+                    help="AI-Hub TL 로 학습하고 VL 로 평가 (제출 문서 기준)")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=2e-5)
@@ -216,7 +250,10 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--save", action="store_true", help="모델 저장")
     a = ap.parse_args()
-    r = run(a.data, a.epochs, a.batch_size, a.lr, a.seed, a.save, a.opening)
+    if not a.data and not a.export:
+        raise SystemExit("--data 또는 --export 중 하나는 있어야 합니다")
+    r = run(a.data, a.epochs, a.batch_size, a.lr, a.seed, a.save, a.opening,
+            export=a.export, official_split=a.official_split)
 
     # TF-IDF 기준선 (같은 평가 프로토콜: 실데이터 홀드아웃)
     BASE = {"accuracy": 0.986, "macro_f1": 0.979,
