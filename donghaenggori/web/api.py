@@ -52,6 +52,28 @@ app.include_router(voice.router)
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
+    _log_ai_placement()
+
+
+def _log_ai_placement() -> None:
+    """AI 가 어디서 도는지 기동 로그에 남긴다.
+
+    "어르신 발화가 외부로 나가지 않는다" 는 심사에서 내세우는 논리인데, 이건
+    코드가 아니라 **.env 상태**에 달려 있다. ANTHROPIC_API_KEY 를 한 줄 채우면
+    조용히 켜진다(nlu.analyze 는 키가 있으면 use_llm 을 True 로 본다) — 팀원이
+    선의로 키를 넣어도 아무 표시가 없다.
+
+    시연 직전에 로그 한 줄로 확인할 수 있어야 한다.
+    """
+    import logging
+    import os
+
+    log = logging.getLogger("uvicorn.error")
+    stt = os.environ.get("WHISPER_DEVICE", "cpu")
+    log.info("AI 배치 — 음성인식 %s(%s) · 긴급분류 자체 모델 · 외부 LLM %s",
+             os.environ.get("WHISPER_MODEL", "small"), stt,
+             "사용(발화가 외부로 나감)" if os.environ.get("ANTHROPIC_API_KEY")
+             else "미사용")
 
 
 # ------------------------------------------------------------ 스키마 --
