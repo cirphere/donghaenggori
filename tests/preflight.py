@@ -199,6 +199,44 @@ def check_web_auth() -> None:
         log(WARN, "화면 접근 제한", f"확인 실패: {type(e).__name__}")
 
 
+def check_compose_stack() -> None:
+    """띄우기로 한 컨테이너가 실제로 다 떠 있는지 본다.
+
+    `COMPOSE_FILE` 은 compose CLI 가 **루트 .env 에서만** 읽는다. 설정을
+    컨테이너별로 나눈 뒤 루트 .env 를 통째로 지우면 이 값이 사라지는데,
+    그러면 `docker compose up -d` 가 기본 파일만 읽어 **app 하나만 뜬다.**
+    에러도 경고도 없이 프론트와 터널이 조용히 사라진다 — 접수는 되는데
+    화면과 공개 주소만 죽어 있어서, 시연 직전에 알아채기 가장 어려운 형태다.
+
+    도커 밖(호스트)에서 돌릴 때만 의미가 있다. 컨테이너 안에서는 건너뛴다.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("docker"):
+        log(WARN, "컨테이너 구성", "docker 명령이 없어 건너뜀 (서버에서 확인할 것)")
+        return
+    try:
+        out = subprocess.run(["docker", "compose", "config", "--services"],
+                             capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        log(WARN, "컨테이너 구성", f"확인 실패: {type(e).__name__}")
+        return
+    if out.returncode != 0:
+        log(WARN, "컨테이너 구성", "compose 설정을 읽지 못함 (저장소 밖에서 실행했는지 확인)")
+        return
+
+    services = set(out.stdout.split())
+    missing = {"frontend", "cloudflared"} - services
+    if not missing:
+        log(OK, "컨테이너 구성", f"{len(services)}개 — {', '.join(sorted(services))}")
+    else:
+        log(FAIL, "컨테이너 구성",
+            f"{', '.join(sorted(missing))} 가 구성에 없다. "
+            "루트 .env 의 COMPOSE_FILE 을 확인할 것 "
+            "(지우면 app 하나만 뜬다)")
+
+
 def check_reset_guard() -> None:
     """외부(터널) 요청을 흉내내 초기화가 막히는지 본다. 실제로 지우지 않는다."""
     r = urllib.request.Request(BASE + "/api/reset", data=b"{}", method="POST",
@@ -284,6 +322,7 @@ def main() -> int:
     check_summary()
     check_reset_guard()
     check_web_auth()
+    check_compose_stack()
     if a.audio:
         check_stt(a.audio)
     else:
