@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 동행고리 AI — GPU(CUDA) 배포 이미지
 #
 # 용도: 집 데스크탑(Windows + RTX 4060 Ti)에서 Cloudflare Tunnel로 공유할 때.
@@ -20,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
 # torch를 CUDA 12 빌드로 고정한다.
 #
 # 기본 인덱스의 torch(2.13)는 CUDA 13을 가져와 libcublas.so.13 을 깐다.
@@ -31,8 +31,23 @@ COPY requirements.txt .
 # nvidia-cublas-cu12 를 따로 얹는 방법도 있으나, cuDNN 이 torch 것과 같은
 # 디렉터리·같은 SONAME(libcudnn.so.9)이라 서로 덮어써 torch가 깨질 수 있다.
 # CUDA 버전을 하나로 맞추는 편이 안전하다.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu126 torch \
-    && pip install --no-cache-dir -r requirements.txt
+#
+# **requirements.txt 를 복사하기 전에** 깐다. 전에는 COPY 가 앞에 있어서,
+# torch 와 아무 상관 없는 의존성 한 줄만 고쳐도 같은 레이어에 묶인 CUDA torch 를
+# 통째로 다시 받았다(5GB 안팎). 이 순서면 torch 레이어는 베이스 이미지에만
+# 의존한다.
+#
+# 캐시 마운트를 쓰는 이유: --no-cache-dir 은 레이어가 한 번 깨지면 무조건
+# 네트워크에서 다시 받는다. 빌드 캐시가 정리되거나(WSL 디스크가 차면 제일 큰
+# 이 레이어부터 날아간다), 베이스 이미지 다이제스트가 바뀌거나, 빌드가 중간에
+# 죽으면 매번 재다운로드다. 캐시 마운트는 **이미지에 들어가지 않으므로**
+# 이미지 크기는 그대로다.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cu126 torch
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 COPY donghaenggori ./donghaenggori
 COPY tests ./tests

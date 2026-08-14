@@ -180,6 +180,21 @@ docker compose logs app | grep -i cuda      # 로드 오류가 없어야 한다
 # 3.5초 음성 전사가 CPU에선 1초대, GPU면 그보다 확연히 빨라야 한다
 ```
 
+**재빌드할 때 torch를 다시 받고 있다면** 캐시가 깨진 것이다. 소스만 고친
+재빌드는 `COPY donghaenggori` 아래 레이어만 다시 돌아야 하고, torch 레이어는
+`CACHED` 로 지나가야 한다.
+
+```bash
+docker buildx du | tail -3        # 빌드 캐시가 남아 있나
+docker images | grep donghaenggori
+```
+
+캐시가 비어 있다면 셋 중 하나다 — WSL 디스크가 차서 제일 큰 레이어(torch +
+nvidia, 5GB 안팎)부터 정리됐거나, 베이스 이미지 `python:3.12-slim` 다이제스트가
+바뀌었거나, 이전 빌드가 메모리 부족으로 죽어 레이어가 커밋되지 않았거나.
+어느 쪽이든 pip 캐시 마운트가 있어서 **네트워크가 아니라 로컬 캐시에서** 다시
+깐다. 캐시까지 통째로 날아간 경우에만 재다운로드다.
+
 터널은 `cloudflared`로 붙인다. 3일 무인 가동이면 **서비스로 등록**해야 재부팅
 후에도 살아난다(`cloudflared service install`). 임시 터널(`--url`)은 재시작마다
 주소가 바뀌므로 링크를 공유할 거면 Named Tunnel + 도메인을 쓴다.
