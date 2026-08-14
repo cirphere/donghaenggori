@@ -353,6 +353,76 @@ def confirm_intake(intake_id: int, hospital: str, date: str, level: str,
         conn.close()
 
 
+# 확인 입력이 건드리는 곳 — 카드 안의 평면 키와 intakes 컬럼.
+#
+# 카드 JSON 은 항목별 뷰(fields)와 평면 키(hospital, date_value…)를 둘 다 들고
+# 있다. 목록 화면은 컬럼을, 카드 화면은 fields 를 읽으므로 셋을 함께 고쳐야
+# 한다. 하나만 고치면 목록과 상세가 다른 값을 보여준다.
+_VERIFY_TARGETS = {
+    "target":   ("target", "target"),
+    "hospital": ("hospital", "hospital"),
+    "dept":     ("dept", "dept"),
+    "date":     ("date_value", "date_value"),
+    "time":     ("time_value", None),      # 시각은 컬럼이 없다 — 카드에만 있다
+}
+
+
+def verify_card_field(intake_id: int, field: str, value: str,
+                      actor: str = "김○○ 사회복지사",
+                      role: str = "사회복지사") -> dict | None:
+    """사회복지사가 통화로 확인한 결과를 카드에 반영한다.
+
+    AI 가 만든 값을 **사람이 덮어쓰는** 유일한 경로다. 그래서 근거에 누가
+    확인했는지를 남긴다 — 나중에 카드를 보는 사람이 이 값이 추론인지 통화로
+    확인한 것인지 구분할 수 있어야 한다.
+
+    대상자를 확인하면 통화에서 받아 적은 성함·주소 칸은 지운다. 그 둘은
+    대상자를 알아내려던 단서였고, 대상자가 정해지면 역할이 끝난다. 남겨 두면
+    "말한 성함: 김말자 (확인 필요)" 가 확정된 카드에 계속 붙어 있게 된다.
+    """
+    if field not in _VERIFY_TARGETS:
+        return None
+    row = get_intake(intake_id)
+    if not row:
+        return None
+    card = row.get("card")
+    if not card:
+        return None
+
+    flat_key, column = _VERIFY_TARGETS[field]
+    card[flat_key] = value
+    fields = card.setdefault("fields", {})
+    view = fields.setdefault(field, {"label": field})
+    view["value"] = value
+    view["status"] = "확인됨"
+    view["evidence"] = list(view.get("evidence") or []) + [f"통화로 확인함 — {actor}"]
+    if field == "hospital":
+        # 평면 상태 키를 따로 들고 있어서 같이 올려야 한다
+        card["hospital_status"] = "확인됨"
+    if field == "target":
+        for k in ("spoken_name", "spoken_region"):
+            fields.pop(k, None)
+            card[k] = None
+
+    init_db()
+    conn = get_conn()
+    try:
+        sets, args = ["card_json=?"], [json.dumps(card, ensure_ascii=False)]
+        if column:
+            sets.append(f"{column}=?")
+            args.append(value)
+        if field == "hospital":
+            sets.append("hospital_status=?")
+            args.append("확인됨")
+        args.append(intake_id)
+        conn.execute(f"UPDATE intakes SET {', '.join(sets)} WHERE id=?", args)
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, role, "항목확인", "intake", str(intake_id), f"{field}={value}")
+    return get_intake(intake_id)
+
+
 def _with_card(row: dict) -> dict:
     """card_json 을 파싱해 card 로 붙인다. 옛 접수는 None 이다."""
     raw = row.pop("card_json", None)

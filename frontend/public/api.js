@@ -8,6 +8,17 @@
 
 const BASE = "";
 
+// 오류를 문자열로만 던지면 확정 게이트(409)의 '막은 항목' 목록이 사라진다.
+// 화면이 그걸 그려야 하므로 status 와 detail 을 그대로 들고 간다.
+export class ApiError extends Error {
+  constructor(message, status, detail) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function req(path, { method = "GET", body, form } = {}) {
   const opt = { method };
   if (form) {
@@ -21,9 +32,13 @@ async function req(path, { method = "GET", body, form } = {}) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
   if (!res.ok) {
-    // FastAPI 는 오류를 {detail: "..."} 로 준다
-    const msg = (data && (data.detail || data.error)) || `HTTP ${res.status}`;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    // FastAPI 는 오류를 {detail: ...} 로 준다. detail 이 객체인 경우가 있어서
+    // (확정 게이트) 메시지만 뽑아 쓰고 원본은 detail 로 넘긴다.
+    const d = data && (data.detail ?? data.error);
+    const msg = (typeof d === "string" && d)
+      || (d && typeof d === "object" && d.message)
+      || `HTTP ${res.status}`;
+    throw new ApiError(msg, res.status, d);
   }
   return data;
 }
@@ -53,11 +68,21 @@ export const api = {
   },
 
   // 접수 상세. 접수 당시 만든 카드 전문(근거·확인질문 포함)이 card 에 들어 있다.
+  // gate.allowed 가 false 면 확정 버튼을 잠그면 된다 — 판단은 서버가 한다.
   getIntake: (id) => req(`/api/intakes/${id}`),
 
-  confirmIntake: (id, { hospital, date, level, actor, role }) =>
+  // 확인 필요가 남아 있으면 409 로 막힌다. ApiError.detail.gate.blockers 에
+  // 무엇이 왜 막는지와 되물을 질문이 들어 있다.
+  // 그래도 넘어가려면 acknowledge:true — 감사 로그에 '미확인 확정'으로 남는다.
+  confirmIntake: (id, { hospital, date, level, actor, role, acknowledge = false }) =>
     req(`/api/intakes/${id}/confirm`,
-        { method: "POST", body: { hospital, date, level, actor, role } }),
+        { method: "POST", body: { hospital, date, level, actor, role, acknowledge } }),
+
+  // 통화로 확인한 값을 항목에 반영한다 — 게이트를 푸는 유일한 경로.
+  // field: target | hospital | dept | date | time
+  verifyField: (id, field, value, actor, role) =>
+    req(`/api/intakes/${id}/verify`,
+        { method: "POST", body: { field, value, actor, role } }),
 
   // 긴급 처리 완료 표시. changed:false 면 이미 처리됐다는 뜻 — 오류가 아니다.
   resolveUrgent: (id, note = "", role = "사회복지사") =>

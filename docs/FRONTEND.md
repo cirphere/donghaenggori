@@ -53,8 +53,9 @@ fetch('/api/status')      // 이렇게. 도메인을 붙일 필요가 없다
 | **02 접수** | `POST` | `/api/intakes` — 텍스트 발화 → 접수카드 |
 | | `POST` | `/api/stt` — 음성 → 텍스트만 |
 | | `POST` | `/api/intakes/from-audio` — 음성 → 접수카드 (한 번에) |
-| **03 접수카드** | `GET` | `/api/intakes/{id}` — **접수 당시 카드 전문 포함** |
-| | `POST` | `/api/intakes/{id}/confirm` — 사회복지사 확정 |
+| **03 접수카드** | `GET` | `/api/intakes/{id}` — **접수 당시 카드 전문 + `gate`** |
+| | `POST` | `/api/intakes/{id}/confirm` — 사회복지사 확정 (확인 필요가 남으면 **409**) |
+| | `POST` | `/api/intakes/{id}/verify` — 통화로 확인한 값 입력 (게이트를 푸는 경로) |
 | | `POST` | `/api/intakes/{id}/resolve` — 긴급 처리 완료 표시 |
 | **05 사후기록** | `POST` | `/api/post-records` — 음성 메모 → 기록 초안 |
 | | `POST` | `/api/post-records/{id}/approve` — 프로필 반영 승인 |
@@ -183,6 +184,70 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 
 `role`이 `사회복지사`가 아니면 **403**이 떨어진다(동행매니저는 확정 권한 없음). 화면에서도
 역할에 따라 버튼을 감추되, 서버가 최종 판정한다.
+
+### 확인 필요가 남으면 **409로 막힌다**
+
+"AI는 후보·근거까지, 확정은 사람"을 문장이 아니라 동작으로 지키는 자리다.
+`확인 필요` 항목이 남은 채 확정을 부르면 서버가 거절한다.
+
+```json
+409 → { "detail": {
+  "message": "확인이 필요한 항목이 남아 있습니다",
+  "gate": {
+    "allowed": false, "acknowledged": false, "hard_block": false,
+    "blockers": [{
+      "field": "time", "label": "방문 시각",
+      "value": null, "spoken": "3시",
+      "evidence": ["어르신이 '3시'라고 직접 말함", "오전·오후를 말하지 않아 확정할 수 없음"],
+      "question": "말씀하신 3시, 오전인가요 오후인가요?"
+    }]
+  } } }
+```
+
+- **422가 아니라 409다.** 요청이 틀린 게 아니라 지금 상태에서 못 하는 것이다.
+- `question` 을 그대로 띄워라. 사회복지사가 이 화면을 보면서 전화로 그대로 묻는다.
+- `field` 가 `target` 이면 통화에서 받아 적은 성함·읍면동이 `heard` 에 함께 온다:
+  `"heard": [{"label": "말한 성함", "value": "김말자"}]`. "성함이 어떻게 되세요"
+  대신 "김말자 님 맞으실까요"로 물을 수 있다.
+
+**무엇이 막고 무엇이 안 막는가** — 기준은 *일정을 세우는 데 반드시 필요한가*다.
+
+| 항목 | 막나 | 이유 |
+|---|---|---|
+| `target` `hospital` `date` | 막는다 | 누구를·어디로·언제가 없으면 일정이 성립하지 않는다 |
+| `time` | 말했는데 모호할 때만 | 시각 없는 일정은 "시간 미정"으로 잡힌다. 다만 "3시"를 우리가 오전으로 골라 틀리면 반나절 헛걸음이다 |
+| `dept` | 안 막는다 | 진료과를 몰라도 동행은 나간다 |
+| 상태가 `추정` | 안 막는다 | 추정은 "근거를 대고 고른 값"이다. 여기까지 막으면 상태 3단계가 2단계로 무너진다 |
+
+`GET /api/intakes/{id}` 와 `POST /api/intakes` 응답에도 같은 모양의 `gate` 가 실린다.
+**화면이 `fields` 를 훑어 스스로 판단하지 말 것** — `gate.allowed` 만 보고 버튼을 잠그면 된다.
+
+### 막힌 항목 풀기 — `POST /api/intakes/{id}/verify`
+
+게이트를 푸는 유일한 경로다. 통화로 확인한 값을 넣는다.
+
+```json
+{ "field": "time", "value": "15:00", "actor": "김○○ 사회복지사", "role": "사회복지사" }
+→ { "ok": true, "intake": { ..., "gate": { "allowed": true, "blockers": [] } } }
+```
+
+- `field` 는 `target` `hospital` `dept` `date` `time` 중 하나다. 다른 값은 422.
+- 항목의 `status` 가 `확인됨` 이 되고 `evidence` 에 `"통화로 확인함 — {actor}"` 가 붙는다.
+  나중에 카드를 보는 사람이 추론값과 사람이 확인한 값을 구별할 수 있어야 한다.
+- `field: "target"` 으로 확인하면 `말한 성함`·`말한 주소` 칸은 사라진다. 대상자를
+  알아내려던 단서였고 역할이 끝났기 때문이다.
+- 응답에 새 `gate` 가 함께 오므로 다시 조회할 필요가 없다. 다 풀렸으면 바로 확정으로
+  넘어가면 된다.
+
+### 그래도 넘어가야 할 때 — `acknowledge: true`
+
+어르신이 전화를 끊어 더 물어볼 수 없는 상황이 실제로 있다. 확정 요청에
+`"acknowledge": true` 를 실으면 통과하고, 감사 로그에 **`미확인 확정`** 으로 남는다.
+응답의 `acknowledged` 로 어느 쪽이었는지 알 수 있다.
+
+기관이 환경변수 `INTAKE_BLOCK_ALL_UNCONFIRMED=true` 를 켜 두면 `acknowledge` 도
+통하지 않는다. 그때는 `gate.hard_block` 이 `true` 로 오니, 화면은 "이대로 접수"
+버튼 자체를 띄우지 말아야 한다.
 
 ### 긴급은 확정할 게 없다 — `POST /api/intakes/{id}/resolve`
 
@@ -316,6 +381,11 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 
 **8. 대상자는 후보다.** `target_candidates`가 있으면 이름을 확정된 것처럼 쓰지
 않는다. 보호자 화면이라면 "박순자 님 (확인 예정)" 정도가 맞다.
+
+**9. 확정 가능 여부는 서버가 정한다.** `gate.allowed` 만 보고 버튼을 잠근다.
+`fields` 를 훑어 화면이 스스로 세지 말 것 — 규칙이 화면마다 갈라지면 어떤 화면에서는
+막히고 어떤 화면에서는 통과하는 카드가 생긴다. 409를 받으면 `gate.blockers` 를
+그대로 그리고, `question` 을 띄운 채로 전화를 걸 수 있게 한다.
 
 ---
 

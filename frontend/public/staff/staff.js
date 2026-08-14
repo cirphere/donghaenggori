@@ -131,12 +131,87 @@ async function confirmIntake(r) {
   if (date === null) return;
   const level = prompt("동행 지원 수준", r.need_level || "차량+동행");
   if (level === null) return;
+  await sendConfirm(r, { hospital, date, level });
+}
+
+async function sendConfirm(r, payload, acknowledge = false) {
   try {
-    await api.confirmIntake(r.id, { hospital, date, level, actor: ACTOR, role: ROLE });
+    await api.confirmIntake(r.id, { ...payload, actor: ACTOR, role: ROLE, acknowledge });
+    closeModal();
     loadQueue();
   } catch (e) {
+    // 409 는 요청이 틀린 게 아니라 지금 상태에서 확정할 수 없다는 뜻이다.
+    // 무엇이 막는지 서버가 함께 보내 주므로 그대로 그린다.
+    if (e.status === 409 && e.detail && e.detail.gate) {
+      showGate(r, payload, e.detail.gate);
+      return;
+    }
     alert("확정 실패: " + e.message);
   }
+}
+
+// 막힌 항목을 보여주고, 통화로 확인한 값을 그 자리에서 입력받는다.
+//
+// 확인 질문을 함께 띄우는 게 핵심이다 — 사회복지사가 이 화면을 띄운 채로
+// 어르신께 전화를 걸어 그대로 물어보고 답을 바로 적을 수 있어야 한다.
+function showGate(r, payload, gate) {
+  const hard = gate.hard_block;
+  const body = openModal(hard ? "아직 접수할 수 없어요" : "확인하지 않고 접수할까요?");
+  body.append(el("div", "small", hard
+    ? "기관 규칙상 확인 필요가 남으면 확정할 수 없습니다. 아래 항목을 먼저 확인해 주세요."
+    : "접수 후에도 확인할 수 있습니다. 확인 전까지는 일정에 '확인 예정'으로 표시됩니다."));
+
+  gate.blockers.forEach((b) => {
+    const box = el("div", "field");
+    const head = el("div", "field-head");
+    head.append(el("span", "field-label", b.label));
+    head.append(el("span", "badge need", "확인 필요"));
+    box.append(head);
+
+    // 어르신이 말한 표현·통화에서 받아 적은 성함은 되물을 때 그대로 쓴다
+    const heard = (b.heard || []).map((h) => `${h.label} “${h.value}”`).join(" · ");
+    const said = b.spoken ? `어르신 말씀: “${b.spoken}”` : "";
+    if (said || heard) box.append(el("div", "small", [said, heard].filter(Boolean).join(" · ")));
+    if (b.question) box.append(el("div", "qa", b.question));
+
+    const row = el("div", "verify-row");
+    const input = el("input");
+    input.placeholder = "통화로 확인한 값";
+    if (b.value) input.value = b.value;
+    const save = el("button", null, "확인 완료로 저장");
+    save.onclick = async () => {
+      const value = input.value.trim();
+      if (!value) return;
+      save.disabled = true;
+      try {
+        const res = await api.verifyField(r.id, b.field, value, ACTOR, ROLE);
+        // 확정 payload 는 아까 prompt 로 받은 값이다. 여기서 고친 병원·방문일을
+        // 반영하지 않으면 확인한 값이 아니라 옛 값으로 확정된다.
+        if (b.field === "hospital") payload.hospital = value;
+        if (b.field === "date") payload.date = value;
+        // 서버가 새 게이트를 함께 준다. 다 풀렸으면 곧바로 확정으로 넘어간다.
+        if (res.intake.gate.allowed) return sendConfirm(r, payload);
+        showGate(r, payload, res.intake.gate);
+      } catch (e) {
+        save.disabled = false;
+        alert("확인 저장 실패: " + e.message);
+      }
+    };
+    row.append(input, save);
+    box.append(row);
+    body.append(box);
+  });
+
+  const foot = el("div", "modal-foot");
+  const back = el("button", null, "돌아가서 확인");
+  back.onclick = closeModal;
+  foot.append(back);
+  if (!hard) {
+    const go = el("button", "danger", "이대로 접수");
+    go.onclick = () => sendConfirm(r, payload, true);
+    foot.append(go);
+  }
+  body.append(foot);
 }
 
 // ── 팝업 ───────────────────────────────────────────────────
@@ -193,6 +268,13 @@ async function showCardView(id) {
       ? renderCard({ card: d.card, channel: d.channel, intent: d.intent,
                      intent_source: "저장된 접수", facilities: [] })
       : noCardNotice(d));
+    // 카드를 열자마자 확정 가능 여부가 보여야 한다. 상태 배지를 항목마다 세어
+    // 보게 하면 결국 아무도 안 센다.
+    if (d.gate && !d.gate.allowed && d.confirmed !== 1) {
+      const labels = d.gate.blockers.map((b) => b.label).join(" · ");
+      body.prepend(el("div", "notice",
+        `확정하려면 ${d.gate.blockers.length}건을 먼저 확인해야 합니다 — ${labels}`));
+    }
   } catch (e) {
     body.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
   }
