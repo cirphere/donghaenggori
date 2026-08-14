@@ -189,6 +189,7 @@ table.list tr.clickable:hover { background: #fafbfa; }
 /* 막힌 항목마다 '되물을 질문 + 답 적는 칸'을 붙인다. 사회복지사가 이 화면을
    띄운 채로 어르신께 전화를 걸어 그대로 묻고 바로 적는 자리다. */
 .modal-body .field + .field { margin-top: 10px; }
+.modal-body .field > input { width: 100%; margin-top: 6px; }
 .qa { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--guess); }
 .verify-row { display: flex; gap: 8px; margin-top: 8px; }
 .verify-row input { flex: 1; min-width: 0; }

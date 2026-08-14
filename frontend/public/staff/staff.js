@@ -124,14 +124,135 @@ async function loadQueue() {
 }
 
 // 확정은 사람의 영역이다. 값을 그대로 확인시키고 누른 사람을 감사 로그에 남긴다.
+//
+// 확정 상세를 먼저 받아오는 이유: 무엇이 막고 있는지를 **묻기 전에** 알아야 한다.
+// 예전에는 병원·방문일을 prompt 로 다 받아낸 뒤 서버가 409 로 막았는데, 복지사가
+// 병원명을 손으로 적은 다음에 "병원이 확인되지 않았습니다" 를 보는 순서가 됐다.
+// 같은 정보를 두 번, 그것도 거꾸로 물은 셈이다.
 async function confirmIntake(r) {
-  const hospital = prompt("확정할 병원", r.hospital || "");
-  if (hospital === null) return;
-  const date = prompt("확정할 방문일 (YYYY-MM-DD)", r.date_value || "");
-  if (date === null) return;
-  const level = prompt("동행 지원 수준", r.need_level || "차량+동행");
-  if (level === null) return;
-  await sendConfirm(r, { hospital, date, level });
+  try {
+    showConfirm(r, await api.getIntake(r.id));
+  } catch (e) {
+    alert("접수를 불러오지 못했습니다: " + e.message);
+  }
+}
+
+// 확정 화면 — 팝업 하나로 끝낸다.
+//
+//   위   먼저 확인할 내용 (막힌 항목이 있을 때만) — 되물을 질문 + 답 적는 칸
+//   아래 확정할 내용 — 병원·방문일·지원수준. 확인된 값이 이미 채워져 있다.
+//
+// draft 는 다시 그려도 살아남는 입력값이다. 항목 하나를 확인 저장하면 화면을
+// 새로 그리는데, 그때 복지사가 아래쪽에 적어 둔 값이 날아가면 안 된다.
+function showConfirm(r, d, draft) {
+  const c = d.card || {};
+  const gate = d.gate || { allowed: true, blockers: [] };
+  const fields = c.fields || {};
+  draft = draft || {
+    hospital: c.hospital || d.hospital || "",
+    date: c.date_value || d.date_value || "",
+    level: c.need_level || d.need_level || "차량+동행",
+  };
+
+  const body = openModal(`접수 확정 — ${d.target || r.target || ""}`);
+  const inputs = {};
+  const readForm = () => {
+    for (const [k, node] of Object.entries(inputs)) draft[k] = node.value.trim();
+  };
+
+  // ── 먼저 확인할 내용 ────────────────────────────────────
+  if (gate.blockers.length) {
+    const block = el("div", "block");
+    block.append(el("h3", null, `먼저 확인할 내용 ${gate.blockers.length}건`));
+    block.append(el("div", "small", gate.hard_block
+      ? "기관 규칙상 확인 필요가 남으면 확정할 수 없습니다."
+      : "확인하지 않고 접수할 수도 있습니다. 그 사실은 감사 로그에 남습니다."));
+    gate.blockers.forEach((b) => block.append(blockerBox(r, b, d, draft, readForm)));
+    body.append(block);
+  }
+
+  // ── 확정할 내용 ────────────────────────────────────────
+  const form = el("div", "block");
+  form.append(el("h3", null, "확정할 내용"));
+  [["hospital", "병원", "hospital"], ["date", "방문일 (YYYY-MM-DD)", "date"],
+   ["level", "동행 지원 수준", null]].forEach(([key, label, fieldName]) => {
+    const box = el("div", "field");
+    const head = el("div", "field-head");
+    head.append(el("span", "field-label", label));
+    // AI 가 낸 값인지 사람이 확인한 값인지 여기서도 보여야 한다
+    const st = fieldName && fields[fieldName] && fields[fieldName].status;
+    if (st) head.append(el("span", "badge " + (STATUS_CLASS[st] || ""), st));
+    box.append(head);
+    const input = el("input");
+    input.value = draft[key] || "";
+    inputs[key] = input;
+    box.append(input);
+    form.append(box);
+  });
+  body.append(form);
+
+  // ── 버튼 ───────────────────────────────────────────────
+  const foot = el("div", "modal-foot");
+  const cancel = el("button", null, "취소");
+  cancel.onclick = closeModal;
+  foot.append(cancel);
+  if (!gate.blockers.length) {
+    const go = el("button", "primary", "확정");
+    go.onclick = () => { readForm(); sendConfirm(r, { ...draft }); };
+    foot.append(go);
+  } else if (!gate.hard_block) {
+    const go = el("button", "danger", "이대로 접수");
+    go.onclick = () => { readForm(); sendConfirm(r, { ...draft }, true); };
+    foot.append(go);
+  }
+  body.append(foot);
+}
+
+// 막힌 항목 하나 — 되물을 질문과 답 적는 칸.
+//
+// 질문을 함께 띄우는 게 핵심이다. 사회복지사가 이 화면을 띄운 채로 어르신께
+// 전화를 걸어 그대로 물어보고 답을 바로 적는 자리다.
+function blockerBox(r, b, d, draft, readForm) {
+  const box = el("div", "field");
+  const head = el("div", "field-head");
+  head.append(el("span", "field-label", b.label));
+  head.append(el("span", "badge need", "확인 필요"));
+  box.append(head);
+
+  // 어르신이 말한 표현·통화에서 받아 적은 성함은 되물을 때 그대로 쓴다
+  const heard = (b.heard || []).map((h) => `${h.label} “${h.value}”`).join(" · ");
+  const said = b.spoken ? `어르신 말씀: “${b.spoken}”` : "";
+  if (said || heard) box.append(el("div", "small", [said, heard].filter(Boolean).join(" · ")));
+  if (b.question) box.append(el("div", "qa", b.question));
+
+  const row = el("div", "verify-row");
+  const input = el("input");
+  input.placeholder = "통화로 확인한 값";
+  // 대상자의 value 는 "신규 대상자(미등록 번호)" 같은 **표시 문자열**이지 이름이
+  // 아니다. 그대로 채워 두면 손대지 않고 저장했을 때 대상자 이름이 그 문장이
+  // 된다. 통화에서 받아 적은 성함이 있으면 그게 확인할 값이다.
+  const heardName = (b.heard || []).find((h) => (h.label || "").includes("성함"));
+  input.value = (b.field === "target" ? (heardName && heardName.value) : b.value) || "";
+  const save = el("button", null, "확인 완료로 저장");
+  save.onclick = async () => {
+    const value = input.value.trim();
+    if (!value) return;
+    readForm();                       // 아래쪽에 적어 둔 값을 먼저 챙긴다
+    save.disabled = true;
+    try {
+      const res = await api.verifyField(r.id, b.field, value, ACTOR, ROLE);
+      // 확인한 값이 확정값이다. 이걸 안 옮기면 확인 전 값으로 확정된다.
+      if (b.field === "hospital") draft.hospital = value;
+      if (b.field === "date") draft.date = value;
+      showConfirm(r, res.intake, draft);
+    } catch (e) {
+      save.disabled = false;
+      alert("확인 저장 실패: " + e.message);
+    }
+  };
+  row.append(input, save);
+  box.append(row);
+  return box;
 }
 
 async function sendConfirm(r, payload, acknowledge = false) {
@@ -141,77 +262,16 @@ async function sendConfirm(r, payload, acknowledge = false) {
     loadQueue();
   } catch (e) {
     // 409 는 요청이 틀린 게 아니라 지금 상태에서 확정할 수 없다는 뜻이다.
-    // 무엇이 막는지 서버가 함께 보내 주므로 그대로 그린다.
-    if (e.status === 409 && e.detail && e.detail.gate) {
-      showGate(r, payload, e.detail.gate);
+    // 화면을 열 때 이미 게이트를 확인했으므로 여기 걸리는 건 그 사이에 상태가
+    // 바뀐 경우다 — 최신 상태로 다시 그린다.
+    if (e.status === 409) {
+      api.getIntake(r.id)
+        .then((fresh) => showConfirm(r, fresh, payload))
+        .catch(() => alert("확정 실패: " + e.message));
       return;
     }
     alert("확정 실패: " + e.message);
   }
-}
-
-// 막힌 항목을 보여주고, 통화로 확인한 값을 그 자리에서 입력받는다.
-//
-// 확인 질문을 함께 띄우는 게 핵심이다 — 사회복지사가 이 화면을 띄운 채로
-// 어르신께 전화를 걸어 그대로 물어보고 답을 바로 적을 수 있어야 한다.
-function showGate(r, payload, gate) {
-  const hard = gate.hard_block;
-  const body = openModal(hard ? "아직 접수할 수 없어요" : "확인하지 않고 접수할까요?");
-  body.append(el("div", "small", hard
-    ? "기관 규칙상 확인 필요가 남으면 확정할 수 없습니다. 아래 항목을 먼저 확인해 주세요."
-    : "접수 후에도 확인할 수 있습니다. 확인 전까지는 일정에 '확인 예정'으로 표시됩니다."));
-
-  gate.blockers.forEach((b) => {
-    const box = el("div", "field");
-    const head = el("div", "field-head");
-    head.append(el("span", "field-label", b.label));
-    head.append(el("span", "badge need", "확인 필요"));
-    box.append(head);
-
-    // 어르신이 말한 표현·통화에서 받아 적은 성함은 되물을 때 그대로 쓴다
-    const heard = (b.heard || []).map((h) => `${h.label} “${h.value}”`).join(" · ");
-    const said = b.spoken ? `어르신 말씀: “${b.spoken}”` : "";
-    if (said || heard) box.append(el("div", "small", [said, heard].filter(Boolean).join(" · ")));
-    if (b.question) box.append(el("div", "qa", b.question));
-
-    const row = el("div", "verify-row");
-    const input = el("input");
-    input.placeholder = "통화로 확인한 값";
-    if (b.value) input.value = b.value;
-    const save = el("button", null, "확인 완료로 저장");
-    save.onclick = async () => {
-      const value = input.value.trim();
-      if (!value) return;
-      save.disabled = true;
-      try {
-        const res = await api.verifyField(r.id, b.field, value, ACTOR, ROLE);
-        // 확정 payload 는 아까 prompt 로 받은 값이다. 여기서 고친 병원·방문일을
-        // 반영하지 않으면 확인한 값이 아니라 옛 값으로 확정된다.
-        if (b.field === "hospital") payload.hospital = value;
-        if (b.field === "date") payload.date = value;
-        // 서버가 새 게이트를 함께 준다. 다 풀렸으면 곧바로 확정으로 넘어간다.
-        if (res.intake.gate.allowed) return sendConfirm(r, payload);
-        showGate(r, payload, res.intake.gate);
-      } catch (e) {
-        save.disabled = false;
-        alert("확인 저장 실패: " + e.message);
-      }
-    };
-    row.append(input, save);
-    box.append(row);
-    body.append(box);
-  });
-
-  const foot = el("div", "modal-foot");
-  const back = el("button", null, "돌아가서 확인");
-  back.onclick = closeModal;
-  foot.append(back);
-  if (!hard) {
-    const go = el("button", "danger", "이대로 접수");
-    go.onclick = () => sendConfirm(r, payload, true);
-    foot.append(go);
-  }
-  body.append(foot);
 }
 
 // ── 팝업 ───────────────────────────────────────────────────
