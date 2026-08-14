@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
-from ..core import db, pipeline
+from ..core import db, gate, pipeline
 from ..services import rag, stt, summarize
 from . import voice
 
@@ -171,6 +171,16 @@ class ConfirmIn(BaseModel):
     level: str
     actor: str = "김○○ 사회복지사"
     role: str = "사회복지사"
+    acknowledge: bool = Field(
+        False, description="확인 필요가 남은 것을 알고도 확정 — 감사 로그에 남는다")
+
+
+class VerifyIn(BaseModel):
+    field: Literal["target", "hospital", "dept", "date", "time"] = Field(
+        ..., description="확인한 항목")
+    value: str = Field(..., min_length=1, description="통화로 확인한 값")
+    actor: str = "김○○ 사회복지사"
+    role: str = "사회복지사"
 
 
 class ResolveIn(BaseModel):
@@ -257,6 +267,9 @@ def create_intake(body: IntakeIn) -> dict:
         elif res.card:
             status = "임시 접수" if res.profile is None else "접수 대기"
             out["intake_id"] = db.save_intake(res.card, body.phone, body.channel, status=status)
+    # 카드를 만든 그 자리에서 확정 가능 여부까지 알려준다. 화면이 카드를 그리고
+    # 나서 상세를 다시 부르지 않아도 되게.
+    out["gate"] = gate.check(out.get("card"))
     return out
 
 
@@ -298,18 +311,63 @@ def get_intake(intake_id: int) -> dict:
     row = db.get_intake(intake_id)
     if not row:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
+    # 확정 버튼을 잠글지 말지는 서버가 정한다. 화면이 fields 를 훑어 스스로
+    # 판단하면 화면마다 규칙이 갈라진다.
+    row["gate"] = gate.check(row.get("card"))
     return row
+
+
+@app.post("/api/intakes/{intake_id}/verify", tags=["화면03 접수카드"])
+def verify_field(intake_id: int, body: VerifyIn) -> dict:
+    """통화로 확인한 결과를 항목에 반영한다 — 게이트를 푸는 유일한 경로.
+
+    AI 가 낸 값을 사람이 덮어쓰는 자리다. 무엇을 무엇으로 바꿨는지 감사 로그에
+    남고, 카드 근거에도 '통화로 확인함'이 붙는다.
+    """
+    if not db.can(body.role, "intake.confirm"):
+        raise HTTPException(403, f"'{body.role}' 역할에는 확인 권한이 없습니다")
+    if not db.get_intake(intake_id):
+        raise HTTPException(404, "접수를 찾을 수 없습니다")
+    row = db.verify_card_field(intake_id, body.field, body.value, body.actor, body.role)
+    if not row:
+        # 카드 없는 접수(긴급)거나 확인 대상이 아닌 항목
+        raise HTTPException(400, f"'{body.field}' 항목은 확인 입력을 받을 수 없습니다")
+    row["gate"] = gate.check(row.get("card"))
+    return {"ok": True, "intake": row}
 
 
 @app.post("/api/intakes/{intake_id}/confirm", tags=["화면03 접수카드"])
 def confirm(intake_id: int, body: ConfirmIn) -> dict:
-    """사회복지사 확정 — 사람의 영역. 확정 이력은 감사 로그에 남는다."""
+    """사회복지사 확정 — 사람의 영역. 확정 이력은 감사 로그에 남는다.
+
+    확인 필요가 남아 있으면 409 로 막고 무엇이 막는지를 돌려준다. 사회복지사가
+    그래도 넘어가려면 acknowledge=true 를 보내야 하고, 그 사실이 감사 로그에
+    남는다. 기관이 INTAKE_BLOCK_ALL_UNCONFIRMED 를 켜 두면 acknowledge 도
+    통하지 않는다.
+    """
     if not db.can(body.role, "intake.confirm"):
         raise HTTPException(403, f"'{body.role}' 역할에는 확정 권한이 없습니다")
-    if not db.get_intake(intake_id):
+    row = db.get_intake(intake_id)
+    if not row:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
+
+    g = gate.check(row.get("card"), body.acknowledge)
+    if not g["allowed"]:
+        # 422 가 아니라 409 다 — 요청이 잘못된 게 아니라 지금 상태에서 못 하는 것이다.
+        raise HTTPException(409, detail={
+            "message": "확인이 필요한 항목이 남아 있습니다",
+            "gate": g,
+        })
+
     db.confirm_intake(intake_id, body.hospital, body.date, body.level, body.actor, body.role)
-    return {"ok": True, "intake": db.get_intake(intake_id)}
+    if g["acknowledged"]:
+        # 확인 없이 넘어간 것은 반드시 흔적이 남아야 한다. 나중에 문제가 생겼을 때
+        # "누가 무엇을 확인하지 않고 확정했는가"에 답할 수 있어야 한다.
+        db.log_audit(body.actor, body.role, "미확인 확정", "intake", str(intake_id),
+                     "확인 없이 확정: " + ", ".join(b["label"] for b in g["blockers"]))
+    out = db.get_intake(intake_id)
+    out["gate"] = gate.check(out.get("card"))
+    return {"ok": True, "intake": out, "acknowledged": g["acknowledged"]}
 
 
 @app.post("/api/intakes/{intake_id}/resolve", tags=["화면03 접수카드"])
