@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 동행고리 AI — 배포 이미지
 #
 # 배포 대상이 정해지지 않았으므로 amd64/arm64 양쪽에서 그대로 빌드된다.
@@ -17,13 +18,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 의존성을 먼저 깔아 레이어 캐시를 살린다 (torch가 커서 재빌드가 아프다)
-COPY requirements.txt .
 # torch는 CPU 전용 빌드로 먼저 깐다. PyPI 기본 휠은 CUDA 런타임을 딸고 오는데
 # (nvidia 2.9GB + triton 652MB) CPU 배포에서는 한 줄도 쓰이지 않는다.
 # 이 한 줄로 이미지가 8.9GB → 3GB대가 된다. GPU 서버에 올릴 땐 이 줄을 빼면 된다.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir -r requirements.txt
+#
+# **requirements.txt 를 복사하기 전에** 깐다. 전에는 COPY 가 앞에 있어서,
+# torch 와 아무 상관 없는 의존성 한 줄만 고쳐도 같은 레이어에 묶인 torch 를
+# 통째로 다시 받았다. 이 순서면 torch 레이어는 베이스 이미지에만 의존한다.
+#
+# 캐시 마운트를 쓰는 이유: --no-cache-dir 은 레이어가 한 번 깨지면 무조건
+# 네트워크에서 다시 받는다. 빌드 캐시가 정리되거나(WSL 디스크), 베이스 이미지
+# 다이제스트가 바뀌거나, 빌드가 중간에 죽으면 매번 수 GB 재다운로드다.
+# 캐시 마운트는 **이미지에 들어가지 않으므로** 이미지 크기는 그대로다.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 COPY donghaenggori ./donghaenggori
 COPY tests ./tests
