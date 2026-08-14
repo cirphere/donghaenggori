@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import sys
 
 from fastapi.testclient import TestClient
@@ -231,7 +232,6 @@ def main() -> int:
           str(아님.card.hospital))
 
     # .env 가 코드 기본값을 덮어써서 두 번 헤맸다. 빈 값은 '미설정'이어야 한다.
-    import os
     for raw, want in (("", 60), ("  ", 60), ("45", 45), ("이상한값", 60)):
         os.environ["_T_REC"] = raw
         check(f"빈/잘못된 설정도 안 터짐 ({raw!r} → {want})",
@@ -375,6 +375,23 @@ def main() -> int:
     r = client.post("/api/voice/incoming", data=call_params(PHONE_SELF))
     check("키 미설정이면 503", r.status_code == 503, f"HTTP {r.status_code}")
     voice.SIGNING_KEY = KEY
+
+    # ── 안내 음성 ────────────────────────────────────────────
+    # 유료 음성이라 기본은 꺼져 있어야 하고, 오타가 XML 을 깨뜨리면 안 된다.
+    # <Say> 가 깨지면 통화 전체가 무음이 된다.
+    check("기본은 무료 음성 — voice 속성 없음", 'voice=' not in voice._say("안녕하세요"))
+    voice.VOICE = "cartesia:e1717dc3-b87b-4720-aa7f-b6db290e0609"
+    check("음성 지정하면 voice 속성이 붙는다",
+          'voice="cartesia:e1717dc3-b87b-4720-aa7f-b6db290e0609"' in voice._say("안녕하세요"))
+    voice.VOICE = ""
+
+    for bad in ('cartesia" onload="x', "cartesia id", "cartesia:<script>", 'a"b'):
+        os.environ["CLAWOPS_VOICE"] = bad
+        check(f"깨진 값은 무료로 되돌린다 — {bad!r}", voice._voice_env() == "")
+    os.environ["CLAWOPS_VOICE"] = "cartesia"
+    check("공급자만 지정해도 통과", voice._voice_env() == "cartesia")
+    os.environ.pop("CLAWOPS_VOICE")
+    check("미설정이면 빈 값", voice._voice_env() == "")
 
     print("\n전화 연동(ClawOps VoiceML) 2단계 흐름 검증")
     print("=" * 78)
