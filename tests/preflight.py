@@ -143,11 +143,49 @@ def check_intake() -> None:
     log(OK if src == "학습모델" else WARN, "의도 판정 경로",
         f"{src}" + ("" if src == "학습모델" else " — 규칙으로 처리됨"))
 
+    # 이력에서 고른 병원은 '추정' 이어야 한다. 여기가 '확인됨' 으로 뜨면 배포본이
+    # 옛 정책으로 돌아간 것이고, 그 값은 전화 안내까지 흘러가 어르신이 말한 적
+    # 없는 병원을 "○○병원으로 접수했습니다" 로 확정해서 들려준다.
     h, hs = card.get("hospital"), card.get("hospital_status")
-    log(OK if h else WARN, "병원 후보", f"{h} [{hs}]" if h else "없음 — 이력 조회 실패 가능")
+    if not h:
+        log(WARN, "병원 후보", "없음 — 이력 조회 실패 가능")
+    elif hs == "추정":
+        log(OK, "병원 후보(이력 기반)", f"{h} [{hs}]")
+    else:
+        log(FAIL, "병원 후보(이력 기반)",
+            f"{h} [{hs}] — 이력만으로 고른 병원은 '추정' 이어야 한다")
 
     if el > 5:
         log(WARN, "접수 응답속도", f"{el:.1f}s — 워밍업 후 1초대여야 함")
+
+
+def check_hospital_policy() -> None:
+    """직접 말한 병원과 이력에서 고른 병원이 배포본에서 실제로 구분되는가.
+
+    check_intake 가 이력 경로('추정')를 보므로, 여기서는 반대쪽을 본다 —
+    어르신이 이번에 이름을 댔는데도 '확인됨' 이 안 나오면 확정 경로가 죽은
+    것이고, 그러면 복지사가 어르신이 말한 병원조차 매번 되물어야 한다.
+    """
+    code, d = req("/api/intakes", "POST",
+                  {"phone": "010-1234-5678",
+                   "utterance": "내일 순천정형외과의원 정형외과 가려고요",
+                   "channel": "전화", "save": False}, timeout=120)
+    if code != 200 or not isinstance(d, dict):
+        log(FAIL, "병원 상태 구분", f"HTTP {code}")
+        return
+    # 긴급으로 분류되면 카드 자체가 없다. 그건 의도 분류 쪽 문제이지 병원
+    # 정책 문제가 아니므로, 여기서 FAIL 로 뭉뚱그리지 않고 따로 알린다.
+    if d.get("card") is None:
+        log(WARN, "병원 상태 구분",
+            f"카드 없음(의도={d.get('intent')}) — 병원 정책을 확인하지 못했다")
+        return
+    card = d["card"]
+    h, hs = card.get("hospital"), card.get("hospital_status")
+    if h == "순천정형외과의원" and hs == "확인됨":
+        log(OK, "병원 상태 구분", f"직접 언급 → {h} [{hs}]")
+    else:
+        log(FAIL, "병원 상태 구분",
+            f"직접 언급인데 {h} [{hs}] — 어르신이 댄 이름이 확정되지 않는다")
 
 
 def check_urgent() -> None:
@@ -336,6 +374,7 @@ def main() -> int:
     check_models()
     check_warmup()
     check_intake()
+    check_hospital_policy()
     check_urgent()
     check_rbac()
     check_summary()

@@ -22,7 +22,7 @@ import sys
 import time
 
 BASE = "http://localhost:8000"
-PHONE = "010-1234-5678"        # 박순자 — 정형외과 2회 → 확인됨
+PHONE = "010-1234-5678"        # 박순자 — 정형외과 2회 이력 → 추정(직접 말한 것이 아니므로)
 PHONE_NEW = "010-0000-0000"    # 미등록
 GUARDIAN = "010-9876-5432"     # 박순자의 딸
 PHONE_FLYWHEEL = "010-2222-3333"   # 김수남 — 정형외과 1회 → 추정 (플라이휠 시연용)
@@ -125,7 +125,14 @@ def main(full: bool = False) -> int:
             say(f"   {mark(True)} 외출 전  : {x}")
     say(f"   소요 {el:.1f}s")
 
-    check("병원 후보 = 확인됨", c["hospital_status"] == "확인됨", c["hospital_status"])
+    # 이력에서 고른 병원은 '추정' 이다 — 어르신이 이번에 그 이름을 말하지 않았다.
+    # 후보와 근거는 그대로 나와야 한다. 후보가 사라지면 Care Memory 가 죽은 것이고,
+    # '확인됨' 이 되면 말한 적 없는 병원을 확정한 것이다. 둘 다 검사한다.
+    check("병원 후보 = 추정(이력 기반)",
+          c["hospital"] is not None and c["hospital_status"] == "추정",
+          f"{c['hospital']} [{c['hospital_status']}]")
+    check("병원 후보 근거 제시", bool(c["reasons"]),
+          c["reasons"][0] if c["reasons"] else "근거 없음")
     check("날짜 해석(모레)", bool(c["date_value"]), str(c["date_value"]))
     check("학습모델 사용", d["intent_source"] == "학습모델", d["intent_source"])
 
@@ -187,12 +194,19 @@ def main(full: bool = False) -> int:
 
         r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u})
         c2 = r.json()["card"]
-        rose = c1["hospital_status"] == "추정" and c2["hospital_status"] == "확인됨"
-        check("STEP 7 플라이휠 — 상태 상승", rose,
-              f"{c1['hospital_status']} → {c2['hospital_status']}")
-        say(f"   {mark(rose)} 2차 접수: {c2['hospital']}  [{c2['hospital_status']}]  ← 2회가 되어 '확인됨'")
-        say(f"                근거: {c2['reasons'][0]}")
-        say("   멘트: 쓸수록 확인 질문이 줄어듭니다. 기록이 다음 접수의 재료가 됩니다.")
+        # 쌓이는 것은 **근거**지 확신이 아니다. 2회가 돼도 어르신이 이번에 그
+        # 병원을 말한 것은 아니므로 상태는 '추정' 그대로다. 예전에는 여기서
+        # '확인됨' 으로 올렸는데, 그 값이 전화 안내까지 흘러가 말한 적 없는
+        # 병원을 확정해서 들려줬다.
+        r1, r2_ = (c1["reasons"] or [""])[0], (c2["reasons"] or [""])[0]
+        grew = (c1["hospital_status"] == "추정" and c2["hospital_status"] == "추정"
+                and c2["hospital"] is not None and "2회" in r2_ and r1 != r2_)
+        check("STEP 7 플라이휠 — 근거 누적(확정 승격 없음)", grew,
+              f"{c1['hospital_status']}/{r1[:24]} → {c2['hospital_status']}/{r2_[:24]}")
+        say(f"   {mark(grew)} 2차 접수: {c2['hospital']}  [{c2['hospital_status']}]  ← 2회가 됐지만 여전히 '추정'")
+        say(f"                근거: {r2_}")
+        say("   멘트: 기록이 쌓이면 후보의 근거가 두터워집니다. "
+            "다만 어르신이 말하지 않은 병원을 AI가 확정하지는 않습니다.")
 
     # ══════════════════════ 시나리오 B — 실패 대응 ══════════════════════
     head("시나리오 B — 실패·저확신 대응", "목표 " + win("2:00 ~ 2:45","5:20 ~ 7:00"))
