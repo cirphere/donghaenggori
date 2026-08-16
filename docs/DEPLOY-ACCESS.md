@@ -1,5 +1,14 @@
 # 화면 접근 제한
 
+> ⚠️ **이제는 필수가 아니다.** 아래 A(nginx 기본 인증)는 백엔드에 로그인이 없던
+> 시절엔 유일한 방어선이었지만, 지금은 API 자체가 로그인 토큰으로 스스로를
+> 지킨다(`docs/FRONTEND.md`의 "인증" 절 참조). 보호자 웹(`/`)이 쓰는
+> `POST /api/guardian/intakes` 딱 하나만 무인증이고, 나머지 API는 전부
+> `Authorization: Bearer <token>` 없이는 401이다. 그래서 nginx 기본 인증은
+> 이제 **추가 방어선(defense in depth)**이지 켜지 않아도 API가 뚫리진 않는다.
+> 다만 `/staff` **정적 화면**(HTML/JS 자체)을 아예 못 열게 감추는 건 여전히
+> nginx/Access만 할 수 있는 일이라, 시연장 등에서는 계속 켜두길 권장한다.
+
 두 가지 길이 있다. **지금 쓰는 것은 A(nginx 기본 인증)** 다.
 
 | | A. nginx 기본 인증 | B. Cloudflare Access |
@@ -33,15 +42,6 @@ STAFF_PASSWORD=<팀이 공유할 비밀번호>
 | `/api/voice/` | 통신사는 로그인 화면을 통과하지 못한다 | 웹훅 서명(HMAC-SHA256) |
 | `/api/health` | 모니터링이 로그인할 수 없다 | 상태만 돌려주고 데이터가 없다 |
 
-확인:
-
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/staff/            # 401
-curl -s -o /dev/null -w '%{http_code}\n' -u '아이디:비번' https://<도메인>/staff/   # 200
-curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/dashboard      # 401
-curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/health         # 200
-```
-
 **값을 안 넣으면 인증이 꺼진다.** 조용히 열리지 않도록 기동 로그에 경고를 크게
 남기니, 배포 후 `docker compose logs frontend | grep frontend` 로 확인할 것.
 
@@ -63,8 +63,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/health         
 | `/` | 보호자 신청 | **공개** — 가족이 링크로 들어온다 |
 | `/staff` | 사회복지사 콘솔 | **비공개** — 확정·승인·감사로그 |
 
-문제는 백엔드가 **아직 요청 본문의 `role` 을 그대로 믿는다**는 것이다. 인증이
-없어서, 화면을 나눠도 브라우저에서 이렇게 보내면 그만이다.
+과거엔 백엔드가 요청 본문의 `role` 을 그대로 믿었다. 인증이 없던 시절엔 화면을
+나눠도 브라우저에서 이렇게 보내면 그만이었다.
 
 ```bash
 curl -X POST https://<도메인>/api/intakes/1/confirm \
@@ -72,9 +72,15 @@ curl -X POST https://<도메인>/api/intakes/1/confirm \
   -d '{"hospital":"임의","date":"2026-08-20","level":"단순 안내","role":"관리자"}'
 ```
 
-즉 **`/staff` 화면을 감추는 것만으로는 아무것도 막지 못한다.** API 자체를 막아야
-한다. 다행히 프론트와 API가 같은 오리진(nginx 한 대)이라, 호스트에 Access를 걸면
-API 요청에도 같은 로그인 쿠키가 실린다.
+**이제는 막힌다** — `role` 은 본문에서 더 이상 읽지 않고(보내도 무해, 조용히
+무시됨), `Authorization: Bearer <token>` 이 없으면 401이 떨어진다. 아래 예시는
+그 취약점이 왜 있었는지 기록으로 남겨둔다.
+
+그래도 **`/staff` 화면을 감추는 것과 API를 막는 것은 별개 층**이다. 토큰이 API를
+지키는 것과 별개로, Access는 화면 자체(그리고 `/staff` 로 향하는 트래픽)를 가려서
+로그인 안 한 사람이 콘솔 UI를 아예 못 열게 한다. 다행히 프론트와 API가 같은
+오리진(nginx 한 대)이라, 호스트에 Access를 걸면 API 요청에도 같은 로그인 쿠키가
+실린다.
 
 ## 지금 할 수 있는 것 — 호스트 전체를 Access 뒤에
 
@@ -105,25 +111,35 @@ API 요청에도 같은 로그인 쿠키가 실린다.
 
 ## 보호자 웹을 공개해야 할 때
 
-호스트명을 둘로 나누는 방법이 가장 깔끔하다. Access는 경로 단위 정책도 지원하지만,
-`/api/` 를 공유하는 지금 구조에서는 **경로로 나눠도 API가 열려 있어 의미가 없다.**
+**이제는 별도 조치 없이 공개해도 된다.** 예전엔 API 전체가 요청 본문의 `role`을
+믿었기 때문에, 보호자 웹을 열면 그 경로로 `role: "관리자"`를 실어 확정·감사로그까지
+건드릴 수 있었다. 지금은 다르다:
+
+- 보호자 웹이 실제로 부르는 건 `POST /api/guardian/intakes` **하나뿐**이고, 이건
+  원래부터 무인증으로 설계됐다(`docs/FRONTEND.md` "1. 접수" 참조) — `phone`·
+  `utterance`만 받고 `channel`은 서버가 강제로 고정한다. 여기로 할 수 있는 건
+  "접수 신청 하나 만들기"뿐, 읽기는 전혀 없다.
+- **응답도 좁혀 두었다**(`GuardianIntakeOut`). 예전에는 직원용 응답을 그대로
+  돌려줘서, 남의 번호만 넣으면 이름·보호자 연락처·거동 상태·독거 여부·진료
+  이력이 통째로 나왔다 — 쓰기 전용이라는 말이 응답까지 안전하다는 뜻은
+  아니었다. 지금은 보호자가 적어 보낸 것만 돌려준다.
+  `tests/test_guardian_privacy.py` 가 회귀로 잡는다.
+- nginx 도 이 경로와 보호자 페이지 네 파일(`/`, `/index.html`, `/guardian.js`,
+  `/style.css`, `/api.js`)만 기본 인증에서 뺀다. `/staff` 와 나머지 `/api/` 는
+  그대로 막힌다 — `location =` 이 정규식 location 보다 먼저 매칭되는 성질을
+  쓴 것이라, 파일을 추가할 때 같은 방식으로 한 줄씩 여는 것이 안전하다.
+- 그 외 모든 쓰기·조회 API(`/api/intakes` 직원용, `/api/dashboard`, `/api/status`,
+  `/api/facilities`, `confirm`/`verify`/`resolve`/`approve`/`audit` 등)는
+  `Authorization: Bearer <token>`이 없으면 401이다. 보호자 웹의 JS는 애초에
+  토큰을 가질 방법이 없으니(로그인 UI 자체가 없다) 이 경로들을 건드릴 수 없다.
+
+그래도 호스트를 나누고 싶다면(터널 로그를 화면별로 나눠 보고 싶다든가) 아래처럼
+할 수 있지만, **보안 목적으로는 더 이상 필수가 아니다.**
 
 ```
 guardian.dohyeongops.com  → 터널 → frontend:80   (공개)
-staff.dohyeongops.com     → 터널 → frontend:80   (Access 필수)
+staff.dohyeongops.com     → 터널 → frontend:80   (Access 권장 — 화면 자체를 가림)
 ```
-
-Cloudflare Tunnel에 Public Hostname을 두 개 만들어 같은 `frontend:80` 으로 보내고,
-`staff.` 쪽에만 Access 정책을 건다. 그래도 **API 는 여전히 두 호스트 모두에서
-열린다** — 공개 호스트로 `role: "관리자"` 를 보내면 통과한다.
-
-그래서 보호자 웹을 진짜로 공개하려면 다음 중 하나가 필요하다.
-
-1. **백엔드 인증 구현** (권장, 본선 후) — 세션에서 역할을 꺼내고 요청 본문의
-   `role`·`actor` 는 무시한다. `db.can()` 호출부는 그대로 두고 신원의 출처만 바꾸면 된다.
-2. **쓰기 API 를 staff 호스트로만 노출** — nginx에서 `$host` 를 보고
-   `/api/intakes/*/confirm`, `/api/post-records/*/approve`, `/api/audit` 를
-   공개 호스트에서 403 처리. 임시방편이지만 인증 없이도 경계가 생긴다.
 
 ## 확인 방법
 
@@ -141,7 +157,21 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/api/dashboard
 - nginx 경로 분리: **완료**
 - **nginx 기본 인증: 완료** — `.env` 에 `STAFF_USER`/`STAFF_PASSWORD` 만 넣으면 켜진다
 - Access 정책: 선택 사항. 쓰려면 대시보드에서 사람이 설정
-- 백엔드 인증: **미구현** — 본선 후 과제. 지금은 nginx 가 앞에서 막는다
+- 백엔드 인증: **구현됨** — `/api/auth/login` 으로 토큰 발급, 확정·확인·처리·승인·
+  감사조회는 `Authorization: Bearer` 없으면 401. 계정은
+  `python -m donghaenggori.services.create_user` 로 운영자가 미리 만든다.
+  nginx 기본 인증과는 별개 계층 — 하나는 화면(`/staff`) 전체를, 하나는 API
+  개별 엔드포인트를 지킨다.
 
-`/api/reset` 만은 예외적으로 이미 막혀 있다. Cloudflare 헤더가 붙은 요청(=외부에서
-터널을 거쳐 온 요청)을 403으로 거절한다. 다른 엔드포인트에는 그런 보호가 없다.
+`/api/reset` 은 **세 겹**으로 막혀 있다 — 로그인(없으면 401), **관리자 역할**
+(사회복지사도 403), 서버 로컬 제한(Cloudflare 헤더가 붙은 요청은 403). 접수·감사로그·이력·세션을 통째로
+지우는 가장 파괴적인 호출이라 한 겹으로는 부족하다.
+
+예전엔 CF 헤더 검사 하나뿐이었다. 실제 배포에서는 인터넷 트래픽이 전부 터널을
+거쳐 헤더가 붙으니 막히긴 했지만, **nginx 기본 인증을 끄면 그 순간 삭제 버튼이
+됐다** — 실제로 확인했다(기본 인증을 끈 채로 헤더 없이 부르면 `200 {"ok":true}`).
+지금은 기본 인증을 꺼도 401 이다.
+
+> 그래서 **nginx 기본 인증은 이제 정말 선택 사항**이다. 껐을 때 추가로 열리는
+> 것은 `/staff` 로그인 화면·`/docs`·`/dev` 정적 자산뿐이고, 데이터 API 는 전부
+> 401 이다(실측). 화면을 감추고 싶으면 켜고, 아니면 꺼도 데이터는 안전하다.

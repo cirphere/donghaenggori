@@ -1,14 +1,14 @@
 // 사회복지사 콘솔 — 접수 확인·확정, 사후기록 승인, 감사 로그.
 //
 // 보호자 웹과 나눈 이유는 화면 구성이 아니라 **권한**이다. 여기서만 확정·승인·
-// 감사로그 조회를 한다. 다만 백엔드가 아직 요청 본문의 role 을 그대로 믿으므로,
-// 이 파일이 권한을 지켜주지는 못한다 — 실제 경계는 Cloudflare Access 다.
-// 인증이 붙으면 ROLE/ACTOR 를 서버가 준 신원으로 바꾸고 이 상수는 지운다.
+// 감사로그 조회를 한다.
+//
+// 신원은 **서버가 정한다.** 예전엔 이 파일에 ROLE/ACTOR 를 상수로 박아 요청
+// 본문에 실어 보냈는데, 그러면 화면이 말하는 사람과 감사 로그에 남는 사람이
+// 달라진다. 지금은 로그인 토큰에서 서버가 꺼내 쓰고, 화면은 /api/auth/me 가
+// 준 이름을 그대로 보여주기만 한다.
 
-import { api } from "../api.js";
-
-const ROLE = "사회복지사";
-const ACTOR = "김○○ 사회복지사";
+import { api, session } from "../api.js";
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -124,17 +124,152 @@ async function loadQueue() {
 }
 
 // 확정은 사람의 영역이다. 값을 그대로 확인시키고 누른 사람을 감사 로그에 남긴다.
+//
+// 확정 상세를 먼저 받아오는 이유: 무엇이 막고 있는지를 **묻기 전에** 알아야 한다.
+// 예전에는 병원·방문일을 prompt 로 다 받아낸 뒤 서버가 409 로 막았는데, 복지사가
+// 병원명을 손으로 적은 다음에 "병원이 확인되지 않았습니다" 를 보는 순서가 됐다.
+// 같은 정보를 두 번, 그것도 거꾸로 물은 셈이다.
 async function confirmIntake(r) {
-  const hospital = prompt("확정할 병원", r.hospital || "");
-  if (hospital === null) return;
-  const date = prompt("확정할 방문일 (YYYY-MM-DD)", r.date_value || "");
-  if (date === null) return;
-  const level = prompt("동행 지원 수준", r.need_level || "차량+동행");
-  if (level === null) return;
   try {
-    await api.confirmIntake(r.id, { hospital, date, level, actor: ACTOR, role: ROLE });
+    showConfirm(r, await api.getIntake(r.id));
+  } catch (e) {
+    alert("접수를 불러오지 못했습니다: " + e.message);
+  }
+}
+
+// 확정 화면 — 팝업 하나로 끝낸다.
+//
+//   위   먼저 확인할 내용 (막힌 항목이 있을 때만) — 되물을 질문 + 답 적는 칸
+//   아래 확정할 내용 — 병원·방문일·지원수준. 확인된 값이 이미 채워져 있다.
+//
+// draft 는 다시 그려도 살아남는 입력값이다. 항목 하나를 확인 저장하면 화면을
+// 새로 그리는데, 그때 복지사가 아래쪽에 적어 둔 값이 날아가면 안 된다.
+function showConfirm(r, d, draft) {
+  const c = d.card || {};
+  const gate = d.gate || { allowed: true, blockers: [] };
+  const fields = c.fields || {};
+  draft = draft || {
+    hospital: c.hospital || d.hospital || "",
+    date: c.date_value || d.date_value || "",
+    level: c.need_level || d.need_level || "차량+동행",
+  };
+
+  const body = openModal(`접수 확정 — ${d.target || r.target || ""}`);
+  const inputs = {};
+  const readForm = () => {
+    for (const [k, node] of Object.entries(inputs)) draft[k] = node.value.trim();
+  };
+
+  // ── 먼저 확인할 내용 ────────────────────────────────────
+  if (gate.blockers.length) {
+    const block = el("div", "block");
+    block.append(el("h3", null, `먼저 확인할 내용 ${gate.blockers.length}건`));
+    block.append(el("div", "small", gate.hard_block
+      ? "기관 규칙상 확인 필요가 남으면 확정할 수 없습니다."
+      : "확인하지 않고 접수할 수도 있습니다. 그 사실은 감사 로그에 남습니다."));
+    gate.blockers.forEach((b) => block.append(blockerBox(r, b, d, draft, readForm)));
+    body.append(block);
+  }
+
+  // ── 확정할 내용 ────────────────────────────────────────
+  const form = el("div", "block");
+  form.append(el("h3", null, "확정할 내용"));
+  [["hospital", "병원", "hospital"], ["date", "방문일 (YYYY-MM-DD)", "date"],
+   ["level", "동행 지원 수준", null]].forEach(([key, label, fieldName]) => {
+    const box = el("div", "field");
+    const head = el("div", "field-head");
+    head.append(el("span", "field-label", label));
+    // AI 가 낸 값인지 사람이 확인한 값인지 여기서도 보여야 한다
+    const st = fieldName && fields[fieldName] && fields[fieldName].status;
+    if (st) head.append(el("span", "badge " + (STATUS_CLASS[st] || ""), st));
+    box.append(head);
+    const input = el("input");
+    input.value = draft[key] || "";
+    inputs[key] = input;
+    box.append(input);
+    form.append(box);
+  });
+  body.append(form);
+
+  // ── 버튼 ───────────────────────────────────────────────
+  const foot = el("div", "modal-foot");
+  const cancel = el("button", null, "취소");
+  cancel.onclick = closeModal;
+  foot.append(cancel);
+  if (!gate.blockers.length) {
+    const go = el("button", "primary", "확정");
+    go.onclick = () => { readForm(); sendConfirm(r, { ...draft }); };
+    foot.append(go);
+  } else if (!gate.hard_block) {
+    const go = el("button", "danger", "이대로 접수");
+    go.onclick = () => { readForm(); sendConfirm(r, { ...draft }, true); };
+    foot.append(go);
+  }
+  body.append(foot);
+}
+
+// 막힌 항목 하나 — 되물을 질문과 답 적는 칸.
+//
+// 질문을 함께 띄우는 게 핵심이다. 사회복지사가 이 화면을 띄운 채로 어르신께
+// 전화를 걸어 그대로 물어보고 답을 바로 적는 자리다.
+function blockerBox(r, b, d, draft, readForm) {
+  const box = el("div", "field");
+  const head = el("div", "field-head");
+  head.append(el("span", "field-label", b.label));
+  head.append(el("span", "badge need", "확인 필요"));
+  box.append(head);
+
+  // 어르신이 말한 표현·통화에서 받아 적은 성함은 되물을 때 그대로 쓴다
+  const heard = (b.heard || []).map((h) => `${h.label} “${h.value}”`).join(" · ");
+  const said = b.spoken ? `어르신 말씀: “${b.spoken}”` : "";
+  if (said || heard) box.append(el("div", "small", [said, heard].filter(Boolean).join(" · ")));
+  if (b.question) box.append(el("div", "qa", b.question));
+
+  const row = el("div", "verify-row");
+  const input = el("input");
+  input.placeholder = "통화로 확인한 값";
+  // 대상자의 value 는 "신규 대상자(미등록 번호)" 같은 **표시 문자열**이지 이름이
+  // 아니다. 그대로 채워 두면 손대지 않고 저장했을 때 대상자 이름이 그 문장이
+  // 된다. 통화에서 받아 적은 성함이 있으면 그게 확인할 값이다.
+  const heardName = (b.heard || []).find((h) => (h.label || "").includes("성함"));
+  input.value = (b.field === "target" ? (heardName && heardName.value) : b.value) || "";
+  const save = el("button", null, "확인 완료로 저장");
+  save.onclick = async () => {
+    const value = input.value.trim();
+    if (!value) return;
+    readForm();                       // 아래쪽에 적어 둔 값을 먼저 챙긴다
+    save.disabled = true;
+    try {
+      const res = await api.verifyField(r.id, b.field, value);
+      // 확인한 값이 확정값이다. 이걸 안 옮기면 확인 전 값으로 확정된다.
+      if (b.field === "hospital") draft.hospital = value;
+      if (b.field === "date") draft.date = value;
+      showConfirm(r, res.intake, draft);
+    } catch (e) {
+      save.disabled = false;
+      alert("확인 저장 실패: " + e.message);
+    }
+  };
+  row.append(input, save);
+  box.append(row);
+  return box;
+}
+
+async function sendConfirm(r, payload, acknowledge = false) {
+  try {
+    await api.confirmIntake(r.id, { ...payload, acknowledge });
+    closeModal();
     loadQueue();
   } catch (e) {
+    // 409 는 요청이 틀린 게 아니라 지금 상태에서 확정할 수 없다는 뜻이다.
+    // 화면을 열 때 이미 게이트를 확인했으므로 여기 걸리는 건 그 사이에 상태가
+    // 바뀐 경우다 — 최신 상태로 다시 그린다.
+    if (e.status === 409) {
+      api.getIntake(r.id)
+        .then((fresh) => showConfirm(r, fresh, payload))
+        .catch(() => alert("확정 실패: " + e.message));
+      return;
+    }
     alert("확정 실패: " + e.message);
   }
 }
@@ -193,6 +328,13 @@ async function showCardView(id) {
       ? renderCard({ card: d.card, channel: d.channel, intent: d.intent,
                      intent_source: "저장된 접수", facilities: [] })
       : noCardNotice(d));
+    // 카드를 열자마자 확정 가능 여부가 보여야 한다. 상태 배지를 항목마다 세어
+    // 보게 하면 결국 아무도 안 센다.
+    if (d.gate && !d.gate.allowed && d.confirmed !== 1) {
+      const labels = d.gate.blockers.map((b) => b.label).join(" · ");
+      body.prepend(el("div", "notice",
+        `확정하려면 ${d.gate.blockers.length}건을 먼저 확인해야 합니다 — ${labels}`));
+    }
   } catch (e) {
     body.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
   }
@@ -502,7 +644,7 @@ function renderDraft(d) {
   const act = async (approved) => {
     ok.disabled = no.disabled = true;
     try {
-      const r = await api.approvePostRecord(d.record_id, approved, ROLE);
+      const r = await api.approvePostRecord(d.record_id, approved);
       msg.textContent = !r.changed ? "이미 같은 상태입니다(중복 요청)."
         : approved ? (r.applied ? "승인 — 프로필에 반영했습니다." : "승인했습니다(반영할 제안 없음).")
         : "거절했습니다.";
@@ -545,5 +687,68 @@ async function loadAudit() {
 
 $("btnBack").onclick = backToQueue;
 
-loadStatus();
-loadQueue();
+// ── 로그인 ─────────────────────────────────────────────────
+//
+// 화면을 두 덩어리로 나눠 두고(#view-login / #app) 통째로 바꾼다. 탭마다
+// 로그인 여부를 확인하는 방식은 한 군데만 빠뜨려도 401 이 새어 나온다.
+
+function showLogin(message) {
+  $("view-login").classList.remove("hidden");
+  $("app").classList.add("hidden");
+  $("whoami").textContent = "";
+  $("btnLogout").classList.add("hidden");
+  const err = $("loginError");
+  if (message) { err.textContent = message; err.classList.remove("hidden"); }
+  else { err.classList.add("hidden"); }
+  $("loginPassword").value = "";
+}
+
+function showApp(user) {
+  $("view-login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("whoami").textContent = user ? `${user.name} (${user.role})` : "";
+  $("btnLogout").classList.remove("hidden");
+  loadStatus();
+  loadQueue();
+}
+
+// 세션이 끊기면(만료·서버 재시작·/api/reset) 어느 요청에서든 여기로 돌아온다.
+// api.js 가 401 을 받으면 토큰을 지우고 이걸 부른다.
+session.onUnauthorized(() => showLogin("세션이 만료되었습니다. 다시 로그인해 주세요."));
+
+async function doLogin() {
+  const email = $("loginEmail").value.trim();
+  const password = $("loginPassword").value;
+  if (!email || !password) return showLogin("이메일과 비밀번호를 입력해 주세요.");
+  $("btnLogin").disabled = true;
+  try {
+    const d = await api.login(email, password);
+    session.save(d.token, d.user);
+    showApp(d.user);
+  } catch (e) {
+    showLogin(e.message);
+  } finally {
+    $("btnLogin").disabled = false;
+  }
+}
+
+$("btnLogin").onclick = doLogin;
+$("loginPassword").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
+$("btnLogout").onclick = async () => {
+  // 서버 세션도 지운다. 실패해도 화면은 로그아웃시킨다 — 토큰을 들고 있는
+  // 것보다 낫다.
+  try { await api.logout(); } catch { /* 이미 만료됐을 수 있다 */ }
+  session.clear();
+  showLogin();
+};
+
+// 새로고침해도 로그인이 유지되게 — 다만 토큰이 살아 있는지는 서버에 물어본다.
+// sessionStorage 에 남아 있다고 유효한 것은 아니다(서버 재시작·만료).
+(async () => {
+  if (!session.token) return showLogin();
+  try {
+    showApp(await api.me());
+  } catch {
+    showLogin();          // 401 이면 api.js 가 이미 토큰을 지웠다
+  }
+})();

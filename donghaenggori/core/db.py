@@ -14,8 +14,11 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sqlite3
 import threading
 
@@ -94,6 +97,13 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, name TEXT, role TEXT   -- 사회복지사 | 동행매니저 | 관리자
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,    -- sha256(원문 토큰) — 원문은 저장하지 않는다
+  user_id TEXT NOT NULL,
+  created_at TEXT, expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS facilities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT,                            -- C-DS03 | C-DS04 | C-DS06 | C-DS17 ...
@@ -104,9 +114,15 @@ CREATE TABLE IF NOT EXISTS facilities (
 CREATE INDEX IF NOT EXISTS idx_fac_region ON facilities(region);
 """
 
+# 비밀번호 없이 시드된다 — 소스에 비밀번호를 넣지 않는다. 이 두 계정은
+# services/create_user.py 로 비밀번호를 설정하기 전까진 로그인이 안 된다.
 DEFAULT_USERS = [
     ("U001", "김○○ 사회복지사", "사회복지사"),
     ("U002", "최정미 동행매니저", "동행매니저"),
+    # 관리자는 데이터 전체 초기화(/api/reset)를 할 수 있는 유일한 역할이다.
+    # 자리를 만들어 두지 않으면 운영자가 역할 이름을 몰라 계정을 못 만든다.
+    # 비밀번호는 services/create_user.py 로 넣기 전까지 비어 있어 로그인이 안 된다.
+    ("U003", "운영자", "관리자"),
 ]
 
 # 역할별 권한 — 화면 01의 "권한: 접수 확정·수정 (RBAC)"
@@ -119,6 +135,137 @@ ROLE_PERMISSIONS = {
 
 def can(role: str, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, set())
+
+
+# ------------------------------------------------------------------ 인증 --
+# 새 pip 의존성을 안 늘리려고 표준 라이브러리만 쓴다. bcrypt 급 보안이 필요한
+# 규모가 아니라(내부 소수 인원용) PBKDF2-HMAC-SHA256으로 충분하다.
+
+_PBKDF2_ITERATIONS = 260_000
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"{salt.hex()}${_PBKDF2_ITERATIONS}${dk.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt_hex, iters_s, dk_hex = stored.split("$")
+        salt, iters, expected = bytes.fromhex(salt_hex), int(iters_s), bytes.fromhex(dk_hex)
+    except (ValueError, AttributeError):
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters)
+    return hmac.compare_digest(dk, expected)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_user(user_id: str, name: str, role: str, email: str, password: str) -> dict:
+    """운영자 부트스트랩 전용. 같은 user_id로 다시 부르면 비밀번호 재설정도 겸한다.
+
+    이메일 UNIQUE는 스키마에 없다(sqlite ALTER TABLE ADD COLUMN 제약) — 여기서 검사한다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        dup = conn.execute("SELECT id FROM users WHERE email=? AND id<>?",
+                           (email, user_id)).fetchone()
+        if dup:
+            raise ValueError(f"이미 등록된 이메일: {email}")
+        pw_hash = _hash_password(password)
+        conn.execute(
+            "INSERT INTO users (id,name,role,email,password_hash) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, "
+            "email=excluded.email, password_hash=excluded.password_hash",
+            (user_id, name, role, email, pw_hash))
+        # 비밀번호를 바꾸면 그 사람의 기존 세션도 끊는다.
+        #
+        # 안 끊으면 토큰이 유출됐을 때 비밀번호를 재설정해도 소용이 없다 —
+        # 훔친 토큰이 만료(기본 12시간)까지 그대로 살아서 확정도 하고 감사
+        # 로그도 읽는다. 운영자는 "막았다" 고 믿는데 안 막힌 상태가 된다.
+        # 토큰을 폐기할 경로가 이것 말고는 없다.
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        conn.commit()
+        return {"id": user_id, "name": name, "role": role, "email": email}
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> dict | None:
+    init_db()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def verify_login(email: str, password: str) -> dict | None:
+    """이메일+비밀번호 검증. 성공하면 password_hash 를 뺀 사용자 dict, 실패하면 None."""
+    user = get_user_by_email(email)
+    if not user or not user.get("password_hash"):
+        return None
+    if not _verify_password(password, user["password_hash"]):
+        return None
+    user = dict(user)
+    user.pop("password_hash", None)
+    return user
+
+
+def create_session(user_id: str, ttl_seconds: int) -> str:
+    """세션을 만들고 원문 토큰을 반환한다 — 이번 호출에서만 노출, DB엔 해시만 남는다."""
+    init_db()
+    token = secrets.token_urlsafe(32)
+    expires = datetime.datetime.now() + datetime.timedelta(seconds=ttl_seconds)
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)",
+            (_hash_token(token), user_id, _now(), _ts(expires)))
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def resolve_session(token: str) -> dict | None:
+    """원문 토큰 → 유효하면 사용자 dict(password_hash 제외), 없거나 만료면 None."""
+    init_db()
+    conn = get_conn()
+    try:
+        token_hash = _hash_token(token)
+        row = conn.execute(
+            "SELECT s.expires_at, u.id, u.name, u.role, u.email FROM sessions s "
+            "JOIN users u ON u.id = s.user_id WHERE s.token_hash=?", (token_hash,)).fetchone()
+        if not row:
+            return None
+        # 같은 형식으로 만든 문자열끼리 비교한다. 예전엔 만료를 초까지
+        # ("%H:%M:%S"), 현재 시각을 분까지("%H:%M") 찍어 놓고 문자열로
+        # 비교했다 — 접두사가 같고 길이가 달라서 만료가 최대 59초 늦게
+        # 걸렸고, 맞아떨어진 것도 길이 덕분이지 의도가 아니었다. 한쪽
+        # 포맷만 바꾸면 조용히 뒤집힌다.
+        if row["expires_at"] < _ts():
+            conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+            conn.commit()
+            return None
+        return {"id": row["id"], "name": row["name"], "role": row["role"], "email": row["email"]}
+    finally:
+        conn.close()
+
+
+def delete_session(token: str) -> None:
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM sessions WHERE token_hash=?", (_hash_token(token),))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------ 연결 --
@@ -161,6 +308,8 @@ _ADDED_COLUMNS = [
     ("intakes", "identity_status", "TEXT"),
     ("intakes", "card_json", "TEXT"),
     ("intakes", "transfer_status", "TEXT"),
+    ("users", "email", "TEXT"),
+    ("users", "password_hash", "TEXT"),
 ]
 
 
@@ -351,6 +500,76 @@ def confirm_intake(intake_id: int, hospital: str, date: str, level: str,
                   f"병원={hospital} / 방문일={date} / 지원수준={level}")
     finally:
         conn.close()
+
+
+# 확인 입력이 건드리는 곳 — 카드 안의 평면 키와 intakes 컬럼.
+#
+# 카드 JSON 은 항목별 뷰(fields)와 평면 키(hospital, date_value…)를 둘 다 들고
+# 있다. 목록 화면은 컬럼을, 카드 화면은 fields 를 읽으므로 셋을 함께 고쳐야
+# 한다. 하나만 고치면 목록과 상세가 다른 값을 보여준다.
+_VERIFY_TARGETS = {
+    "target":   ("target", "target"),
+    "hospital": ("hospital", "hospital"),
+    "dept":     ("dept", "dept"),
+    "date":     ("date_value", "date_value"),
+    "time":     ("time_value", None),      # 시각은 컬럼이 없다 — 카드에만 있다
+}
+
+
+def verify_card_field(intake_id: int, field: str, value: str,
+                      actor: str = "김○○ 사회복지사",
+                      role: str = "사회복지사") -> dict | None:
+    """사회복지사가 통화로 확인한 결과를 카드에 반영한다.
+
+    AI 가 만든 값을 **사람이 덮어쓰는** 유일한 경로다. 그래서 근거에 누가
+    확인했는지를 남긴다 — 나중에 카드를 보는 사람이 이 값이 추론인지 통화로
+    확인한 것인지 구분할 수 있어야 한다.
+
+    대상자를 확인하면 통화에서 받아 적은 성함·주소 칸은 지운다. 그 둘은
+    대상자를 알아내려던 단서였고, 대상자가 정해지면 역할이 끝난다. 남겨 두면
+    "말한 성함: 김말자 (확인 필요)" 가 확정된 카드에 계속 붙어 있게 된다.
+    """
+    if field not in _VERIFY_TARGETS:
+        return None
+    row = get_intake(intake_id)
+    if not row:
+        return None
+    card = row.get("card")
+    if not card:
+        return None
+
+    flat_key, column = _VERIFY_TARGETS[field]
+    card[flat_key] = value
+    fields = card.setdefault("fields", {})
+    view = fields.setdefault(field, {"label": field})
+    view["value"] = value
+    view["status"] = "확인됨"
+    view["evidence"] = list(view.get("evidence") or []) + [f"통화로 확인함 — {actor}"]
+    if field == "hospital":
+        # 평면 상태 키를 따로 들고 있어서 같이 올려야 한다
+        card["hospital_status"] = "확인됨"
+    if field == "target":
+        for k in ("spoken_name", "spoken_region"):
+            fields.pop(k, None)
+            card[k] = None
+
+    init_db()
+    conn = get_conn()
+    try:
+        sets, args = ["card_json=?"], [json.dumps(card, ensure_ascii=False)]
+        if column:
+            sets.append(f"{column}=?")
+            args.append(value)
+        if field == "hospital":
+            sets.append("hospital_status=?")
+            args.append("확인됨")
+        args.append(intake_id)
+        conn.execute(f"UPDATE intakes SET {', '.join(sets)} WHERE id=?", args)
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, role, "항목확인", "intake", str(intake_id), f"{field}={value}")
+    return get_intake(intake_id)
 
 
 def _with_card(row: dict) -> dict:
@@ -647,7 +866,18 @@ def facility_counts() -> dict[str, int]:
 # ------------------------------------------------------------------ 기타 --
 
 def _now() -> str:
+    """사람이 읽는 시각 — 화면·감사 로그용. 분까지만."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def _ts(when: datetime.datetime | None = None) -> str:
+    """비교하는 시각 — 세션 만료용. **초까지 찍는다.**
+
+    _now() 와 섞어 쓰면 안 된다. 둘은 자리수가 달라서 문자열 비교가
+    엉킨다(접두사가 같고 길이가 다르면 짧은 쪽이 작다). 쓰는 쪽과 비교하는
+    쪽이 같은 함수를 쓰게 나눠 뒀다.
+    """
+    return (when or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def reset_db() -> None:
@@ -656,10 +886,19 @@ def reset_db() -> None:
     conn = get_conn()
     try:
         conn.executescript(SCHEMA)
-        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "users"):
+        # SCHEMA 에 없는 뒤늦게 늘어난 컬럼들(users.email·password_hash 등)을
+        # 여기서도 붙인다. 빠뜨리면 init_db 없이 reset_db 를 먼저 부른
+        # 프로세스가 _inited=True 를 보고 마이그레이션을 영영 건너뛴다 —
+        # 그 프로세스에서 로그인을 시도하면 `no such column: email` 로 죽는다.
+        # (services/seed.py 의 write_and_load 가 그 호출 순서다)
+        _migrate(conn)
+        # users는 안 지운다 — 로그인 계정은 데모 데이터가 아니라 운영자 정보다.
+        # 지우면 리셋할 때마다 비밀번호가 통째로 날아가 아무도 로그인 못 하게 된다.
+        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions"):
             conn.execute(f"DELETE FROM {t}")
         _seed_profiles(conn)
-        conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+            conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
         conn.commit()
         _inited = True
     finally:

@@ -28,6 +28,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import tempfile
 import time
 
@@ -74,6 +75,33 @@ def _int_env(name: str, default: int) -> int:
 
 
 MAX_RECORD_SECONDS = _int_env("CLAWOPS_MAX_RECORD_SECONDS", 60)
+
+
+# 안내 음성. **비우면 무료 기본 음성**이고, 채우면 글자수 요금이 붙는다
+# ("cartesia" 또는 "cartesia:<음성 ID>").
+#
+# 기본을 비워 둔 것은 요금 때문만이 아니다. 유료 음성 쪽이 실패했을 때 통화가
+# 어떻게 되는지 우리가 확인하지 못했다 — 시연 중에 그걸 처음 보고 싶지 않다.
+# 평소에는 무료로 돌리고 시연에서만 켠 뒤, 문제가 생기면 변수를 비우고
+# 재시작하면 즉시 돌아온다.
+#
+# 값을 검사하는 이유: 이건 XML 속성에 그대로 들어간다. 따옴표나 공백이 섞이면
+# <Say> 태그가 깨져 **통화 전체가 무음이 된다.** 오타 하나로 시연이 날아가는
+# 자리라, 모양이 안 맞으면 무료 기본 음성으로 되돌리고 경고를 남긴다.
+_VOICE_SHAPE = re.compile(r"^[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)?$")
+
+
+def _voice_env() -> str:
+    raw = (os.environ.get("CLAWOPS_VOICE") or "").strip()
+    if not raw:
+        return ""
+    if not _VOICE_SHAPE.match(raw):
+        _log.warning("CLAWOPS_VOICE 모양이 맞지 않아 무료 기본 음성을 쓴다: %r", raw)
+        return ""
+    return raw
+
+
+VOICE = _voice_env()
 
 # 녹음을 끝내는 키. 기본은 **아무 키나**다.
 #
@@ -185,10 +213,11 @@ SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는�
 # 안 나온 것(DEMO_CALLER_PHONE 미설정)도, 녹음이 30 초에서 잘리는 것도
 # 코드만 봐서는 알 수 없다. 소스에 60 이라 적혀 있어도 배포본이 그 값으로
 # 도는지는 별개다. 통화 한 번 걸어보기 전에 로그로 확인할 수 있어야 한다.
-_log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 본인확인 %s · 시연매핑 %s",
+_log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 본인확인 %s · 시연매핑 %s · 안내음성 %s",
           MAX_RECORD_SECONDS, FINISH_ON_KEY or "(없음)",
           "켬" if ASK_IDENTITY else "끔",
-          "켬" if (DEMO_CALLER_PHONE and DEMO_CALLER_TARGET) else "끔")
+          "켬" if (DEMO_CALLER_PHONE and DEMO_CALLER_TARGET) else "끔",
+          f"{VOICE} (글자수 과금)" if VOICE else "무료 기본")
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
@@ -214,7 +243,9 @@ def _esc(text: str) -> str:
 
 
 def _say(text: str) -> str:
-    return f'<Say language="ko">{_esc(text)}</Say>'
+    # VOICE 는 _voice_env 에서 모양을 검사해 통과한 값이라 속성에 그대로 넣어도 된다
+    voice = f' voice="{VOICE}"' if VOICE else ""
+    return f'<Say language="ko"{voice}>{_esc(text)}</Say>'
 
 
 def _record(action: str, seconds: int | None = None) -> str:

@@ -19,7 +19,8 @@ const el = (tag, cls, text) => {
   return n;
 };
 
-const CHANNEL = "앱·웹(보호자)";
+// channel 은 더 이상 여기서 정하지 않는다 — 서버가 '앱·웹(보호자)' 로 고정한다.
+// 클라이언트가 고를 수 있으면 '전화' 로 보내 대리 접수 처리를 우회할 수 있었다.
 
 function renderUrgent(d) {
   const box = el("div", "urgent " + (d.urgent_confident ? "hard" : "soft"));
@@ -34,43 +35,35 @@ function renderUrgent(d) {
   return box;
 }
 
+// 접수증 — **보호자가 스스로 적어 보낸 것만** 되비춘다.
+//
+// 예전에는 접수카드(대상자 이름·병원 후보·확인 질문)를 그대로 보여줬다.
+// 그런데 이 화면은 로그인이 없고 전화번호는 아무나 적을 수 있어서, 그 값들이
+// 곧 조회 결과가 된다 — 번호만 바꿔 부르면 등록된 어르신의 이름과 진료 이력이
+// 나왔다. 서버가 그 값들을 더 이상 내려주지 않으므로 화면도 같이 좁힌다.
+//
+// 어르신 이름·병원을 안 적는 게 불친절해 보이지만, 여기서 이름을 확인해 주는
+// 순간 "이 번호에 누가 등록돼 있는지" 를 확인해 주는 API 가 된다.
 function renderReceipt(d) {
-  const c = d.card;
   const frag = document.createDocumentFragment();
 
   frag.append(el("div", "receipt-title", "신청이 접수되었습니다"));
   frag.append(el("p", "lead",
-    "담당 사회복지사가 확인한 뒤 연락드립니다. 아래 내용은 아직 확정된 일정이 아닙니다."));
+    "담당 사회복지사가 확인한 뒤 연락드립니다. 아직 확정된 일정이 아닙니다."));
 
   const dl = el("dl", "receipt");
   const put = (k, v) => { dl.append(el("dt", null, k)); dl.append(el("dd", null, v)); };
 
-  // 대상자는 후보일 뿐이다. 확정된 것처럼 보이지 않게 적는다.
-  const cand = c.target_candidates || [];
-  put("어르신", cand.length === 1 ? `${cand[0].name} 님 (확인 예정)`
-      : cand.length > 1 ? `${cand.length}분 중 확인 예정`
-      : "담당자가 확인 예정");
-
-  const f = c.fields || {};
-  put("방문 예정일", f.date?.value ? `${f.date.value}${f.date.spoken ? ` (${f.date.spoken})` : ""}`
-      : "담당자가 확인 후 안내");
-  put("시각", f.time?.value || (f.time?.spoken ? `${f.time.spoken} — 오전·오후 확인 예정` : "미정"));
-  put("병원", f.hospital?.value ? `${f.hospital.value}${f.hospital.status === "확인됨" ? "" : " (확인 예정)"}`
-      : "담당자가 확인 후 안내");
-  put("진료과", f.dept?.value || "확인 예정");
+  // 날짜·진료과는 보호자가 쓴 문장에서 뽑은 것이라 되비춰도 새로 알려주는 게 없다
+  const date = d.date || {};
+  put("방문 예정일", date.date
+      ? `${date.date}${date.label ? ` (${date.label})` : ""}`
+      : (date.label ? `${date.label} — 담당자가 확인 후 안내` : "담당자가 확인 후 안내"));
+  put("진료과", d.dept || "담당자가 확인 예정");
+  put("어르신·병원", "담당자가 확인 후 안내");
   frag.append(dl);
 
-  frag.append(el("div", "quote", `남기신 내용: “${c.raw_utterance}”`));
-
-  // 담당자가 물어볼 내용을 미리 알려주면 확인 전화가 짧아진다
-  if (c.confirm_questions?.length) {
-    const b = el("div", "ask");
-    b.append(el("h3", null, "담당자가 확인할 내용"));
-    const ul = el("ul");
-    c.confirm_questions.forEach((q) => ul.append(el("li", null, q)));
-    b.append(ul);
-    frag.append(b);
-  }
+  frag.append(el("div", "quote", `남기신 내용: “${d.raw_utterance || ""}”`));
 
   frag.append(el("p", "small",
     "접수 번호 " + (d.intake_id ?? "—") + " · 확정은 담당 사회복지사가 합니다."));
@@ -90,7 +83,7 @@ async function submit() {
   out.textContent = "접수 중입니다…";
   $("btnSubmit").disabled = true;
   try {
-    const d = await api.createIntake(phone, text, CHANNEL);
+    const d = await api.guardianIntake(phone, text);
     out.className = "";
     out.replaceChildren(d.urgent ? renderUrgent(d) : renderReceipt(d));
   } catch (e) {

@@ -1,0 +1,55 @@
+# 소스 바인드 마운트 오버레이 — 코드를 고쳐도 이미지를 다시 만들지 않는다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   (COMPOSE_FILE 맨 뒤에 붙여두면 -f 없이 쓴다)
+#
+# 배포 이미지는 소스를 COPY 로 굽는다 — 그래야 이미지 하나로 어디서든 같은 것이
+# 돈다. 그 원칙은 그대로 두고, **개발·시연 기기에서만** 호스트 디렉터리로 덮어쓴다.
+#
+# 왜 필요한가:
+#   소스가 이미지 안에 있으니 한 줄만 고쳐도 `--build` 가 필요하다. GPU 이미지는
+#   그 한 번이 7분이다(torch 설치 4분 + 이미지 내보내기 3분). 게다가 torch 의
+#   의존성인 nvidia-cudnn-cu12(706MB)는 NVIDIA 서버가 캐시 헤더를 주지 않아 pip
+#   캐시에도 안 잡혀서, 레이어 캐시가 깨지면 매번 다시 받는다.
+#
+#   이 오버레이를 쓰면 코드 변경에 빌드가 아예 필요 없다:
+#       git pull && docker compose restart app
+#
+# 언제 진짜 빌드가 필요한가:
+#   · requirements.txt 가 바뀔 때 (의존성은 이미지 안에 있다)
+#   · Dockerfile 이 바뀔 때
+#   · 배포용 이미지를 만들 때 (이 오버레이 없이 빌드한다)
+#
+# **app 만 다룬다.** frontend 를 여기 넣었더니 백엔드만 띄우는 조합
+# (docker-compose.yml + 이 파일)에서 "frontend has neither an image nor a build
+# context" 로 깨졌다 — 기본 구성에는 frontend 서비스가 없기 때문이다. 프론트는
+# 정적 파일 복사뿐이라 재빌드가 몇 초로 끝나므로 굳이 마운트할 이유도 없다:
+#     docker compose build frontend && docker compose up -d frontend
+#
+# uvicorn 을 --reload 로 돌리지 않으므로 파일만 바꿔서는 반영되지 않는다.
+# `docker compose restart app` 으로 프로세스를 다시 띄워야 한다 — 그래야 시연
+# 도중에 저장 한 번으로 서버가 재시작되는 일이 없다.
+
+services:
+  app:
+    volumes:
+      # **코드 디렉터리만** 얹는다. donghaenggori/ 를 통째로 걸면 안 된다 —
+      # 그 아래 data/ 에는 컨테이너가 기동할 때 쓰는 파일이 있다. 실제로 통째로
+      # 걸었더니 시드 스크립트가 죽어서 컨테이너가 재시작 루프에 빠졌다:
+      #     OSError: [Errno 30] Read-only file system:
+      #         '/app/donghaenggori/data/care_profiles.json'
+      # 그렇다고 쓰기로 열면 **git 이 추적하는 파일**을 컨테이너가 덮어써서
+      # 다음 git pull 이 충돌한다. data/ 는 이미지 것을 그대로 쓰는 게 맞다.
+      #
+      # 최상위에 새 디렉터리를 만들면 여기에도 한 줄 추가해야 한다. 안 그러면
+      # 그 모듈만 이미지의 옛 코드로 돌아 조용히 어긋난다.
+      #
+      # 읽기 전용인 이유: 컨테이너가 호스트 소스를 고칠 일이 없다.
+      # 컨테이너는 UID 10001 로 돈다. git 이 받아둔 파일은 644 라 읽히지만,
+      # 권한을 좁혀둔 파일이 있으면 조용히 못 읽는다 — 모델 파일에서 이미 한 번
+      # 겪었다(600 이라 TF-IDF 로 폴백). 이상하면 `chmod -R a+rX donghaenggori`.
+      - ./donghaenggori/core:/app/donghaenggori/core:ro
+      - ./donghaenggori/services:/app/donghaenggori/services:ro
+      - ./donghaenggori/web:/app/donghaenggori/web:ro
+      - ./donghaenggori/config.py:/app/donghaenggori/config.py:ro
+      - ./donghaenggori/__init__.py:/app/donghaenggori/__init__.py:ro
