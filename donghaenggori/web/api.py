@@ -32,9 +32,12 @@ app = FastAPI(
 )
 
 # 프론트는 별도 오리진에서 뜬다(localhost:3000 등). CORS가 없으면 브라우저가
-# 막아서 연동 자체가 시작되지 않는다. 기본은 전부 허용 — 이 API는 어차피
-# 인증이 없어 CORS로 지켜지는 것이 없고, 좁혀봐야 프론트만 막힌다.
-# 운영에서 제한하려면 .env 의 CORS_ORIGINS 에 도메인을 콤마로 나열한다.
+# 막아서 연동 자체가 시작되지 않는다. 기본은 전부 허용 — API를 지키는 것은
+# Bearer 토큰이지 CORS가 아니고(CORS는 브라우저에만 걸린다), 좁혀봐야 프론트만
+# 막힌다. 운영에서 제한하려면 .env 의 CORS_ORIGINS 에 도메인을 콤마로 나열한다.
+#
+# allow_credentials=False 여도 된다 — 토큰을 쿠키가 아니라 Authorization
+# 헤더로 보내기 때문이다. 쿠키 인증으로 바꾸면 여기부터 다시 봐야 한다.
 _origins = [o.strip() for o in (os.environ.get("CORS_ORIGINS") or "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -599,6 +602,41 @@ def audit(limit: int = Query(100, le=500), user: dict = Depends(current_user)) -
     if not db.can(user["role"], "audit.view"):
         raise HTTPException(403, f"'{user['role']}' 역할에는 감사 로그 조회 권한이 없습니다")
     return db.list_audit(limit=limit)
+
+
+# ----------------------------------------------------------- 대상자 --
+#
+# 지금까지 프로필은 파이프라인 안에서만 읽혔다 — 밖에서 부를 방법이 없어서
+# 화면은 접수카드에 실려 온 것만으로 어르신을 알았다. "박순자 님 프로필 열기"
+# 가 안 됐다.
+#
+# **여기서 나가는 것은 건강 상태·보호자 연락처·독거 여부다.** 무인증 보호자
+# 경로에서 이게 새어 이미 한 번 사고가 났다(GuardianIntakeOut 참조). 그래서
+# 목록과 상세를 나눠 두었다 — 목록은 누구인지 고를 최소한만 싣는다.
+
+@app.get("/api/profiles", tags=["대상자"])
+def list_profiles(query: str | None = Query(None, description="이름 또는 전화번호"),
+                  limit: int = Query(50, le=200),
+                  user: dict = Depends(current_user)) -> list[dict]:
+    """대상자 목록·검색. **건강·보호자 정보는 담지 않는다** — 상세로 따로 받는다."""
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
+    return db.list_profiles(query=query, limit=limit)
+
+
+@app.get("/api/profiles/{phone}", tags=["대상자"])
+def get_profile(phone: str, user: dict = Depends(current_user)) -> dict:
+    """대상자 상세 — 케어 프로필 + 과거 동행 이력.
+
+    동행매니저도 볼 수 있다(intake.view). 배정받은 어르신의 거동 특성과 주의
+    사항을 모르면 동행을 못 한다 — 그게 이 화면의 목적이다.
+    """
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
+    prof = db.get_profile(phone)
+    if not prof:
+        raise HTTPException(404, "등록된 대상자가 아닙니다")
+    return prof
 
 
 @app.get("/api/facilities", tags=["지역 자원"])

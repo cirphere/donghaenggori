@@ -85,6 +85,8 @@ _MUST_BE_401 = (
     ("GET", "/api/dashboard"),
     ("GET", "/api/intakes?limit=1"),
     ("GET", "/api/audit?limit=1"),
+    ("GET", "/api/profiles?limit=1"),        # 건강·보호자 정보가 나가는 곳
+    ("GET", "/api/profiles/010-1234-5678"),
     ("GET", "/api/status"),
     ("POST", "/api/intakes"),
 )

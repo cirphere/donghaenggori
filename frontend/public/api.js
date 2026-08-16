@@ -157,4 +157,10 @@ export const api = {
     req(`/api/post-records/${id}/approve`, { method: "POST", body: { approved } }),
 
   audit: (limit = 20) => req(`/api/audit?limit=${limit}`),
+
+  // 대상자 — 목록은 누구인지 고를 최소한만 온다(건강·보호자 정보 없음).
+  // 상세를 따로 받아야 케어 프로필과 과거 이력이 들어 있다.
+  profiles: (query = "", limit = 50) =>
+    req(`/api/profiles?limit=${limit}` + (query ? `&query=${encodeURIComponent(query)}` : "")),
+  profile: (phone) => req(`/api/profiles/${encodeURIComponent(phone)}`),
 };
