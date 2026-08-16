@@ -56,10 +56,17 @@ def win(three: str, eight: str) -> str:
     return eight if FULL else three
 
 
-def api(method: str, path: str, **kw):
+def api(method: str, path: str, timeout: float = 30, **kw):
+    """리허설용 HTTP 호출. 기본 30초, 오래 걸리는 곳은 호출부에서 늘린다.
+
+    예열(/api/warmup)은 30초로 안 된다 — 음성인식·의도분류·임베딩 모델을 전부
+    적재하고 외부 API 캐시까지 채운다. 첫 기동이면 모델 다운로드까지 붙는다.
+    실제로 여기서 ReadTimeout 으로 리허설이 통째로 죽었다(preflight 는 처음부터
+    600초를 주고 있었는데 이쪽만 30초였다).
+    """
     import httpx
     t = time.time()
-    r = httpx.request(method, BASE + path, timeout=30, **kw)
+    r = httpx.request(method, BASE + path, timeout=timeout, **kw)
     return r, time.time() - t
 
 
@@ -127,7 +134,8 @@ def main(full: bool = False) -> int:
     MGR_AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
 
     # 예열 — 외부 API 캐시를 미리 채워 시연 중 지연을 없앤다
-    rw, elw = api("POST", "/api/warmup", headers=SW_AUTH)
+    say("   예열 중 — 모델 적재와 외부 API 캐시. 첫 기동이면 수 분 걸린다…")
+    rw, elw = api("POST", "/api/warmup", timeout=600, headers=SW_AUTH)
     warmed = rw.json() if rw.status_code == 200 else {}
     say(f"   예열 완료 {elw:.1f}s · {sum(1 for v in warmed.get('warmed',{}).values() if v=='ok')}개 캐시 적재")
 
@@ -142,7 +150,7 @@ def main(full: bool = False) -> int:
 
     say()
     say("\033[1mSTEP 2~4\033[0m  대상자 조회 → 이력 소환 → 접수카드 생성        (" + win("0:15~1:30","0:30~3:10") + ")")
-    r, el = api("POST", "/api/intakes",
+    r, el = api("POST", "/api/intakes", timeout=180,
                 json={"phone": PHONE, "utterance": utt, "channel": "전화"}, headers=SW_AUTH)
     ok = r.status_code == 200
     check("STEP 2~4 접수카드 생성", ok, f"HTTP {r.status_code} · {el:.1f}s")
@@ -246,7 +254,7 @@ def main(full: bool = False) -> int:
 
     # B-1 정보 부족
     say("\033[1mB-1\033[0m  이력에 없는 요청                                 (" + win("2:00~2:15","5:20~5:55") + ")")
-    r, el = api("POST", "/api/intakes",
+    r, el = api("POST", "/api/intakes", timeout=180,
                 json={"phone": "010-7777-8888", "utterance": "내일 그 큰 병원 좀 가야 쓰겄는디"},
                 headers=SW_AUTH)
     b1 = r.json()["card"] if r.status_code == 200 else {}
