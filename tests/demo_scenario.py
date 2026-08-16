@@ -83,6 +83,10 @@ def main(full: bool = False) -> int:
     # 계정은 미리 만들어 둬야 한다: python -m donghaenggori.services.create_user
     sw_email, sw_pw = os.environ.get("DEMO_SW_EMAIL"), os.environ.get("DEMO_SW_PASSWORD")
     mgr_email, mgr_pw = os.environ.get("DEMO_MGR_EMAIL"), os.environ.get("DEMO_MGR_PASSWORD")
+    # 초기화는 관리자만 할 수 있다. 없으면 초기화를 건너뛰고 계속한다 —
+    # 리허설을 아예 못 돌리는 것보다는 낫지만, 남은 데이터 때문에 감사 로그
+    # 건수 같은 검사가 어긋날 수 있어서 크게 알린다.
+    adm_email, adm_pw = os.environ.get("DEMO_ADMIN_EMAIL"), os.environ.get("DEMO_ADMIN_PASSWORD")
     if not (sw_email and sw_pw and mgr_email and mgr_pw):
         print("DEMO_SW_EMAIL/DEMO_SW_PASSWORD, DEMO_MGR_EMAIL/DEMO_MGR_PASSWORD 환경변수가 필요합니다.")
         print("  python -m donghaenggori.services.create_user 로 사회복지사·동행매니저 계정을 먼저 만드세요.")
@@ -94,10 +98,23 @@ def main(full: bool = False) -> int:
     say(f"오늘 {today} · 대상자 박순자 · 시드 초기화 후 시작")
     say("=" * 74)
 
-    api("POST", "/api/reset")
+    # 초기화는 **관리자 전용**이 됐다(가장 파괴적인 호출인데 유일하게 무인증이었다).
+    # 관리자로 로그인 → 초기화 순이다. 초기화가 세션을 전부 지우므로 아래에서
+    # 사회복지사·동행매니저 로그인을 **그다음에** 한다 — 먼저 받아두면 그 자리에서 죽는다.
+    if adm_email and adm_pw:
+        r, _ = api("POST", "/api/auth/login", json={"email": adm_email, "password": adm_pw})
+        if r.status_code != 200:
+            print(f"관리자 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+            return 1
+        rr, _ = api("POST", "/api/reset",
+                    headers={"Authorization": f"Bearer {r.json()['token']}"})
+        if rr.status_code != 200:
+            print(f"초기화 실패: HTTP {rr.status_code} {rr.text[:120]}")
+            return 1
+    else:
+        say("   \033[33m※ DEMO_ADMIN_EMAIL/PASSWORD 가 없어 초기화를 건너뜁니다 —"
+            " 남은 데이터 때문에 일부 검사가 어긋날 수 있습니다.\033[0m")
 
-    # 로그인 — /api/reset이 세션을 지우므로 반드시 리셋 다음에 한다. confirm/verify/
-    # approve/audit는 이제 인증 없이 안 된다.
     r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
     if r.status_code != 200:
         print(f"사회복지사 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
@@ -137,7 +154,12 @@ def main(full: bool = False) -> int:
     c = d["card"]
     iid = d["intake_id"]
     say(f"   {mark(True)} 대상자   : {c['target']} ({c['phone_masked']})")
-    say(f"   {mark(True)} 의도     : {d['intent']}  ({d['intent_source']} {d['intent_confidence']:.2f})")
+    # 확신도는 규칙 폴백일 때 None 이다. :.2f 로 바로 찍으면 TypeError 로 죽는데,
+    # 하필 **모델이 안 올라간 상태**에서만 그렇다 — 폴백이 도는지 확인하려고
+    # 돌리는 스크립트가 그때 죽으면 앞뒤가 안 맞는다.
+    conf = d.get("intent_confidence")
+    say(f"   {mark(True)} 의도     : {d['intent']}  "
+        f"({d['intent_source']}{f' {conf:.2f}' if conf is not None else ''})")
     say(f"   {mark(True)} 병원 후보: {c['hospital']}  [{c['hospital_status']}]")
     say(f"                근거: {c['reasons'][0] if c['reasons'] else '—'}")
     say(f"   {mark(True)} 방문 예정: {c['date_label']} → {c['date_value']}")

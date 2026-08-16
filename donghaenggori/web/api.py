@@ -81,7 +81,9 @@ def _schedule_warmup() -> None:
         t0 = time.monotonic()
         log.info("예열 시작 — 모델 로드와 외부 API 캐시 (수십 초, 요청은 그동안에도 받는다)")
         try:
-            res = await asyncio.to_thread(warmup)
+            # 엔드포인트(warmup)가 아니라 본체(_warmup)를 부른다 — 파이썬
+            # 호출에는 FastAPI 의존성 주입이 돌지 않는다.
+            res = await asyncio.to_thread(_warmup)
         except Exception as e:                     # 예열 실패가 서비스를 막지 않는다
             log.warning("예열 실패 — %s: %s", type(e).__name__, e)
             return
@@ -253,11 +255,63 @@ def current_user(authorization: str | None = Header(None)) -> dict:
 
 # ------------------------------------------------------------ 인증 --
 
+# 로그인 시도 제한 — 계정 하나당 잠깐 잠근다.
+#
+# 두 가지를 막는다.
+#   1) 비밀번호 무차별 대입. 계정 수가 적고 최소 8자라 제한이 없으면 뚫린다.
+#   2) **서비스 정지.** 이게 더 급하다 — 모든 엔드포인트가 동기 def 라
+#      Starlette 스레드풀(기본 40)을 공유하는데, 로그인은 무인증에 PBKDF2 를
+#      26만 회 돈다. 익명 요청 수십 개면 CPU 와 스레드풀이 동시에 포화되고
+#      /api/health 부터 전사까지 전부 멈춘다. 시연 중에 이걸 당하면 끝이다.
+#
+# 프로세스 메모리에 둔다. 워커가 하나라 충분하고(uvicorn --workers 1),
+# 재시작하면 초기화되는 편이 시연에서는 오히려 안전하다.
+# 잠금은 짧게(60초) 잡았다. 막는 목적이 CPU 포화라, **잠기기 시작하는 것**이
+# 중요하지 오래 잠그는 것이 중요하지 않다 — 잠긴 요청은 PBKDF2 를 돌지 않는다.
+# 길게 잡으면 시연 중 오타 몇 번에 발표자가 몇 분을 못 들어간다.
+_LOGIN_FAILS: dict[str, list[float]] = {}
+_LOGIN_MAX_FAILS = 5
+_LOGIN_WINDOW = 300.0        # 5분 안에 5회 실패하면
+_LOGIN_LOCK = 60.0           # 60초 잠근다
+
+
+def _login_locked(key: str) -> float:
+    """남은 잠금 시간(초). 0 이면 안 잠겼다."""
+    import time
+    now = time.monotonic()
+    fails = [t for t in _LOGIN_FAILS.get(key, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[key] = fails
+    if len(fails) < _LOGIN_MAX_FAILS:
+        return 0.0
+    return max(0.0, _LOGIN_LOCK - (now - fails[-1]))
+
+
+def _login_failed(key: str) -> None:
+    import time
+    _LOGIN_FAILS.setdefault(key, []).append(time.monotonic())
+    # 안 쓰는 키가 계속 쌓이지 않게. 실서비스 규모가 아니라 이걸로 충분하다.
+    if len(_LOGIN_FAILS) > 1000:
+        now = time.monotonic()
+        for k in [k for k, v in _LOGIN_FAILS.items()
+                  if not v or now - v[-1] > _LOGIN_WINDOW]:
+            _LOGIN_FAILS.pop(k, None)
+
+
 @app.post("/api/auth/login", tags=["인증"], response_model=LoginOut)
 def login(body: LoginIn) -> dict:
+    key = (body.email or "").strip().lower()
+    # **비밀번호를 확인하기 전에** 막는다. 확인한 뒤에 막으면 PBKDF2 비용을
+    # 이미 치른 뒤라 서비스 정지를 못 막는다.
+    left = _login_locked(key)
+    if left:
+        raise HTTPException(429, f"로그인 시도가 너무 많습니다. {int(left) + 1}초 후 다시 시도해 주세요")
+
     user = db.verify_login(body.email, body.password)
     if not user:
+        _login_failed(key)
         raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다")
+
+    _LOGIN_FAILS.pop(key, None)      # 성공하면 카운터를 지운다
     token = db.create_session(user["id"], settings.session_ttl_seconds)
     return {"token": token, "user": user}
 
@@ -568,12 +622,14 @@ def flywheel(phone: str = Body(...), date: str = Body(...), hospital: str = Body
     return {"ok": True}
 
 
-@app.post("/api/warmup", tags=["시스템"])
-def warmup(user: dict = Depends(current_user)) -> dict:
-    """시연 직전 예열 — 외부 API 응답을 캐시에 채우고 모델을 로드한다.
+def _warmup() -> dict:
+    """예열 본체 — 의존성 없이 부를 수 있게 엔드포인트와 분리해 둔다.
 
-    기상·대기 API는 첫 호출이 수 초 걸린다. 발표 중 접수카드가 멈춰 보이지 않도록
-    시작 전에 미리 불러 캐시에 올려둔다(실측: 예열 전 13.3s → 예열 후 즉시).
+    기동 예열(_schedule_warmup)이 이 함수를 파이썬 호출로 부른다. 엔드포인트를
+    직접 부르면 FastAPI 의 의존성 주입이 돌지 않아서 user 에 Depends 객체가
+    그대로 들어온다 — 지금은 본문이 user 를 안 읽어 무해하지만, 나중에 누가
+    감사 로그 한 줄(`user["name"]`)만 넣어도 예열이 TypeError 로 죽고
+    _schedule_warmup 의 except 가 그걸 삼켜서 조용히 안 데워진 채로 돈다.
     """
     import time
 
@@ -643,6 +699,16 @@ def warmup(user: dict = Depends(current_user)) -> dict:
     return {"elapsed": round(time.time() - t0, 1), "warmed": done}
 
 
+@app.post("/api/warmup", tags=["시스템"])
+def warmup(user: dict = Depends(current_user)) -> dict:
+    """시연 직전 예열 — 외부 API 응답을 캐시에 채우고 모델을 로드한다.
+
+    기상·대기 API는 첫 호출이 수 초 걸린다. 발표 중 접수카드가 멈춰 보이지 않도록
+    시작 전에 미리 불러 캐시에 올려둔다(실측: 예열 전 13.3s → 예열 후 즉시).
+    """
+    return _warmup()
+
+
 def _via_internet(request: Request) -> bool:
     """이 요청이 Cloudflare 터널을 거쳐 들어왔는가.
 
@@ -654,15 +720,32 @@ def _via_internet(request: Request) -> bool:
 
 
 @app.post("/api/reset", tags=["시스템"])
-def reset(request: Request) -> dict:
-    """데모 초기화. **외부(터널) 요청은 거부한다.**
+def reset(request: Request, user: dict = Depends(current_user)) -> dict:
+    """데모 초기화 — **로그인 + 서버 로컬**, 둘 다 만족해야 한다.
 
-    이 API에는 인증이 없어서, 막지 않으면 주소를 아는 사람이 시연 데이터를
-    통째로 날릴 수 있다. 로컬(리허설 스크립트·본인 브라우저)에서는 그대로 된다.
+    접수·감사로그·이력·세션을 통째로 지우는, 이 서비스에서 가장 파괴적인 호출이다.
+    확정도 승인도 토큰을 요구하는데 전체 삭제만 무인증인 건 앞뒤가 맞지 않았다.
+
+    예전에는 'Cloudflare 헤더가 붙었나' 하나만 봤다. 실제 배포에서는 인터넷
+    트래픽이 전부 터널을 거쳐 헤더가 붙으므로 막히긴 했지만, **방어선이 그
+    하나뿐**이었다 — nginx 기본 인증을 끄거나 포트를 루프백 밖으로 열거나
+    헤더를 안 붙이는 경로가 하나만 생겨도 곧바로 삭제 버튼이 된다.
+    직접 확인한 적이 있다(기본 인증을 끈 상태에서 200 {"ok":true}).
+
+    세 조건을 함께 건다.
+      · 로그인       — 누가 지웠는지가 남는다
+      · 관리자        — 사회복지사도 못 지운다. 확정·승인은 매일 하는 일이지만
+                       전체 삭제는 그렇지 않다. 같은 권한으로 묶을 일이 아니다
+      · 서버 로컬     — 토큰이 유출돼도 인터넷에서는 못 지운다
     """
     if _via_internet(request):
         raise HTTPException(403, "외부에서는 초기화할 수 없습니다 (서버 로컬에서만 가능)")
+    if not db.can(user["role"], "admin"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 초기화 권한이 없습니다 (관리자 전용)")
     db.reset_db()
+    # 감사 로그도 지워지므로 지운 뒤에 남긴다 — 안 그러면 흔적이 함께 사라진다.
+    db.log_audit(user["name"], user["role"], "초기화", "system", "-",
+                 "시연 데이터 전체 초기화")
     return {"ok": True}
 
 
