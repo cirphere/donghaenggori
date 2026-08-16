@@ -67,6 +67,8 @@ fetch('/api/status')      // 이렇게. 도메인을 붙일 필요가 없다
 | **05 사후기록** | `POST` | `/api/post-records` — 음성 메모 → 기록 초안 🔒 |
 | | `POST` | `/api/post-records/{id}/approve` — 프로필 반영 승인 🔒 |
 | | `GET` | `/api/post-records?limit=50` 🔒 |
+| **04 어르신** | `GET` | `/api/profiles?query=&limit=50` — 목록·검색 (민감정보 없음) 🔒 |
+| | `GET` | `/api/profiles/{phone}` — 케어 프로필 + 과거 이력 🔒 |
 | 지역 자원 | `GET` | `/api/facilities?region=&query=` 🔒 |
 | 지역 자원 | `POST` | `/api/flywheel` — 동행 완료 → 이력 누적 🔒 |
 | 감사 로그 | `GET` | `/api/audit?limit=100` 🔒 |
@@ -330,6 +332,63 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 **`transfer_status` 가 `연결됨` 이 아니면 눈에 띄게 표시할 것.** 담당자가 못 받은
 것을 아무도 모르는 상태가 제일 위험하다 — 어르신은 안내를 듣고 끊었는데 아무도
 다시 걸지 않는다.
+
+---
+
+## 2-2. 어르신 — `GET /api/profiles` · `GET /api/profiles/{phone}`
+
+**목록과 상세가 나뉘어 있다. 합치지 말 것.** 상세에 담긴 것은 건강 상태·보호자
+연락처·독거 여부다. 목록 한 번에 스무 명 분이 통째로 나가면 그 화면을 여는 것
+자체가 개인정보 열람이 된다. 목록은 "누구인지 고르는" 데 필요한 것만 싣는다.
+
+### 목록 — `GET /api/profiles?query=&limit=50`
+
+`query`는 **이름 또는 전화번호**. 전화번호는 정규화해서 찾으므로 화면에서
+`010-1234-5678` 로 쳐도 되고 `01012345678` 로 쳐도 된다.
+
+```json
+[
+  {
+    "phone": "010-2757-9322",
+    "id": "P018",
+    "name": "강판례",
+    "age": 78,
+    "region": "광주광역시 광산구 ○○동",
+    "visits": 3,
+    "last_visit": "2026-06-30"
+  }
+]
+```
+
+`visits`는 누적 동행 횟수, `last_visit`은 마지막 동행일. **처음 오는 어르신은
+`visits: 0`, `last_visit: null`** — 목록에서 "신규"로 구분해 보여주면 좋다.
+
+### 상세 — `GET /api/profiles/{phone}`
+
+등록된 대상자가 아니면 **404**. 위 목록의 필드에 더해:
+
+| 키 | 뜻 | 비었을 때 |
+|---|---|---|
+| `guardian` | 보호자 연락처 | `null` |
+| `mobility` | 거동 — `"지팡이 사용"` 등 | `null` |
+| `fall_risk` | 낙상 위험 | `false` |
+| `lives_alone` | 독거 | `false` |
+| `ltci_grade` | 장기요양등급 | `null` |
+| `care_program` | 이용 중인 돌봄 서비스 | `null` |
+| `preferred_time` | 선호 시간대 — `"오전"` 등 | `null` |
+| `notes` | 특이사항 — `"당뇨 관리 중"` | `null` |
+| `history` | 과거 동행 이력 (아래) | `[]` |
+
+```json
+"history": [
+  { "date": "2026-02-10", "hospital": "△△피부과", "dept": "피부과",
+    "symptom": "가려움", "pharmacy": false }
+]
+```
+
+**동행매니저도 상세를 볼 수 있다**(`intake.view`). 배정받은 어르신의 거동 특성과
+주의사항을 모르면 동행을 못 한다 — 그게 이 화면의 목적이다. 확정·승인 권한과는
+별개다.
 
 ---
 

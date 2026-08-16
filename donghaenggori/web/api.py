@@ -32,9 +32,12 @@ app = FastAPI(
 )
 
 # 프론트는 별도 오리진에서 뜬다(localhost:3000 등). CORS가 없으면 브라우저가
-# 막아서 연동 자체가 시작되지 않는다. 기본은 전부 허용 — 이 API는 어차피
-# 인증이 없어 CORS로 지켜지는 것이 없고, 좁혀봐야 프론트만 막힌다.
-# 운영에서 제한하려면 .env 의 CORS_ORIGINS 에 도메인을 콤마로 나열한다.
+# 막아서 연동 자체가 시작되지 않는다. 기본은 전부 허용 — API를 지키는 것은
+# Bearer 토큰이지 CORS가 아니고(CORS는 브라우저에만 걸린다), 좁혀봐야 프론트만
+# 막힌다. 운영에서 제한하려면 .env 의 CORS_ORIGINS 에 도메인을 콤마로 나열한다.
+#
+# allow_credentials=False 여도 된다 — 토큰을 쿠키가 아니라 Authorization
+# 헤더로 보내기 때문이다. 쿠키 인증으로 바꾸면 여기부터 다시 봐야 한다.
 _origins = [o.strip() for o in (os.environ.get("CORS_ORIGINS") or "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
