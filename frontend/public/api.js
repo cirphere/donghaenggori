@@ -88,8 +88,8 @@ export const api = {
   // ── 인증 ──────────────────────────────────────────────────
   // 로그인만 토큰 없이 부른다(auth:false). 여기서 나는 401 은 '비밀번호가
   // 틀렸다' 라서, 세션 만료 처리로 넘기면 안 된다.
-  login: (email, password) =>
-    req("/api/auth/login", { method: "POST", body: { email, password }, auth: false }),
+  login: (userId, password) =>
+    req("/api/auth/login", { method: "POST", body: { user_id: userId, password }, auth: false }),
   logout: () => req("/api/auth/logout", { method: "POST" }),
   me:     () => req("/api/auth/me"),
 

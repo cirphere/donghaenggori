@@ -230,7 +230,8 @@ class ApproveIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: str
+    """로그인은 아이디로 한다 — 기관 계정은 직원번호(U001)가 자연스럽다."""
+    user_id: str = Field(..., description="아이디 (예: U001). 대소문자를 가리지 않는다")
     password: str
 
 
@@ -299,17 +300,17 @@ def _login_failed(key: str) -> None:
 
 @app.post("/api/auth/login", tags=["인증"], response_model=LoginOut)
 def login(body: LoginIn) -> dict:
-    key = (body.email or "").strip().lower()
+    key = (body.user_id or "").strip().lower()
     # **비밀번호를 확인하기 전에** 막는다. 확인한 뒤에 막으면 PBKDF2 비용을
     # 이미 치른 뒤라 서비스 정지를 못 막는다.
     left = _login_locked(key)
     if left:
         raise HTTPException(429, f"로그인 시도가 너무 많습니다. {int(left) + 1}초 후 다시 시도해 주세요")
 
-    user = db.verify_login(body.email, body.password)
+    user = db.verify_login(body.user_id, body.password)
     if not user:
         _login_failed(key)
-        raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다")
+        raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
 
     _LOGIN_FAILS.pop(key, None)      # 성공하면 카운터를 지운다
     token = db.create_session(user["id"], settings.session_ttl_seconds)
@@ -777,7 +778,7 @@ small{color:#666}
 <small>대부분의 버튼은 이제 로그인이 필요합니다. 계정은
 <code>python -m donghaenggori.services.create_user</code> 로 미리 만들어 둘 것.</small>
 <div class=row>
-  <input type=text id=email placeholder="이메일">
+  <input type=text id=userid placeholder="아이디 (예: U001)" autocapitalize=off>
   <input type=password id=password placeholder="비밀번호">
   <button onclick="login()">로그인</button>
 </div>
@@ -824,7 +825,7 @@ const show = d => out.textContent = JSON.stringify(d, null, 2);
 async function login(){
   const r = await fetch('/api/auth/login', {method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({email: email.value, password: password.value})});
+    body: JSON.stringify({user_id: userid.value, password: password.value})});
   const d = await r.json();
   show(d);
   if (r.ok) {

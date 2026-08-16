@@ -164,18 +164,27 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_user(user_id: str, name: str, role: str, email: str, password: str) -> dict:
+def create_user(user_id: str, name: str, role: str, password: str,
+                email: str | None = None) -> dict:
     """운영자 부트스트랩 전용. 같은 user_id로 다시 부르면 비밀번호 재설정도 겸한다.
 
-    이메일 UNIQUE는 스키마에 없다(sqlite ALTER TABLE ADD COLUMN 제약) — 여기서 검사한다.
+    로그인은 **아이디**로 한다. 이메일은 연락처일 뿐이라 없어도 된다 —
+    기관 계정은 직원번호(U001)로 부르는 게 자연스럽고, 시연장에서 이메일
+    주소를 정확히 치는 것보다 아이디 네 글자가 빠르다.
+
+    아이디는 대소문자를 가리지 않고 조회하므로(get_user_by_id), 여기서도
+    'u001' 과 'U001' 이 다른 계정이 되지 않게 막는다.
     """
     init_db()
+    user_id = (user_id or "").strip()
+    if not user_id:
+        raise ValueError("아이디가 비었습니다")
     conn = get_conn()
     try:
-        dup = conn.execute("SELECT id FROM users WHERE email=? AND id<>?",
-                           (email, user_id)).fetchone()
+        dup = conn.execute("SELECT id FROM users WHERE id=? COLLATE NOCASE AND id<>?",
+                           (user_id, user_id)).fetchone()
         if dup:
-            raise ValueError(f"이미 등록된 이메일: {email}")
+            raise ValueError(f"대소문자만 다른 아이디가 이미 있습니다: {dup['id']}")
         pw_hash = _hash_password(password)
         conn.execute(
             "INSERT INTO users (id,name,role,email,password_hash) VALUES (?,?,?,?,?) "
@@ -195,19 +204,25 @@ def create_user(user_id: str, name: str, role: str, email: str, password: str) -
         conn.close()
 
 
-def get_user_by_email(email: str) -> dict | None:
+def get_user_by_id(user_id: str) -> dict | None:
+    """아이디로 사용자 조회. **대소문자를 가리지 않는다.**
+
+    아이디가 U001 같은 직원번호라 소문자로 치는 일이 잦다. 시연 중에 그걸로
+    막히면 손해가 크고, 대소문자를 구분해서 얻는 것도 없다.
+    """
     init_db()
     conn = get_conn()
     try:
-        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id=? COLLATE NOCASE",
+                           ((user_id or "").strip(),)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-def verify_login(email: str, password: str) -> dict | None:
-    """이메일+비밀번호 검증. 성공하면 password_hash 를 뺀 사용자 dict, 실패하면 None."""
-    user = get_user_by_email(email)
+def verify_login(user_id: str, password: str) -> dict | None:
+    """아이디+비밀번호 검증. 성공하면 password_hash 를 뺀 사용자 dict, 실패하면 None."""
+    user = get_user_by_id(user_id)
     if not user or not user.get("password_hash"):
         return None
     if not _verify_password(password, user["password_hash"]):

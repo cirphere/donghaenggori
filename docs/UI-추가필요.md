@@ -15,7 +15,7 @@
 토큰을 헤더에 실어야 한다.
 
 ```
-POST /api/auth/login   { email, password }  →  { token, user }
+POST /api/auth/login   { user_id, password }  →  { token, user }
 GET  /api/auth/me                            →  현재 로그인한 사용자
 POST /api/auth/logout
 
