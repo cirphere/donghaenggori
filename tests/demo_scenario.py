@@ -304,7 +304,18 @@ def main(full: bool = False) -> int:
     if full:
         head("시나리오 C — 데이터 활용 근거 확인", "목표 7:00 ~ 7:40")
         say("   AI가 지어낸 정보가 아니라 공공데이터에 근거한 결과임을 화면에서 확인시킨다.")
-        r, _ = api("GET", "/api/facilities", params={"region": "광주광역시 서구", "limit": 3},
+        # 대상자가 사는 지역으로 조회한다. 예전에는 "광주광역시 서구" 를 박아
+        # 두어서, 고흥 어르신 이야기를 하다가 갑자기 광주 복지관이 나왔다 —
+        # 심사에서 "고흥 어르신인데 왜 광주?" 로 이어질 자리였다.
+        #
+        # 실제 서비스(rag.enrich)는 처음부터 프로필의 region 을 쓴다. 여기만
+        # 시연 서사와 어긋나 있었다.
+        # **시군까지 다 적어야 한다.** 이 API 는 rag.search 를 타는데, 거기서는
+        # 지역을 토큰 단위로 정확히 맞춘다 — '고흥' 은 시설의 '고흥군' 과 다른
+        # 토큰이라 0건이 나온다(db.search_facilities 의 LIKE 부분일치와 다르다).
+        # 그 엄격함은 의도된 것이다: 느슨하게 맞추면 '전남' 하나로 신안군 섬
+        # 어르신에게 100km 떨어진 고흥군 복지관이 '관내' 로 뜬다(rag.py 주석).
+        r, _ = api("GET", "/api/facilities", params={"region": "전남 고흥군", "limit": 3},
                    headers=SW_AUTH)
         fac = r.json() if r.status_code == 200 else []
         check("데이터 활용 — 복지자원 검색", len(fac) > 0, f"{len(fac)}건")
