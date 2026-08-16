@@ -14,8 +14,11 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sqlite3
 import threading
 
@@ -94,6 +97,13 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, name TEXT, role TEXT   -- 사회복지사 | 동행매니저 | 관리자
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,    -- sha256(원문 토큰) — 원문은 저장하지 않는다
+  user_id TEXT NOT NULL,
+  created_at TEXT, expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS facilities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT,                            -- C-DS03 | C-DS04 | C-DS06 | C-DS17 ...
@@ -104,6 +114,8 @@ CREATE TABLE IF NOT EXISTS facilities (
 CREATE INDEX IF NOT EXISTS idx_fac_region ON facilities(region);
 """
 
+# 비밀번호 없이 시드된다 — 소스에 비밀번호를 넣지 않는다. 이 두 계정은
+# services/create_user.py 로 비밀번호를 설정하기 전까진 로그인이 안 된다.
 DEFAULT_USERS = [
     ("U001", "김○○ 사회복지사", "사회복지사"),
     ("U002", "최정미 동행매니저", "동행매니저"),
@@ -119,6 +131,125 @@ ROLE_PERMISSIONS = {
 
 def can(role: str, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, set())
+
+
+# ------------------------------------------------------------------ 인증 --
+# 새 pip 의존성을 안 늘리려고 표준 라이브러리만 쓴다. bcrypt 급 보안이 필요한
+# 규모가 아니라(내부 소수 인원용) PBKDF2-HMAC-SHA256으로 충분하다.
+
+_PBKDF2_ITERATIONS = 260_000
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"{salt.hex()}${_PBKDF2_ITERATIONS}${dk.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt_hex, iters_s, dk_hex = stored.split("$")
+        salt, iters, expected = bytes.fromhex(salt_hex), int(iters_s), bytes.fromhex(dk_hex)
+    except (ValueError, AttributeError):
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters)
+    return hmac.compare_digest(dk, expected)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_user(user_id: str, name: str, role: str, email: str, password: str) -> dict:
+    """운영자 부트스트랩 전용. 같은 user_id로 다시 부르면 비밀번호 재설정도 겸한다.
+
+    이메일 UNIQUE는 스키마에 없다(sqlite ALTER TABLE ADD COLUMN 제약) — 여기서 검사한다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        dup = conn.execute("SELECT id FROM users WHERE email=? AND id<>?",
+                           (email, user_id)).fetchone()
+        if dup:
+            raise ValueError(f"이미 등록된 이메일: {email}")
+        pw_hash = _hash_password(password)
+        conn.execute(
+            "INSERT INTO users (id,name,role,email,password_hash) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, "
+            "email=excluded.email, password_hash=excluded.password_hash",
+            (user_id, name, role, email, pw_hash))
+        conn.commit()
+        return {"id": user_id, "name": name, "role": role, "email": email}
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> dict | None:
+    init_db()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def verify_login(email: str, password: str) -> dict | None:
+    """이메일+비밀번호 검증. 성공하면 password_hash 를 뺀 사용자 dict, 실패하면 None."""
+    user = get_user_by_email(email)
+    if not user or not user.get("password_hash"):
+        return None
+    if not _verify_password(password, user["password_hash"]):
+        return None
+    user = dict(user)
+    user.pop("password_hash", None)
+    return user
+
+
+def create_session(user_id: str, ttl_seconds: int) -> str:
+    """세션을 만들고 원문 토큰을 반환한다 — 이번 호출에서만 노출, DB엔 해시만 남는다."""
+    init_db()
+    token = secrets.token_urlsafe(32)
+    expires = datetime.datetime.now() + datetime.timedelta(seconds=ttl_seconds)
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)",
+            (_hash_token(token), user_id, _now(), expires.strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def resolve_session(token: str) -> dict | None:
+    """원문 토큰 → 유효하면 사용자 dict(password_hash 제외), 없거나 만료면 None."""
+    init_db()
+    conn = get_conn()
+    try:
+        token_hash = _hash_token(token)
+        row = conn.execute(
+            "SELECT s.expires_at, u.id, u.name, u.role, u.email FROM sessions s "
+            "JOIN users u ON u.id = s.user_id WHERE s.token_hash=?", (token_hash,)).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] < _now():
+            conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+            conn.commit()
+            return None
+        return {"id": row["id"], "name": row["name"], "role": row["role"], "email": row["email"]}
+    finally:
+        conn.close()
+
+
+def delete_session(token: str) -> None:
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM sessions WHERE token_hash=?", (_hash_token(token),))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ------------------------------------------------------------------ 연결 --
@@ -161,6 +292,8 @@ _ADDED_COLUMNS = [
     ("intakes", "identity_status", "TEXT"),
     ("intakes", "card_json", "TEXT"),
     ("intakes", "transfer_status", "TEXT"),
+    ("users", "email", "TEXT"),
+    ("users", "password_hash", "TEXT"),
 ]
 
 
@@ -726,10 +859,13 @@ def reset_db() -> None:
     conn = get_conn()
     try:
         conn.executescript(SCHEMA)
-        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "users"):
+        # users는 안 지운다 — 로그인 계정은 데모 데이터가 아니라 운영자 정보다.
+        # 지우면 리셋할 때마다 비밀번호가 통째로 날아가 아무도 로그인 못 하게 된다.
+        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions"):
             conn.execute(f"DELETE FROM {t}")
         _seed_profiles(conn)
-        conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+            conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
         conn.commit()
         _inited = True
     finally:

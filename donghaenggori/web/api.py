@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from typing import Literal
 
-from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -165,12 +165,16 @@ class IntakeIn(BaseModel):
     save: bool = Field(True, description="접수 기록으로 저장할지")
 
 
+class GuardianIntakeIn(BaseModel):
+    """보호자 웹 전용 — channel·save는 클라이언트가 정하지 못한다(서버가 고정)."""
+    phone: str = Field(..., description="발신번호 — 보조 식별 단서일 뿐, 대상자 확정 아님")
+    utterance: str = Field(..., description="신청 내용")
+
+
 class ConfirmIn(BaseModel):
     hospital: str
     date: str
     level: str
-    actor: str = "김○○ 사회복지사"
-    role: str = "사회복지사"
     acknowledge: bool = Field(
         False, description="확인 필요가 남은 것을 알고도 확정 — 감사 로그에 남는다")
 
@@ -179,14 +183,10 @@ class VerifyIn(BaseModel):
     field: Literal["target", "hospital", "dept", "date", "time"] = Field(
         ..., description="확인한 항목")
     value: str = Field(..., min_length=1, description="통화로 확인한 값")
-    actor: str = "김○○ 사회복지사"
-    role: str = "사회복지사"
 
 
 class ResolveIn(BaseModel):
     note: str = Field("", description="어떻게 처리했는지 — 감사 로그에 남는다")
-    actor: str = "김○○ 사회복지사"
-    role: str = "사회복지사"
 
 
 class PostRecordIn(BaseModel):
@@ -199,8 +199,53 @@ class PostRecordIn(BaseModel):
 
 class ApproveIn(BaseModel):
     approved: bool = True
-    actor: str = "김○○ 사회복지사"
-    role: str = "사회복지사"
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class LoginOut(BaseModel):
+    token: str
+    user: dict
+
+
+def current_user(authorization: str | None = Header(None)) -> dict:
+    """Authorization: Bearer <token> → 인증된 사용자. 없거나 무효면 401.
+
+    role·actor는 더 이상 요청 본문에서 안 받는다 — 여기서 확인된 신원만 믿는다.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "로그인이 필요합니다 (Authorization: Bearer <token>)")
+    token = authorization.split(" ", 1)[1].strip()
+    user = db.resolve_session(token)
+    if not user:
+        raise HTTPException(401, "세션이 만료되었거나 유효하지 않습니다")
+    return user
+
+
+# ------------------------------------------------------------ 인증 --
+
+@app.post("/api/auth/login", tags=["인증"], response_model=LoginOut)
+def login(body: LoginIn) -> dict:
+    user = db.verify_login(body.email, body.password)
+    if not user:
+        raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다")
+    token = db.create_session(user["id"], settings.session_ttl_seconds)
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/logout", tags=["인증"])
+def logout(authorization: str | None = Header(None)) -> dict:
+    if authorization and authorization.lower().startswith("bearer "):
+        db.delete_session(authorization.split(" ", 1)[1].strip())
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", tags=["인증"])
+def me(user: dict = Depends(current_user)) -> dict:
+    return user
 
 
 # ------------------------------------------------------------ 상태 --
@@ -211,8 +256,8 @@ def health() -> dict:
 
 
 @app.get("/api/status", tags=["시스템"])
-def status() -> dict:
-    """외부 연동 상태 — 키 값은 노출하지 않고 존재 여부만."""
+def status(user: dict = Depends(current_user)) -> dict:
+    """외부 연동 상태 — 키 값은 노출하지 않고 존재 여부만. 운영 정보라 로그인 필요."""
     from ..services import intent_model, stt
     out = {
         "keys": settings.status(),
@@ -233,20 +278,26 @@ def status() -> dict:
 # ------------------------------------------- 화면 01 홈 대시보드 --
 
 @app.get("/api/dashboard", tags=["화면01 홈"])
-def dashboard() -> dict:
+def dashboard(user: dict = Depends(current_user)) -> dict:
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
     return {"counts": db.intake_counts(), "intakes": db.list_intakes(limit=50)}
 
 
 @app.get("/api/intakes", tags=["화면01 홈"])
-def list_intakes(limit: int = Query(50, le=200)) -> list[dict]:
+def list_intakes(limit: int = Query(50, le=200), user: dict = Depends(current_user)) -> list[dict]:
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
     return db.list_intakes(limit=limit)
 
 
 # ------------------------------------ 화면 02 접수 → 화면 03 카드 --
 
-@app.post("/api/intakes", tags=["화면02 접수"], response_model=IntakeOut)
-def create_intake(body: IntakeIn) -> dict:
-    """발화 → 접수카드. 긴급이면 카드를 만들지 않고 사람 연결로 전환한다."""
+def _run_intake(body: IntakeIn) -> dict:
+    """발화 → 접수카드. 직원용·보호자용 엔드포인트가 공유하는 실제 로직.
+
+    긴급이면 카드를 만들지 않고 사람 연결로 전환한다.
+    """
     if body.channel not in pipeline.CHANNELS:
         raise HTTPException(400, f"channel은 {pipeline.CHANNELS} 중 하나여야 합니다")
 
@@ -273,8 +324,26 @@ def create_intake(body: IntakeIn) -> dict:
     return out
 
 
+@app.post("/api/intakes", tags=["화면02 접수"], response_model=IntakeOut)
+def create_intake(body: IntakeIn, user: dict = Depends(current_user)) -> dict:
+    """직원(전화 상담·직접 접수)용 — 채널을 자유롭게 고를 수 있다. 로그인만 요구한다."""
+    return _run_intake(body)
+
+
+@app.post("/api/guardian/intakes", tags=["보호자 웹"], response_model=IntakeOut)
+def guardian_create_intake(body: GuardianIntakeIn) -> dict:
+    """보호자 웹 전용 — 무인증. channel은 항상 '앱·웹(보호자)'로 고정된다.
+
+    로그인 없이 열려 있는 유일한 쓰기 API다. 읽기(목록·상태·감사로그 등)는 전혀
+    없고 접수 하나를 만드는 것만 할 수 있어서, 열어놔도 노출되는 정보가 없다.
+    """
+    return _run_intake(IntakeIn(phone=body.phone, utterance=body.utterance,
+                                channel="앱·웹(보호자)", save=True))
+
+
 @app.post("/api/stt", tags=["화면02 접수"])
-def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/m4a/aiff)")) -> dict:
+def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/m4a/aiff)"),
+              user: dict = Depends(current_user)) -> dict:
     """음성 → 텍스트. 확신도가 낮으면 needs_review=true로 사람 확인을 요구한다.
 
     async def가 아니라 def다. 전사는 CPU를 붙잡는 블로킹 작업이라
@@ -298,16 +367,23 @@ def transcribe(file: UploadFile = File(..., description="음성 파일 (wav/mp3/
 
 @app.post("/api/intakes/from-audio", tags=["화면02 접수"])
 def intake_from_audio(file: UploadFile = File(...), phone: str = Query(...),
-                      channel: str = Query("전화")) -> dict:
-    """음성 파일 하나로 접수까지 — 시연 첫 장면(전화 시뮬레이션)용."""
-    tr = transcribe(file)
-    res = create_intake(IntakeIn(phone=phone, utterance=tr["text"], channel=channel))
+                      channel: str = Query("전화"),
+                      user: dict = Depends(current_user)) -> dict:
+    """음성 파일 하나로 접수까지 — 시연 첫 장면(전화 시뮬레이션)용.
+
+    transcribe/create_intake를 HTTP가 아니라 파이썬 함수로 직접 부른다 — 그래서
+    이미 여기서 풀린 user를 그대로 넘긴다(각자 다시 로그인 헤더를 파싱하지 않는다).
+    """
+    tr = transcribe(file, user=user)
+    res = create_intake(IntakeIn(phone=phone, utterance=tr["text"], channel=channel), user=user)
     res["stt"] = tr
     return res
 
 
 @app.get("/api/intakes/{intake_id}", tags=["화면03 접수카드"])
-def get_intake(intake_id: int) -> dict:
+def get_intake(intake_id: int, user: dict = Depends(current_user)) -> dict:
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
     row = db.get_intake(intake_id)
     if not row:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
@@ -318,17 +394,17 @@ def get_intake(intake_id: int) -> dict:
 
 
 @app.post("/api/intakes/{intake_id}/verify", tags=["화면03 접수카드"])
-def verify_field(intake_id: int, body: VerifyIn) -> dict:
+def verify_field(intake_id: int, body: VerifyIn, user: dict = Depends(current_user)) -> dict:
     """통화로 확인한 결과를 항목에 반영한다 — 게이트를 푸는 유일한 경로.
 
     AI 가 낸 값을 사람이 덮어쓰는 자리다. 무엇을 무엇으로 바꿨는지 감사 로그에
     남고, 카드 근거에도 '통화로 확인함'이 붙는다.
     """
-    if not db.can(body.role, "intake.confirm"):
-        raise HTTPException(403, f"'{body.role}' 역할에는 확인 권한이 없습니다")
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 확인 권한이 없습니다")
     if not db.get_intake(intake_id):
         raise HTTPException(404, "접수를 찾을 수 없습니다")
-    row = db.verify_card_field(intake_id, body.field, body.value, body.actor, body.role)
+    row = db.verify_card_field(intake_id, body.field, body.value, user["name"], user["role"])
     if not row:
         # 카드 없는 접수(긴급)거나 확인 대상이 아닌 항목
         raise HTTPException(400, f"'{body.field}' 항목은 확인 입력을 받을 수 없습니다")
@@ -337,7 +413,7 @@ def verify_field(intake_id: int, body: VerifyIn) -> dict:
 
 
 @app.post("/api/intakes/{intake_id}/confirm", tags=["화면03 접수카드"])
-def confirm(intake_id: int, body: ConfirmIn) -> dict:
+def confirm(intake_id: int, body: ConfirmIn, user: dict = Depends(current_user)) -> dict:
     """사회복지사 확정 — 사람의 영역. 확정 이력은 감사 로그에 남는다.
 
     확인 필요가 남아 있으면 409 로 막고 무엇이 막는지를 돌려준다. 사회복지사가
@@ -345,8 +421,8 @@ def confirm(intake_id: int, body: ConfirmIn) -> dict:
     남는다. 기관이 INTAKE_BLOCK_ALL_UNCONFIRMED 를 켜 두면 acknowledge 도
     통하지 않는다.
     """
-    if not db.can(body.role, "intake.confirm"):
-        raise HTTPException(403, f"'{body.role}' 역할에는 확정 권한이 없습니다")
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 확정 권한이 없습니다")
     row = db.get_intake(intake_id)
     if not row:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
@@ -359,11 +435,11 @@ def confirm(intake_id: int, body: ConfirmIn) -> dict:
             "gate": g,
         })
 
-    db.confirm_intake(intake_id, body.hospital, body.date, body.level, body.actor, body.role)
+    db.confirm_intake(intake_id, body.hospital, body.date, body.level, user["name"], user["role"])
     if g["acknowledged"]:
         # 확인 없이 넘어간 것은 반드시 흔적이 남아야 한다. 나중에 문제가 생겼을 때
         # "누가 무엇을 확인하지 않고 확정했는가"에 답할 수 있어야 한다.
-        db.log_audit(body.actor, body.role, "미확인 확정", "intake", str(intake_id),
+        db.log_audit(user["name"], user["role"], "미확인 확정", "intake", str(intake_id),
                      "확인 없이 확정: " + ", ".join(b["label"] for b in g["blockers"]))
     out = db.get_intake(intake_id)
     out["gate"] = gate.check(out.get("card"))
@@ -371,16 +447,16 @@ def confirm(intake_id: int, body: ConfirmIn) -> dict:
 
 
 @app.post("/api/intakes/{intake_id}/resolve", tags=["화면03 접수카드"])
-def resolve_urgent(intake_id: int, body: ResolveIn) -> dict:
+def resolve_urgent(intake_id: int, body: ResolveIn, user: dict = Depends(current_user)) -> dict:
     """긴급 건 처리 완료 표시 — 사람이 연락을 끝냈다는 뜻이다.
 
     확정과 다르다. 긴급은 접수카드를 만들지 않으므로 확정할 대상이 없다.
     """
-    if not db.can(body.role, "intake.confirm"):
-        raise HTTPException(403, f"'{body.role}' 역할에는 처리 권한이 없습니다")
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 처리 권한이 없습니다")
     if not db.get_intake(intake_id):
         raise HTTPException(404, "접수를 찾을 수 없습니다")
-    changed = db.resolve_urgent(intake_id, body.actor, body.role, body.note)
+    changed = db.resolve_urgent(intake_id, user["name"], user["role"], body.note)
     # changed=False 는 이미 처리됐거나 긴급이 아니라는 뜻 — 오류가 아니다
     return {"ok": True, "changed": changed, "intake": db.get_intake(intake_id)}
 
@@ -388,7 +464,7 @@ def resolve_urgent(intake_id: int, body: ResolveIn) -> dict:
 # ------------------------------------------- 화면 05 사후기록 --
 
 @app.post("/api/post-records", tags=["화면05 사후기록"])
-def create_post_record(body: PostRecordIn) -> dict:
+def create_post_record(body: PostRecordIn, user: dict = Depends(current_user)) -> dict:
     """음성 메모 → 기록 초안. 항상 '검토 필요' 상태로 사람에게 넘긴다."""
     draft = summarize.summarize(body.memo, target=body.target, dept=body.dept)
     rid = db.save_post_record(body.intake_id, body.phone, body.memo, draft.as_dict())
@@ -402,48 +478,58 @@ def create_post_record(body: PostRecordIn) -> dict:
 
 
 @app.post("/api/post-records/{record_id}/approve", tags=["화면05 사후기록"])
-def approve_post_record(record_id: int, body: ApproveIn) -> dict:
+def approve_post_record(record_id: int, body: ApproveIn,
+                        user: dict = Depends(current_user)) -> dict:
     """AI는 프로필을 자동 변경하지 않는다 — 승인한 항목만 반영된다."""
-    if not db.can(body.role, "post.approve"):
-        raise HTTPException(403, f"'{body.role}' 역할에는 승인 권한이 없습니다")
-    res = db.approve_post_record(record_id, body.approved, body.actor, body.role)
+    if not db.can(user["role"], "post.approve"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 승인 권한이 없습니다")
+    res = db.approve_post_record(record_id, body.approved, user["name"], user["role"])
     # changed=False 는 이미 같은 상태였다는 뜻이다(재요청·더블클릭). 오류가 아니므로
     # 200 으로 돌려주되, 프로필에 반영됐는지를 화면이 구분할 수 있게 함께 내린다.
     return {"ok": True, "approved": body.approved, **res}
 
 
 @app.get("/api/post-records", tags=["화면05 사후기록"])
-def list_post_records(limit: int = Query(50, le=200)) -> list[dict]:
+def list_post_records(limit: int = Query(50, le=200),
+                      user: dict = Depends(current_user)) -> list[dict]:
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
     return db.list_post_records(limit=limit)
 
 
 # ------------------------------------------------ 감사 로그 / 자원 --
 
 @app.get("/api/audit", tags=["감사 로그"])
-def audit(limit: int = Query(100, le=500), role: str = "사회복지사") -> list[dict]:
-    if not db.can(role, "audit.view"):
-        raise HTTPException(403, f"'{role}' 역할에는 감사 로그 조회 권한이 없습니다")
+def audit(limit: int = Query(100, le=500), user: dict = Depends(current_user)) -> list[dict]:
+    if not db.can(user["role"], "audit.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 감사 로그 조회 권한이 없습니다")
     return db.list_audit(limit=limit)
 
 
 @app.get("/api/facilities", tags=["지역 자원"])
 def facilities(region: str | None = None, query: str | None = None,
-               limit: int = Query(10, le=50)) -> list[dict]:
+               limit: int = Query(10, le=50),
+               user: dict = Depends(current_user)) -> list[dict]:
     """공공데이터 기반 복지자원 검색 — 결과에 출처(C-DS**)를 함께 반환한다."""
     return rag.search(region=region, query=query, limit=limit)
 
 
 @app.post("/api/flywheel", tags=["지역 자원"])
 def flywheel(phone: str = Body(...), date: str = Body(...), hospital: str = Body(...),
-             dept: str = Body(...), actor: str = Body("최정미 동행매니저")) -> dict:
-    """동행 완료 → 이력 누적. 다음 접수의 병원 후보가 더 정확해진다."""
+             dept: str = Body(...), user: dict = Depends(current_user)) -> dict:
+    """동행 완료 → 이력 누적. 다음 접수의 병원 후보가 더 정확해진다.
+
+    actor는 예전엔 본문에서 그대로 받았다(누구든 이름을 지어낼 수 있었다) —
+    로그인 이름으로 바꿨다.
+    """
     db.add_history(phone, date, hospital, dept)
-    db.log_audit(actor, "동행매니저", "이력추가", "history", phone, f"{date} {hospital}({dept})")
+    db.log_audit(user["name"], user["role"], "이력추가", "history", phone,
+                f"{date} {hospital}({dept})")
     return {"ok": True}
 
 
 @app.post("/api/warmup", tags=["시스템"])
-def warmup() -> dict:
+def warmup(user: dict = Depends(current_user)) -> dict:
     """시연 직전 예열 — 외부 API 응답을 캐시에 채우고 모델을 로드한다.
 
     기상·대기 API는 첫 호출이 수 초 걸린다. 발표 중 접수카드가 멈춰 보이지 않도록
@@ -564,6 +650,16 @@ small{color:#666}
 <small>실제 UI는 프론트 담당. 여기선 API 동작만 확인합니다. ·
 <a href="/docs">Swagger 문서</a></small>
 
+<h3>로그인</h3>
+<small>대부분의 버튼은 이제 로그인이 필요합니다. 계정은
+<code>python -m donghaenggori.services.create_user</code> 로 미리 만들어 둘 것.</small>
+<div class=row>
+  <input type=text id=email placeholder="이메일">
+  <input type=password id=password placeholder="비밀번호">
+  <button onclick="login()">로그인</button>
+</div>
+<div class=row><small id=who>로그인 안 됨</small></div>
+
 <h3>접수</h3>
 <div class=row>
   <input type=text id=phone value="010-1234-5678">
@@ -598,9 +694,26 @@ small{color:#666}
 <pre id=out>결과가 여기 표시됩니다.</pre>
 <script>
 const out = document.getElementById('out');
+const who = document.getElementById('who');
+let TOKEN = localStorage.getItem('token') || '';
+const authHeaders = () => TOKEN ? {'Authorization': 'Bearer ' + TOKEN} : {};
 const show = d => out.textContent = JSON.stringify(d, null, 2);
-async function load(u){ show(await (await fetch(u)).json()); }
-async function post(u,b){ show(await (await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json()); }
+async function login(){
+  const r = await fetch('/api/auth/login', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email: email.value, password: password.value})});
+  const d = await r.json();
+  show(d);
+  if (r.ok) {
+    TOKEN = d.token;
+    localStorage.setItem('token', TOKEN);
+    who.textContent = `${d.user.name} (${d.user.role}) 로그인됨`;
+  } else {
+    who.textContent = '로그인 실패';
+  }
+}
+async function load(u){ show(await (await fetch(u, {headers: authHeaders()})).json()); }
+async function post(u,b){ show(await (await fetch(u,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify(b)})).json()); }
 function go(){ post('/api/intakes',{phone:phone.value,utterance:utt.value,channel:channel.value}); }
 function postRecord(){ post('/api/post-records',{intake_id:0,phone:phone.value,memo:memo.value,dept:'정형외과',target:'박순자 어르신'}); }
 
@@ -609,7 +722,7 @@ function postRecord(){ post('/api/post-records',{intake_id:0,phone:phone.value,m
 async function send(url, blob, name){
   const fd = new FormData(); fd.append('file', blob, name);
   out.textContent = '인식 중…';
-  const r = await fetch(url, {method:'POST', body:fd});
+  const r = await fetch(url, {method:'POST', headers: authHeaders(), body:fd});
   const d = await r.json();
   show(d);
   const t = d.text || (d.stt && d.stt.text);

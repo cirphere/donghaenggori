@@ -75,6 +75,9 @@ class Settings:
     # 외부 API — 접수 흐름을 막지 않도록 짧게 잡는다
     public_api_timeout: float = _float("PUBLIC_API_TIMEOUT", 3.0)
     public_api_cache_ttl: int = _int("PUBLIC_API_CACHE_TTL", 600)
+    # 로그인 세션 유효기간(초). 기본 12시간 — 내부 소수 인원용 도구라 짧게
+    # 만료돼도 다시 로그인하는 부담이 크지 않다.
+    session_ttl_seconds: int = _int("SESSION_TTL_SECONDS", 43200)
 
     @property
     def has_anthropic(self) -> bool:

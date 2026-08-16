@@ -133,49 +133,83 @@ def test_pipeline() -> None:
 
 # --------------------------------------------------------------- API --
 
+TEST_PASSWORD = "test-pw-only-throwaway-db"     # 임시 DB 전용 — 실운영 값 아님
+
+
 def test_api() -> None:
     from donghaenggori.web.api import app
     client = TestClient(app)
 
+    # 임시 tempdir DB에만 존재하는 테스트 전용 계정 — 실제 신원 확인 경로를 탄다.
+    db.create_user("T001", "테스트 사회복지사", "사회복지사", "test-sw@local", TEST_PASSWORD)
+    db.create_user("T002", "테스트 동행매니저", "동행매니저", "test-mgr@local", TEST_PASSWORD)
+    r = client.post("/api/auth/login", json={"email": "test-sw@local", "password": TEST_PASSWORD})
+    check("사회복지사 로그인 성공", r.status_code == 200, f"HTTP {r.status_code}")
+    AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
+    r = client.post("/api/auth/login", json={"email": "test-mgr@local", "password": TEST_PASSWORD})
+    AUTH_MGR = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    # 토큰 없이 접수 생성 시도 → 401 (직원용 엔드포인트는 이제 로그인 필요)
+    r = client.post("/api/intakes", json={"phone": PHONE_SELF, "utterance": "테스트"})
+    check("토큰 없이 접수 생성 → 401", r.status_code == 401, f"HTTP {r.status_code}")
+
     r = client.post("/api/intakes", json={"phone": PHONE_SELF,
-                                          "utterance": "모레 3시에 정형외과 가야 해"})
+                                          "utterance": "모레 3시에 정형외과 가야 해"},
+                    headers=AUTH)
     body = r.json()
     iid = body["intake_id"]
     check("접수 응답에 gate 가 실린다", body.get("gate") is not None
           and not body["gate"]["allowed"], str(body.get("gate", {}).get("allowed")))
 
-    r = client.get(f"/api/intakes/{iid}")
+    r = client.get(f"/api/intakes/{iid}", headers=AUTH)
     check("상세 조회에도 gate 가 실린다", not r.json()["gate"]["allowed"])
 
+    # 보호자 웹 경로는 토큰 없이도 접수가 만들어져야 한다 — channel은 서버가 고정
+    r = client.post("/api/guardian/intakes",
+                    json={"phone": PHONE_SELF, "utterance": "모레 정형외과 가야겄어"})
+    check("보호자 접수는 토큰 없이도 성공", r.status_code == 200, f"HTTP {r.status_code}")
+    giid = r.json()["intake_id"]
+    r2 = client.get(f"/api/intakes/{giid}", headers=AUTH)
+    check("보호자 접수의 channel이 고정된다", r2.json()["channel"] == "앱·웹(보호자)",
+          r2.json().get("channel"))
+
     payload = {"hospital": "고흥정형외과", "date": "2026-08-16", "level": "부축 동행"}
-    r = client.post(f"/api/intakes/{iid}/confirm", json=payload)
+    r = client.post(f"/api/intakes/{iid}/confirm", json=payload, headers=AUTH)
     check("확인 필요가 남으면 확정이 409", r.status_code == 409, f"HTTP {r.status_code}")
     detail = r.json()["detail"]
     check("409 본문이 막은 항목을 담는다",
           any(b["field"] == "time" for b in detail["gate"]["blockers"]),
           str([b["field"] for b in detail["gate"]["blockers"]]))
-    check("확정되지 않았다", client.get(f"/api/intakes/{iid}").json()["confirmed"] == 0)
+    check("확정되지 않았다",
+          client.get(f"/api/intakes/{iid}", headers=AUTH).json()["confirmed"] == 0)
+
+    # 토큰 없이는 401 — 인증 자체가 걸려 있는지
+    r = client.post(f"/api/intakes/{iid}/confirm", json=payload)
+    check("토큰 없이 확정 시도 → 401", r.status_code == 401, f"HTTP {r.status_code}")
 
     # 통화로 확인 → 게이트가 풀린다
-    r = client.post(f"/api/intakes/{iid}/verify", json={"field": "time", "value": "15:00"})
+    r = client.post(f"/api/intakes/{iid}/verify", json={"field": "time", "value": "15:00"},
+                    headers=AUTH)
     check("확인 입력 성공", r.status_code == 200, f"HTTP {r.status_code}")
     g = r.json()["intake"]["gate"]
     check("확인 입력으로 게이트가 풀린다", g["allowed"], f"남은 항목 {labels(g)}")
     ev = r.json()["intake"]["card"]["fields"]["time"]["evidence"]
     check("근거에 '통화로 확인함' 이 남는다", any("통화로 확인함" in e for e in ev), str(ev))
 
-    r = client.post(f"/api/intakes/{iid}/confirm", json=payload)
+    r = client.post(f"/api/intakes/{iid}/confirm", json=payload, headers=AUTH)
     check("풀린 뒤 확정 성공", r.status_code == 200 and r.json()["intake"]["confirmed"] == 1,
           f"HTTP {r.status_code}")
     check("사유 없이 확정 → acknowledged=False", r.json()["acknowledged"] is False)
 
     # 사유를 달고 넘어가기 — 감사 로그에 남아야 한다
     r = client.post("/api/intakes", json={"phone": PHONE_NEW,
-                                          "utterance": "병원 좀 가야 해. 다리가 아파서."})
+                                          "utterance": "병원 좀 가야 해. 다리가 아파서."},
+                    headers=AUTH)
     iid2 = r.json()["intake_id"]
-    r = client.post(f"/api/intakes/{iid2}/confirm", json=payload)
+    r = client.post(f"/api/intakes/{iid2}/confirm", json=payload, headers=AUTH)
     check("미등록 건도 409 로 막힌다", r.status_code == 409, f"HTTP {r.status_code}")
-    r = client.post(f"/api/intakes/{iid2}/confirm", json={**payload, "acknowledge": True})
+    r = client.post(f"/api/intakes/{iid2}/confirm", json={**payload, "acknowledge": True},
+                    headers=AUTH)
     check("acknowledge=true 면 확정된다", r.status_code == 200 and r.json()["acknowledged"],
           f"HTTP {r.status_code}")
     actions = [a["action"] for a in db.list_audit(limit=20)]
@@ -183,21 +217,26 @@ def test_api() -> None:
 
     # 대상자를 확인하면 '말한 성함' 칸은 사라진다
     r = client.post("/api/intakes", json={"phone": PHONE_NEW,
-                                          "utterance": "병원 좀 가야 해. 다리가 아파서."})
+                                          "utterance": "병원 좀 가야 해. 다리가 아파서."},
+                    headers=AUTH)
     iid3 = r.json()["intake_id"]
-    r = client.post(f"/api/intakes/{iid3}/verify", json={"field": "target", "value": "김말자"})
+    r = client.post(f"/api/intakes/{iid3}/verify", json={"field": "target", "value": "김말자"},
+                    headers=AUTH)
     fields = r.json()["intake"]["card"]["fields"]
     check("대상자 확인 → 확인됨", fields["target"]["status"] == "확인됨")
     check("대상자 확인 → 말한 성함 칸 제거", "spoken_name" not in fields, str(list(fields)))
 
-    r = client.post(f"/api/intakes/{iid3}/verify", json={"field": "존재없음", "value": "x"})
+    r = client.post(f"/api/intakes/{iid3}/verify", json={"field": "존재없음", "value": "x"},
+                    headers=AUTH)
     check("모르는 항목은 422", r.status_code == 422, f"HTTP {r.status_code}")
 
-    r = client.post("/api/intakes/999999/verify", json={"field": "time", "value": "15:00"})
+    r = client.post("/api/intakes/999999/verify", json={"field": "time", "value": "15:00"},
+                    headers=AUTH)
     check("없는 접수는 404", r.status_code == 404, f"HTTP {r.status_code}")
 
-    r = client.post(f"/api/intakes/{iid}/verify",
-                    json={"field": "time", "value": "15:00", "role": "동행매니저"})
+    # 권한 없는 역할(동행매니저)로는 확인 입력이 403 — role은 더 이상 본문이 아니라 토큰으로 정해진다
+    r = client.post(f"/api/intakes/{iid}/verify", json={"field": "time", "value": "15:00"},
+                    headers=AUTH_MGR)
     check("권한 없는 역할은 403", r.status_code == 403, f"HTTP {r.status_code}")
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -32,10 +33,12 @@ def log(state: str, name: str, detail: str = "") -> None:
 
 
 def req(path: str, method: str = "GET", body: dict | None = None,
-        timeout: float = 60.0) -> tuple[int, object]:
+        timeout: float = 60.0, headers: dict | None = None) -> tuple[int, object]:
     data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(BASE + path, data=data, method=method,
-                               headers={"Content-Type": "application/json"} if data else {})
+    h = dict(headers or {})
+    if data is not None:
+        h["Content-Type"] = "application/json"
+    r = urllib.request.Request(BASE + path, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             raw = resp.read().decode()
@@ -64,8 +67,15 @@ def check_reachable() -> bool:
     return False
 
 
-def check_models() -> None:
-    code, s = req("/api/status", timeout=30)
+def _auth(token: str | None) -> dict:
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def check_models(token: str | None) -> None:
+    if not token:
+        log(WARN, "상태 조회", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
+    code, s = req("/api/status", timeout=30, headers=_auth(token))
     if code != 200 or not isinstance(s, dict):
         log(FAIL, "상태 조회", f"HTTP {code}")
         return
@@ -103,9 +113,12 @@ def check_models() -> None:
      else log(WARN, "복지시설 적재", "0건 — 지역자원 검색이 빈 결과"))
 
 
-def check_warmup() -> None:
+def check_warmup(token: str | None) -> None:
+    if not token:
+        log(WARN, "워밍업", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
     t = time.time()
-    code, w = req("/api/warmup", "POST", {}, timeout=600)
+    code, w = req("/api/warmup", "POST", {}, timeout=600, headers=_auth(token))
     if code != 200 or not isinstance(w, dict):
         log(FAIL, "워밍업", f"HTTP {code}")
         return
@@ -122,11 +135,14 @@ def check_warmup() -> None:
         log(OK, "워밍업", f"{el:.1f}s · 전부 정상")
 
 
-def check_intake() -> None:
+def check_intake(token: str | None) -> None:
+    if not token:
+        log(WARN, "접수 파이프라인", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
     t = time.time()
     code, d = req("/api/intakes", "POST",
                   {"phone": "010-1234-5678", "utterance": "모레 정형외과 가야겄어",
-                   "channel": "전화", "save": False}, timeout=120)
+                   "channel": "전화", "save": False}, timeout=120, headers=_auth(token))
     el = time.time() - t
     if code != 200 or not isinstance(d, dict):
         log(FAIL, "접수 파이프라인", f"HTTP {code} — {d}")
@@ -150,10 +166,13 @@ def check_intake() -> None:
         log(WARN, "접수 응답속도", f"{el:.1f}s — 워밍업 후 1초대여야 함")
 
 
-def check_urgent() -> None:
+def check_urgent(token: str | None) -> None:
+    if not token:
+        log(WARN, "긴급 감지", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
     code, d = req("/api/intakes", "POST",
                   {"phone": "010-1234-5678", "utterance": "가슴이 답답하고 숨이 차",
-                   "channel": "전화", "save": False}, timeout=120)
+                   "channel": "전화", "save": False}, timeout=120, headers=_auth(token))
     if code != 200 or not isinstance(d, dict):
         log(FAIL, "긴급 감지", f"HTTP {code}")
         return
@@ -165,42 +184,28 @@ def check_urgent() -> None:
             "— 응급 발화가 일반 접수로 처리됨")
 
 
-def check_rbac() -> None:
+def check_rbac(mgr_token: str | None) -> None:
+    """동행매니저 계정 토큰으로 확정을 시도해 403인지 본다.
+
+    role은 이제 본문이 아니라 로그인 신원이 정한다 — 그래서 검사하려면 실제
+    동행매니저 계정의 토큰이 있어야 한다. --mgr-token/PREFLIGHT_MGR_TOKEN 이
+    없으면(운영자가 아직 계정을 안 만들었을 수 있다) 실패 대신 건너뛴다.
+    """
+    if not mgr_token:
+        log(WARN, "권한 통제", "--mgr-token 또는 PREFLIGHT_MGR_TOKEN 이 없어 건너뜀 "
+                              "(동행매니저 계정으로 로그인한 토큰 필요)")
+        return
     code, _ = req("/api/intakes/1/confirm", "POST",
-                  {"hospital": "X", "date": "2026-08-20", "level": "동행",
-                   "actor": "테스트", "role": "동행매니저"}, timeout=30)
+                  {"hospital": "X", "date": "2026-08-20", "level": "동행"}, timeout=30,
+                  headers=_auth(mgr_token))
     if code == 403:
         log(OK, "권한 통제", "동행매니저 확정 거부 (403)")
     elif code == 404:
         log(WARN, "권한 통제", "접수 1번이 없어 검사 불가")
+    elif code == 401:
+        log(FAIL, "권한 통제", "토큰이 유효하지 않음 (401) — 만료됐거나 잘못된 토큰")
     else:
         log(FAIL, "권한 통제", f"HTTP {code} — 권한 없는 역할이 확정할 수 있음")
-
-
-def check_web_auth() -> None:
-    """화면이 인증 뒤에 있는지 본다. 배포 주소로만 의미가 있는 점검이다.
-
-    localhost 는 nginx 를 거치지 않고 백엔드에 바로 붙으므로 건너뛴다 —
-    거기서 200 이 나오는 것은 정상이다.
-    """
-    if "localhost" in BASE or "127.0.0.1" in BASE:
-        log(WARN, "화면 접근 제한", "로컬 주소라 건너뜀 (배포 주소로 확인할 것)")
-        return
-    try:
-        r = urllib.request.Request(BASE + "/api/dashboard")
-        with urllib.request.urlopen(r, timeout=20) as resp:
-            log(FAIL, "화면 접근 제한",
-                f"HTTP {resp.status} — 인증 없이 접수 목록이 보인다. "
-                ".env 의 STAFF_USER/STAFF_PASSWORD 를 확인할 것")
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            log(OK, "화면 접근 제한", f"인증 필요 (HTTP {e.code})")
-        elif e.code == 302:
-            log(OK, "화면 접근 제한", "Access 로그인으로 유도됨")
-        else:
-            log(WARN, "화면 접근 제한", f"HTTP {e.code}")
-    except Exception as e:
-        log(WARN, "화면 접근 제한", f"확인 실패: {type(e).__name__}")
 
 
 def check_compose_stack() -> None:
@@ -272,11 +277,14 @@ def check_reset_guard() -> None:
         log(WARN, "초기화 차단", f"검사 실패: {type(e).__name__}")
 
 
-def check_summary() -> None:
+def check_summary(token: str | None) -> None:
+    if not token:
+        log(WARN, "사후기록 요약", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
     code, d = req("/api/post-records", "POST",
                   {"intake_id": 0, "phone": "010-1234-5678",
                    "memo": "무릎 주사 맞았고 다음 진료 2주 뒤, 약국 들렀어요. 계단 힘들어하셨습니다.",
-                   "dept": "정형외과", "target": "박순자 어르신"}, timeout=120)
+                   "dept": "정형외과", "target": "박순자 어르신"}, timeout=120, headers=_auth(token))
     if code != 200 or not isinstance(d, dict):
         log(FAIL, "사후기록 요약", f"HTTP {code}")
         return
@@ -287,7 +295,10 @@ def check_summary() -> None:
         f"{filled}/6 항목 · 상대날짜 분리={sched} · {d.get('source')}")
 
 
-def check_stt(path: str) -> None:
+def check_stt(path: str, token: str | None) -> None:
+    if not token:
+        log(WARN, "음성 인식", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
+        return
     import mimetypes
     import uuid
     boundary = uuid.uuid4().hex
@@ -300,7 +311,8 @@ def check_stt(path: str) -> None:
             f"Content-Type: {ctype}\r\n\r\n").encode() + payload + \
            f"\r\n--{boundary}--\r\n".encode()
     r = urllib.request.Request(BASE + "/api/stt", data=body, method="POST",
-                               headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+                               headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                                        **_auth(token)})
     t = time.time()
     try:
         with urllib.request.urlopen(r, timeout=600) as resp:
@@ -323,6 +335,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="배포 점검 (데이터를 지우지 않는다)")
     ap.add_argument("--url", default=BASE, help="점검할 주소")
     ap.add_argument("--audio", help="STT 검사용 음성 파일")
+    ap.add_argument("--token", default=os.environ.get("PREFLIGHT_TOKEN"),
+                    help="기능 확인용 사회복지사 토큰 (또는 PREFLIGHT_TOKEN 환경변수). "
+                         "대부분의 API가 이제 로그인을 요구해서 이게 없으면 관련 점검을 건너뛴다")
+    ap.add_argument("--mgr-token", default=os.environ.get("PREFLIGHT_MGR_TOKEN"),
+                    help="권한 통제 검사용 동행매니저 토큰 (또는 PREFLIGHT_MGR_TOKEN 환경변수)")
     a = ap.parse_args()
     BASE = a.url.rstrip("/")
 
@@ -333,17 +350,16 @@ def main() -> int:
         print("  서버에 연결할 수 없습니다. 컨테이너가 떠 있는지 확인하세요.\n")
         return 1
 
-    check_models()
-    check_warmup()
-    check_intake()
-    check_urgent()
-    check_rbac()
-    check_summary()
+    check_models(a.token)
+    check_warmup(a.token)
+    check_intake(a.token)
+    check_urgent(a.token)
+    check_rbac(a.mgr_token)
+    check_summary(a.token)
     check_reset_guard()
-    check_web_auth()
     check_compose_stack()
     if a.audio:
-        check_stt(a.audio)
+        check_stt(a.audio, a.token)
     else:
         log(WARN, "음성 인식", "--audio 를 주지 않아 건너뜀")
 
