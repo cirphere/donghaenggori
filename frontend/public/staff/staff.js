@@ -45,6 +45,40 @@ document.querySelectorAll(".tab").forEach((t) => {
   };
 });
 
+// ── 자동 갱신 ──────────────────────────────────────────────
+//
+// 전화로 들어온 접수는 화면이 아니라 서버에서 생긴다. 갱신이 없으면 복지사가
+// 탭을 다시 누를 때까지 새 접수가 안 보인다 — 전화가 입구인 서비스에서 그건
+// 접수를 놓치는 것과 같다.
+//
+// 도는 조건을 좁게 잡는다. 접수 대기 화면이 실제로 보이고, 모달이 없고,
+// 브라우저 탭이 앞에 있을 때만. 목록이 새로 그려지는 것은 그 화면을 보고
+// 있는 사람에게만 의미가 있고, 나머지는 서버를 찌르기만 한다.
+const POLL_MS = 3000;
+let pollTimer = null;
+
+function pollable() {
+  return !$("view-queue").classList.contains("hidden")
+    && !document.querySelector(".modal-backdrop")
+    && document.visibilityState === "visible";
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => { if (pollable()) loadQueue(); }, POLL_MS);
+}
+
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+// 탭을 뒤로 보냈다 돌아오면 그 사이 쌓인 것을 즉시 반영한다. 3초를 더
+// 기다리게 하면 "안 도는 것"처럼 보인다.
+document.addEventListener("visibilitychange", () => {
+  if (pollable()) loadQueue();
+});
+
 // ── 상태 ───────────────────────────────────────────────────
 async function loadStatus() {
   try {
@@ -63,7 +97,13 @@ async function loadStatus() {
 }
 
 // ── 접수 대기 ──────────────────────────────────────────────
+let queueInFlight = false;
+
 async function loadQueue() {
+  // 3초마다 도는데 응답이 그보다 느리면 요청이 겹쳐 쌓인다. 먼저 온 응답이
+  // 나중 것을 덮어써 목록이 과거로 되돌아가는 것도 이 때문이다.
+  if (queueInFlight) return;
+  queueInFlight = true;
   const box = $("counts"), tb = $("queue").querySelector("tbody");
   try {
     const d = await api.dashboard();
@@ -132,6 +172,8 @@ async function loadQueue() {
     if (!tb.children.length) tb.append(rowOf(el("td", "dim", "접수 없음")));
   } catch (e) {
     box.replaceChildren(el("div", "bad", "불러오지 못했습니다: " + e.message));
+  } finally {
+    queueInFlight = false;
   }
 }
 
@@ -735,6 +777,9 @@ function applyPermissions() {
 }
 
 function showLogin(message) {
+  // 세션이 끊겨서 여기로 온 것일 수 있다. 폴링을 세우지 않으면 3초마다
+  // 401 을 받아 로그인 화면을 계속 다시 그린다.
+  stopPolling();
   $("view-login").classList.remove("hidden");
   $("app").classList.add("hidden");
   $("whoami").textContent = "";
@@ -753,6 +798,7 @@ function showApp(user) {
   applyPermissions();
   loadStatus();
   loadQueue();
+  startPolling();
 }
 
 // 세션이 끊기면(만료·서버 재시작·/api/reset) 어느 요청에서든 여기로 돌아온다.
