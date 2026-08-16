@@ -164,13 +164,11 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_user(user_id: str, name: str, role: str, password: str,
-                email: str | None = None) -> dict:
+def create_user(user_id: str, name: str, role: str, password: str) -> dict:
     """운영자 부트스트랩 전용. 같은 user_id로 다시 부르면 비밀번호 재설정도 겸한다.
 
-    로그인은 **아이디**로 한다. 이메일은 연락처일 뿐이라 없어도 된다 —
-    기관 계정은 직원번호(U001)로 부르는 게 자연스럽고, 시연장에서 이메일
-    주소를 정확히 치는 것보다 아이디 네 글자가 빠르다.
+    로그인은 **아이디**로 한다 — 기관 계정은 직원번호(U001)로 부르는 게
+    자연스럽고, 시연장에서 아이디 네 글자가 가장 빠르다.
 
     아이디는 대소문자를 가리지 않고 조회하므로(get_user_by_id), 여기서도
     'u001' 과 'U001' 이 다른 계정이 되지 않게 막는다.
@@ -187,10 +185,10 @@ def create_user(user_id: str, name: str, role: str, password: str,
             raise ValueError(f"대소문자만 다른 아이디가 이미 있습니다: {dup['id']}")
         pw_hash = _hash_password(password)
         conn.execute(
-            "INSERT INTO users (id,name,role,email,password_hash) VALUES (?,?,?,?,?) "
+            "INSERT INTO users (id,name,role,password_hash) VALUES (?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, "
-            "email=excluded.email, password_hash=excluded.password_hash",
-            (user_id, name, role, email, pw_hash))
+            "password_hash=excluded.password_hash",
+            (user_id, name, role, pw_hash))
         # 비밀번호를 바꾸면 그 사람의 기존 세션도 끊는다.
         #
         # 안 끊으면 토큰이 유출됐을 때 비밀번호를 재설정해도 소용이 없다 —
@@ -199,7 +197,7 @@ def create_user(user_id: str, name: str, role: str, password: str,
         # 토큰을 폐기할 경로가 이것 말고는 없다.
         conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         conn.commit()
-        return {"id": user_id, "name": name, "role": role, "email": email}
+        return {"id": user_id, "name": name, "role": role}
     finally:
         conn.close()
 
@@ -255,7 +253,7 @@ def resolve_session(token: str) -> dict | None:
     try:
         token_hash = _hash_token(token)
         row = conn.execute(
-            "SELECT s.expires_at, u.id, u.name, u.role, u.email FROM sessions s "
+            "SELECT s.expires_at, u.id, u.name, u.role FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token_hash=?", (token_hash,)).fetchone()
         if not row:
             return None
@@ -268,7 +266,7 @@ def resolve_session(token: str) -> dict | None:
             conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
             conn.commit()
             return None
-        return {"id": row["id"], "name": row["name"], "role": row["role"], "email": row["email"]}
+        return {"id": row["id"], "name": row["name"], "role": row["role"]}
     finally:
         conn.close()
 
@@ -323,8 +321,18 @@ _ADDED_COLUMNS = [
     ("intakes", "identity_status", "TEXT"),
     ("intakes", "card_json", "TEXT"),
     ("intakes", "transfer_status", "TEXT"),
-    ("users", "email", "TEXT"),
     ("users", "password_hash", "TEXT"),
+]
+
+# 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
+# 목록으로 둔다. 없으면 조용히 넘어간다.
+#
+# users.email 은 로그인 키였다가 아이디 로그인으로 바뀌면서 쓰이지 않게 됐다.
+# 안 쓰는 컬럼을 남겨두면 다음 사람이 "여기 이메일이 있으니 로그인에 쓰겠지"
+# 하고 되살릴 여지가 생긴다. 연락처가 필요해지면 그때 목적에 맞는 컬럼을
+# 새로 만드는 편이 낫다.
+_DROPPED_COLUMNS = [
+    ("users", "email"),
 ]
 
 
@@ -333,6 +341,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # DROP COLUMN 은 SQLite 3.35+ 다. 컨테이너(3.46)·개발기 모두 넘는다.
+    # 혹시 낮은 환경이면 지우지 못할 뿐 동작에는 지장이 없으므로 삼킨다.
+    for table, column in _DROPPED_COLUMNS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column in cols:
+            try:
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass
 
 
 def _seed_profiles(conn: sqlite3.Connection) -> None:
@@ -901,10 +918,10 @@ def reset_db() -> None:
     conn = get_conn()
     try:
         conn.executescript(SCHEMA)
-        # SCHEMA 에 없는 뒤늦게 늘어난 컬럼들(users.email·password_hash 등)을
+        # SCHEMA 에 없는 뒤늦게 늘어난 컬럼들(users.password_hash 등)을
         # 여기서도 붙인다. 빠뜨리면 init_db 없이 reset_db 를 먼저 부른
         # 프로세스가 _inited=True 를 보고 마이그레이션을 영영 건너뛴다 —
-        # 그 프로세스에서 로그인을 시도하면 `no such column: email` 로 죽는다.
+        # 그 프로세스에서 로그인을 시도하면 `no such column: password_hash` 로 죽는다.
         # (services/seed.py 의 write_and_load 가 그 호출 순서다)
         _migrate(conn)
         # users는 안 지운다 — 로그인 계정은 데모 데이터가 아니라 운영자 정보다.
