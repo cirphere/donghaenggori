@@ -49,6 +49,15 @@ export const api = {
   warmup:    ()                  => req("/api/warmup", { method: "POST" }),
 
   // 화면 02 → 03. 긴급이면 card 가 null 로 온다(카드를 만들지 않는다).
+  // 보호자 웹 전용 — 로그인 없이 부르는 유일한 쓰기 API.
+  //
+  // 직원용 createIntake 를 쓰면 안 된다. 그쪽은 로그인이 필요해서 401 이고,
+  // 설령 열려 있어도 응답에 대상자 프로필과 진료 이력이 실려 나온다.
+  // 이 경로의 응답은 **보호자가 적어 보낸 것만** 돌려준다(GuardianIntakeOut).
+  // channel 은 서버가 '앱·웹(보호자)' 로 고정하므로 보내지 않는다.
+  guardianIntake: (phone, utterance) =>
+    req("/api/guardian/intakes", { method: "POST", body: { phone, utterance } }),
+
   createIntake: (phone, utterance, channel = "전화", save = true) =>
     req("/api/intakes", { method: "POST", body: { phone, utterance, channel, save } }),
 
