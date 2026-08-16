@@ -255,8 +255,28 @@ function showConfirm(r, d, draft) {
     go.onclick = () => { readForm(); sendConfirm(r, { ...draft }); };
     foot.append(go);
   } else if (!gate.hard_block) {
+    // 확인 없이 넘어갈 때는 이유를 함께 받는다. 사고가 났을 때 "연락이 닿지
+    // 않았다"와 "물어볼 필요 없다고 봤다"는 책임이 전혀 다른데, 감사 로그에
+    // '미확인 확정'만 남으면 그 둘을 구분할 수 없다.
+    const why = el("select", "ack-reason");
+    for (const [v, t] of [["", "넘어가는 이유를 고르세요"],
+                          ["연락이 닿지 않음", "연락이 닿지 않음"],
+                          ["이미 알고 있음", "이미 알고 있음"],
+                          ["물어볼 필요 없음", "물어볼 필요 없음"],
+                          ["기타", "기타"]]) {
+      const o = el("option", null, t);
+      o.value = v;
+      why.append(o);
+    }
+    foot.append(why);
+
     const go = el("button", "danger", "이대로 접수");
-    go.onclick = () => { readForm(); sendConfirm(r, { ...draft }, true); };
+    go.disabled = true;
+    why.onchange = () => { go.disabled = !why.value; };
+    go.onclick = () => {
+      readForm();
+      sendConfirm(r, { ...draft }, true, why.value);
+    };
     foot.append(go);
   }
   body.append(foot);
@@ -309,9 +329,9 @@ function blockerBox(r, b, d, draft, readForm) {
   return box;
 }
 
-async function sendConfirm(r, payload, acknowledge = false) {
+async function sendConfirm(r, payload, acknowledge = false, acknowledgeReason = null) {
   try {
-    await api.confirmIntake(r.id, { ...payload, acknowledge });
+    await api.confirmIntake(r.id, { ...payload, acknowledge, acknowledgeReason });
     closeModal();
     loadQueue();
   } catch (e) {

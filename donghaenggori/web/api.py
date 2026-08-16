@@ -208,6 +208,14 @@ class ConfirmIn(BaseModel):
     level: str
     acknowledge: bool = Field(
         False, description="확인 필요가 남은 것을 알고도 확정 — 감사 로그에 남는다")
+    # 왜 넘어갔는지가 남아야 한다. 사고가 났을 때 "연락이 닿지 않았다" 와
+    # "물어볼 필요 없다고 봤다" 는 책임이 전혀 다른데, 지금까지 감사 로그는
+    # 둘을 구분하지 못했다. 사유별 집계가 파일1 4-2 '확인 질문 유효율' 의
+    # 분자가 된다 — '물어볼 필요 없음' 이 곧 쓸모없던 질문이다.
+    acknowledge_reason: Literal[
+        "이미 알고 있음", "물어볼 필요 없음", "연락이 닿지 않음", "기타"
+    ] | None = Field(
+        None, description="확인 없이 넘어간 이유. acknowledge=true 일 때만 쓰인다")
 
 
 class VerifyIn(BaseModel):
@@ -229,7 +237,21 @@ class PostRecordIn(BaseModel):
 
 
 class ApproveIn(BaseModel):
+    """승인하면서 초안을 고칠 수 있다.
+
+    예전에는 승인/거절만 받았다. 초안이 조금 틀렸을 때 사회복지사가 할 수 있는
+    일이 '거절' 뿐이라, 고쳐 쓰면 되는 기록까지 통째로 버려졌다. 무엇을 고쳤는지
+    남지 않아 초안 품질을 잴 수도 없었다(파일1 4-2 '사후기록 초안 수정률').
+
+    보내지 않은 칸은 초안 그대로 둔다 — 빈 문자열과 '안 보냄'은 다르다.
+    """
     approved: bool = True
+    treatment: str | None = None
+    next_visit: str | None = None
+    pharmacy: str | None = None
+    cautions: str | None = None
+    guardian_msg: str | None = None
+    profile_update: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -538,7 +560,8 @@ def confirm(intake_id: int, body: ConfirmIn, user: dict = Depends(current_user))
         # 확인 없이 넘어간 것은 반드시 흔적이 남아야 한다. 나중에 문제가 생겼을 때
         # "누가 무엇을 확인하지 않고 확정했는가"에 답할 수 있어야 한다.
         db.log_audit(user["name"], user["role"], "미확인 확정", "intake", str(intake_id),
-                     "확인 없이 확정: " + ", ".join(b["label"] for b in g["blockers"]))
+                     "확인 없이 확정: " + ", ".join(b["label"] for b in g["blockers"])
+                     + f" — 사유: {body.acknowledge_reason or '미기재'}")
     out = db.get_intake(intake_id)
     out["gate"] = gate.check(out.get("card"))
     return {"ok": True, "intake": out, "acknowledged": g["acknowledged"]}
@@ -581,6 +604,11 @@ def approve_post_record(record_id: int, body: ApproveIn,
     """AI는 프로필을 자동 변경하지 않는다 — 승인한 항목만 반영된다."""
     if not db.can(user["role"], "post.approve"):
         raise HTTPException(403, f"'{user['role']}' 역할에는 승인 권한이 없습니다")
+    # 고친 내용을 먼저 반영한다. 순서가 반대면 프로필에 초안이 들어간 뒤에
+    # 수정본이 저장돼, 프로필만 고치기 전 내용으로 남는다.
+    edits = body.model_dump(exclude={"approved"}, exclude_none=True)
+    if edits:
+        db.update_post_record(record_id, edits)
     res = db.approve_post_record(record_id, body.approved, user["name"], user["role"])
     # changed=False 는 이미 같은 상태였다는 뜻이다(재요청·더블클릭). 오류가 아니므로
     # 200 으로 돌려주되, 프로필에 반영됐는지를 화면이 구분할 수 있게 함께 내린다.

@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS post_records (
   cautions TEXT,                          -- 다음 동행 주의사항
   guardian_msg TEXT,                      -- 보호자 공유 메시지 초안
   profile_update TEXT,                    -- 케어 프로필 업데이트 제안
-  approved INTEGER DEFAULT 0              -- 사회복지사 승인 여부
+  approved INTEGER DEFAULT 0,             -- 사회복지사 승인 여부
+  draft_json TEXT                         -- AI가 처음 낸 초안(수정 전) 스냅샷
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -339,6 +340,10 @@ _ADDED_COLUMNS = [
     ("intakes", "card_json", "TEXT"),
     ("intakes", "transfer_status", "TEXT"),
     ("users", "password_hash", "TEXT"),
+    # AI가 처음 낸 초안. 승인 시점의 값과 비교해 사회복지사가 무엇을 고쳤는지
+    # 센다(파일1 4-2 '사후기록 초안 수정률'). 원본을 안 남기면 고쳤는지조차
+    # 알 수 없어, 사람이 와도 지표가 안 나온다.
+    ("post_records", "draft_json", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -789,21 +794,75 @@ def intake_counts() -> dict:
 
 # -------------------------------------------------------------- 사후기록 --
 
+POST_FIELDS = ("treatment", "next_visit", "pharmacy",
+               "cautions", "guardian_msg", "profile_update")
+
+
 def save_post_record(intake_id: int, phone: str, memo_raw: str, draft: dict) -> int:
     init_db()
     conn = get_conn()
     try:
+        # 초안을 그대로 한 벌 더 남긴다. 아래 컬럼들은 사회복지사가 고치면
+        # 덮어써지므로, 원본이 없으면 무엇을 고쳤는지 되돌아볼 수 없다.
+        snapshot = json.dumps({k: draft.get(k) for k in POST_FIELDS}, ensure_ascii=False)
         cur = conn.execute(
             """INSERT INTO post_records
                (intake_id,phone,created_at,memo_raw,treatment,next_visit,pharmacy,
-                cautions,guardian_msg,profile_update)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                cautions,guardian_msg,profile_update,draft_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (intake_id, normalize_phone(phone), _now(), memo_raw,
              draft.get("treatment"), draft.get("next_visit"), draft.get("pharmacy"),
-             draft.get("cautions"), draft.get("guardian_msg"), draft.get("profile_update")))
+             draft.get("cautions"), draft.get("guardian_msg"), draft.get("profile_update"),
+             snapshot))
         conn.commit()
         rid = cur.lastrowid
         return rid
+    finally:
+        conn.close()
+
+
+def update_post_record(record_id: int, edits: dict) -> int:
+    """승인 전에 사회복지사가 고친 내용을 반영한다. 고친 칸 수를 돌려준다.
+
+    초안(draft_json)은 건드리지 않는다 — 그게 비교 기준이다.
+    """
+    fields = {k: v for k, v in edits.items() if k in POST_FIELDS}
+    if not fields:
+        return 0
+    init_db()
+    conn = get_conn()
+    try:
+        sets = ", ".join(f"{k}=?" for k in fields)
+        conn.execute(f"UPDATE post_records SET {sets} WHERE id=?",
+                     (*fields.values(), record_id))
+        conn.commit()
+        return len(fields)
+    finally:
+        conn.close()
+
+
+def post_record_edit_stats(record_id: int) -> dict | None:
+    """초안과 현재 값을 칸별로 비교한다 — 파일1 4-2 '사후기록 초안 수정률'.
+
+    분모는 **초안이 실제로 값을 낸 칸**이다. AI가 비워 둔 칸은 고칠 것도
+    없어서, 분모에 넣으면 초안이 부실할수록 수정률이 좋아지는 뒤집힌 지표가
+    된다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM post_records WHERE id=?", (record_id,)).fetchone()
+        if row is None or not row["draft_json"]:
+            return None
+        draft = json.loads(row["draft_json"])
+        filled = [k for k in POST_FIELDS if (draft.get(k) or "").strip()]
+        kept = [k for k in filled if (draft.get(k) or "") == (row[k] or "")]
+        return {
+            "fields": len(filled),
+            "kept": len(kept),
+            "edited": [k for k in filled if k not in kept],
+            "kept_ratio": (len(kept) / len(filled)) if filled else None,
+        }
     finally:
         conn.close()
 
@@ -852,8 +911,18 @@ def approve_post_record(record_id: int, approved: bool,
     detail = row["profile_update"] or ""
     if not approved and row["approved"] == 1 and row["profile_update"]:
         detail += " (프로필 메모는 이미 반영됨 — 수기 확인 필요)"
+
+    # 초안을 얼마나 그대로 썼는지 승인할 때마다 남긴다. 이게 쌓인 것이
+    # 파일1 4-2 의 '사후기록 초안 수정률' 이다 — 나중에 따로 계산하는 게
+    # 아니라 승인 한 건이 곧 표본 한 건이다.
+    stats = post_record_edit_stats(record_id) if approved else None
+    if stats and stats["fields"]:
+        detail += (f" [초안 유지 {stats['kept']}/{stats['fields']}"
+                   + (f", 수정: {', '.join(stats['edited'])}" if stats["edited"] else "")
+                   + "]")
+
     log_audit(actor, role, "승인" if approved else "거절", "post_record", str(record_id), detail)
-    return {"changed": True, "applied": applied}
+    return {"changed": True, "applied": applied, "draft_kept": stats}
 
 
 def list_post_records(limit: int = 50) -> list[dict]:
