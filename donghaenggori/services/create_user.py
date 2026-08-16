@@ -1,6 +1,6 @@
 """사용자 생성 / 비밀번호 설정 — 운영자 전용 대화형 CLI.
 
-로그인은 **아이디**(직원번호)로 한다. 이메일은 연락처일 뿐이라 비워도 된다.
+로그인은 **아이디**(직원번호)로 한다.
 비밀번호는 인자·환경변수로 받지 않는다(쉘 히스토리·프로세스 목록에 남는다).
 getpass 로만 입력받는다. 같은 사용자 ID로 다시 실행하면 비밀번호 재설정으로도 쓴다
 (U001/U002처럼 이름만 시드돼 있고 비밀번호가 없는 기본 계정에 처음 비밀번호를
@@ -26,8 +26,6 @@ def run() -> None:
     if role not in ROLES:
         print(f"알 수 없는 역할: {role!r} — {ROLES} 중 하나여야 합니다")
         return
-    # 이메일은 연락처일 뿐이라 비워도 된다. 로그인은 아이디로 한다.
-    email = input("이메일 (선택, 그냥 Enter): ").strip() or None
     pw1 = getpass.getpass("비밀번호: ")
     pw2 = getpass.getpass("비밀번호 확인: ")
     if pw1 != pw2:
@@ -37,7 +35,7 @@ def run() -> None:
         print("비밀번호는 8자 이상이어야 합니다.")
         return
     try:
-        user = db.create_user(user_id, name, role, pw1, email)
+        user = db.create_user(user_id, name, role, pw1)
     except ValueError as e:
         print(f"실패: {e}")
         return
