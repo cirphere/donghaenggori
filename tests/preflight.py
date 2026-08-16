@@ -318,18 +318,34 @@ def check_compose_stack() -> None:
             "(지우면 app 하나만 뜬다)")
 
 
-def check_reset_guard() -> None:
-    """외부(터널) 요청을 흉내내 초기화가 막히는지 본다. 실제로 지우지 않는다."""
+def check_reset_guard(token: str | None = None) -> None:
+    """초기화가 막히는지 본다. **실제로 지우지 않는다.**
+
+    두 겹이다 — 로그인(401)과 서버 로컬(403). 토큰이 없으면 401 에서 걸리고,
+    토큰이 있으면 CF 헤더 때문에 403 에서 걸린다. 어느 쪽이든 막히면 통과다.
+
+    토큰을 주면 **바깥 겹(로컬 제한)까지** 확인된다. 안 주면 안쪽 겹만 본다 —
+    그래도 "아무나 지울 수 있다" 는 여기서 걸린다.
+    """
+    headers = {"Content-Type": "application/json",
+               "CF-Connecting-IP": "203.0.113.9",
+               "CF-Ray": "preflight-test"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     r = urllib.request.Request(BASE + "/api/reset", data=b"{}", method="POST",
-                               headers={"Content-Type": "application/json",
-                                        "CF-Connecting-IP": "203.0.113.9",
-                                        "CF-Ray": "preflight-test"})
+                               headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=30) as resp:
             log(FAIL, "초기화 차단", f"HTTP {resp.status} — 외부에서 데이터를 지울 수 있음!")
     except urllib.error.HTTPError as e:
-        log(OK if e.code == 403 else FAIL, "초기화 차단",
-            "외부 요청 403" if e.code == 403 else f"HTTP {e.code}")
+        if e.code == 403:
+            log(OK, "초기화 차단", "외부 요청 403 (로컬에서만 가능)")
+        elif e.code == 401:
+            log(OK if not token else FAIL, "초기화 차단",
+                "로그인 없이는 401" if not token
+                else "토큰을 줬는데 401 — 토큰이 만료됐거나 잘못됐다")
+        else:
+            log(FAIL, "초기화 차단", f"HTTP {e.code} — 401/403 이 아니다")
     except Exception as e:
         log(WARN, "초기화 차단", f"검사 실패: {type(e).__name__}")
 
@@ -418,7 +434,7 @@ def main() -> int:
     check_urgent(a.token)
     check_rbac(a.mgr_token)
     check_summary(a.token)
-    check_reset_guard()
+    check_reset_guard(a.token)
     check_compose_stack()
     if a.audio:
         check_stt(a.audio, a.token)

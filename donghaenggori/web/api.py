@@ -720,15 +720,30 @@ def _via_internet(request: Request) -> bool:
 
 
 @app.post("/api/reset", tags=["시스템"])
-def reset(request: Request) -> dict:
-    """데모 초기화. **외부(터널) 요청은 거부한다.**
+def reset(request: Request, user: dict = Depends(current_user)) -> dict:
+    """데모 초기화 — **로그인 + 서버 로컬**, 둘 다 만족해야 한다.
 
-    이 API에는 인증이 없어서, 막지 않으면 주소를 아는 사람이 시연 데이터를
-    통째로 날릴 수 있다. 로컬(리허설 스크립트·본인 브라우저)에서는 그대로 된다.
+    접수·감사로그·이력·세션을 통째로 지우는, 이 서비스에서 가장 파괴적인 호출이다.
+    확정도 승인도 토큰을 요구하는데 전체 삭제만 무인증인 건 앞뒤가 맞지 않았다.
+
+    예전에는 'Cloudflare 헤더가 붙었나' 하나만 봤다. 실제 배포에서는 인터넷
+    트래픽이 전부 터널을 거쳐 헤더가 붙으므로 막히긴 했지만, **방어선이 그
+    하나뿐**이었다 — nginx 기본 인증을 끄거나 포트를 루프백 밖으로 열거나
+    헤더를 안 붙이는 경로가 하나만 생겨도 곧바로 삭제 버튼이 된다.
+    직접 확인한 적이 있다(기본 인증을 끈 상태에서 200 {"ok":true}).
+
+    두 조건을 함께 건다.
+      · 로그인       — 누가 지웠는지가 남는다
+      · 서버 로컬     — 토큰이 유출돼도 인터넷에서는 못 지운다
     """
     if _via_internet(request):
         raise HTTPException(403, "외부에서는 초기화할 수 없습니다 (서버 로컬에서만 가능)")
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 초기화 권한이 없습니다")
     db.reset_db()
+    # 감사 로그도 지워지므로 지운 뒤에 남긴다 — 안 그러면 흔적이 함께 사라진다.
+    db.log_audit(user["name"], user["role"], "초기화", "system", "-",
+                 "시연 데이터 전체 초기화")
     return {"ok": True}
 
 

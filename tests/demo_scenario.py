@@ -94,10 +94,15 @@ def main(full: bool = False) -> int:
     say(f"오늘 {today} · 대상자 박순자 · 시드 초기화 후 시작")
     say("=" * 74)
 
-    api("POST", "/api/reset")
+    # 초기화도 로그인이 필요해졌다(가장 파괴적인 호출인데 유일하게 무인증이었다).
+    # 그래서 로그인 → 초기화 → **다시 로그인** 순이다. 초기화가 세션을 지우므로
+    # 방금 받은 토큰은 그 자리에서 죽는다.
+    r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
+    if r.status_code != 200:
+        print(f"사회복지사 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+        return 1
+    api("POST", "/api/reset", headers={"Authorization": f"Bearer {r.json()['token']}"})
 
-    # 로그인 — /api/reset이 세션을 지우므로 반드시 리셋 다음에 한다. confirm/verify/
-    # approve/audit는 이제 인증 없이 안 된다.
     r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
     if r.status_code != 200:
         print(f"사회복지사 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
@@ -137,7 +142,12 @@ def main(full: bool = False) -> int:
     c = d["card"]
     iid = d["intake_id"]
     say(f"   {mark(True)} 대상자   : {c['target']} ({c['phone_masked']})")
-    say(f"   {mark(True)} 의도     : {d['intent']}  ({d['intent_source']} {d['intent_confidence']:.2f})")
+    # 확신도는 규칙 폴백일 때 None 이다. :.2f 로 바로 찍으면 TypeError 로 죽는데,
+    # 하필 **모델이 안 올라간 상태**에서만 그렇다 — 폴백이 도는지 확인하려고
+    # 돌리는 스크립트가 그때 죽으면 앞뒤가 안 맞는다.
+    conf = d.get("intent_confidence")
+    say(f"   {mark(True)} 의도     : {d['intent']}  "
+        f"({d['intent_source']}{f' {conf:.2f}' if conf is not None else ''})")
     say(f"   {mark(True)} 병원 후보: {c['hospital']}  [{c['hospital_status']}]")
     say(f"                근거: {c['reasons'][0] if c['reasons'] else '—'}")
     say(f"   {mark(True)} 방문 예정: {c['date_label']} → {c['date_value']}")
