@@ -9,12 +9,40 @@
 
 ---
 
+## 0. 먼저 — 직원용 API 는 전부 로그인이 필요하다
+
+아래 엔드포인트를 그냥 부르면 **전부 401** 이다. `POST /api/auth/login` 으로 받은
+토큰을 헤더에 실어야 한다.
+
+```
+POST /api/auth/login   { email, password }  →  { token, user }
+GET  /api/auth/me                            →  현재 로그인한 사용자
+POST /api/auth/logout
+
+이후 모든 요청:  Authorization: Bearer <token>
+```
+
+- **`actor`·`role` 을 요청 본문에 넣지 않는다.** 서버가 토큰에서 신원을 꺼내
+  쓴다. 보내도 무시되지만, 화면이 "김○○ 사회복지사" 를 적어 보내던 시절에는
+  **화면이 말하는 사람과 감사 로그에 남는 사람이 달라졌다.**
+- 토큰은 `sessionStorage` 에 둔다. `localStorage` 는 브라우저를 껐다 켜도 남고
+  같은 오리진의 모든 탭이 공유해서, **복지관 공용 PC 에서 다음 사람이 앉으면
+  그대로 로그인된 상태**가 된다.
+- 401 은 화면마다 따로 처리하지 말고 한곳에서 받아 로그인으로 되돌린다.
+  따로 처리하면 어떤 버튼은 로그인으로 가고 어떤 버튼은 빨간 글씨만 뜬다.
+- **예외는 보호자 접수(`POST /api/guardian/intakes`) 하나뿐**이다. 이건 토큰
+  없이 부르고, 응답에 대상자 프로필·이력이 들어 있지 않다(`GuardianIntakeOut`).
+
+배선은 `frontend/public/api.js` 가 이미 하고 있으니 그 파일을 그대로 가져가면 된다.
+
+---
+
 ## 1. 감사 로그 — 제일 급하다
 
-`GET /api/audit?limit=100&role=사회복지사`
+`GET /api/audit?limit=100`  (토큰 필요)
 
 ```json
-[{ "id": 12, "at": "2026-08-14 17:22", "actor": "김○○ 사회복지사",
+[{ "id": 12, "at": "2026-08-16 19:09", "actor": "김복지",
    "role": "사회복지사", "action": "확정",
    "target_type": "intake", "target_id": "3",
    "detail": "병원=고흥정형외과 / 방문일=2026-08-18 / 지원수준=휠체어·부축 동행" }]
@@ -76,7 +104,7 @@
 세 가지 입력을 받는다.
 
 ```
-POST /api/intakes                  { phone, utterance, channel, save }
+POST /api/intakes                  { phone, utterance, channel, save }   (토큰 필요)
 POST /api/stt                      multipart file  → 텍스트만
 POST /api/intakes/from-audio       multipart file + ?phone=&channel=  → 접수카드까지
 ```
@@ -103,7 +131,7 @@ POST /api/intakes/from-audio       multipart file + ?phone=&channel=  → 접수
 
 ```
 POST /api/post-records                     → 초안 생성 (항상 '검토 필요')
-POST /api/post-records/{id}/approve        { approved: true, role }
+POST /api/post-records/{id}/approve        { approved: true }
 → { "ok": true, "approved": true, "changed": true, "applied": true }
 ```
 
