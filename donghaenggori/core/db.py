@@ -137,6 +137,22 @@ def can(role: str, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, set())
 
 
+def _with_permissions(user: dict | None) -> dict | None:
+    """사용자 dict 에 권한 목록을 붙인다 — 화면이 버튼을 가릴 근거.
+
+    화면에서 역할 이름을 하드코딩하지 않게 하려는 것이다. `role === "사회복지사"`
+    같은 판정을 JS 에 두면 권한표가 두 곳이 되고, 역할이 하나 늘 때 한쪽만
+    고치면 화면과 서버가 어긋난다. 서버가 목록을 주면 화면은 포함 여부만 본다.
+
+    화면이 가리는 것은 안내일 뿐이고 **실제 경계는 서버의 403** 이다.
+    """
+    if not user:
+        return user
+    user = dict(user)
+    user["permissions"] = sorted(ROLE_PERMISSIONS.get(user.get("role"), set()))
+    return user
+
+
 # ------------------------------------------------------------------ 인증 --
 # 새 pip 의존성을 안 늘리려고 표준 라이브러리만 쓴다. bcrypt 급 보안이 필요한
 # 규모가 아니라(내부 소수 인원용) PBKDF2-HMAC-SHA256으로 충분하다.
@@ -227,7 +243,7 @@ def verify_login(user_id: str, password: str) -> dict | None:
         return None
     user = dict(user)
     user.pop("password_hash", None)
-    return user
+    return _with_permissions(user)
 
 
 def create_session(user_id: str, ttl_seconds: int) -> str:
@@ -266,7 +282,8 @@ def resolve_session(token: str) -> dict | None:
             conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
             conn.commit()
             return None
-        return {"id": row["id"], "name": row["name"], "role": row["role"]}
+        return _with_permissions(
+            {"id": row["id"], "name": row["name"], "role": row["role"]})
     finally:
         conn.close()
 
