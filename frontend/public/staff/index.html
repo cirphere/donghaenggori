@@ -13,19 +13,36 @@
     <strong>동행고리 AI</strong>
     <span class="sub">사회복지사 콘솔 — AI는 후보·근거까지, 확정은 사람</span>
   </div>
+  <div class="who">
+    <span id="whoami"></span>
+    <button id="btnLogout" class="linkish hidden">로그아웃</button>
+  </div>
   <div class="status" id="sysStatus">상태 확인 중…</div>
 </header>
 
 <!--
-  이 화면은 공개 주소에 두면 안 된다. 백엔드가 요청 본문의 role 을 그대로
-  믿기 때문에(인증 미구현), 여기 접근할 수 있으면 확정·승인·감사로그 조회가
-  전부 가능하다. 배포에서는 /staff 경로를 Cloudflare Access 뒤에 둔다.
+  로그인 화면. 백엔드가 토큰으로 신원을 확인하므로 화면도 여기서 받는다.
+  토큰은 sessionStorage 에 둔다 — 공용 PC 에서 탭을 닫으면 사라지게(api.js 참조).
+
+  배포에서는 이 경로(/staff)를 Cloudflare Access 나 nginx 기본 인증 뒤에 두는
+  것을 권장한다. 화면 자체를 감추면 로그인 폼이 무차별 대입의 표적이 되지
+  않는다 — API 는 토큰으로 이미 지켜지므로 이건 추가 방어선이다.
   frontend/nginx.conf 와 docs/DEPLOY-ACCESS.md 참조.
 -->
-<div class="note">
-  내부용 화면입니다. 인증은 Cloudflare Access가 담당하며, 이 페이지 자체에는
-  로그인 기능이 없습니다.
-</div>
+<section class="panel login" id="view-login">
+  <h2>사회복지사 로그인</h2>
+  <p class="dim">계정은 기관 운영자가 만듭니다.</p>
+  <label>이메일
+    <input id="loginEmail" type="email" autocomplete="username" placeholder="name@example.org">
+  </label>
+  <label>비밀번호
+    <input id="loginPassword" type="password" autocomplete="current-password">
+  </label>
+  <button id="btnLogin" class="primary wide">로그인</button>
+  <div id="loginError" class="bad hidden"></div>
+</section>
+
+<div id="app" class="hidden">
 
 <nav class="tabs">
   <button class="tab active" data-view="queue">접수 대기</button>
@@ -103,6 +120,7 @@
   </section>
 
 </main>
+</div><!-- #app -->
 
 <script type="module" src="staff.js"></script>
 </body>

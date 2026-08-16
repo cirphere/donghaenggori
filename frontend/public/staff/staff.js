@@ -1,14 +1,14 @@
 // 사회복지사 콘솔 — 접수 확인·확정, 사후기록 승인, 감사 로그.
 //
 // 보호자 웹과 나눈 이유는 화면 구성이 아니라 **권한**이다. 여기서만 확정·승인·
-// 감사로그 조회를 한다. 다만 백엔드가 아직 요청 본문의 role 을 그대로 믿으므로,
-// 이 파일이 권한을 지켜주지는 못한다 — 실제 경계는 Cloudflare Access 다.
-// 인증이 붙으면 ROLE/ACTOR 를 서버가 준 신원으로 바꾸고 이 상수는 지운다.
+// 감사로그 조회를 한다.
+//
+// 신원은 **서버가 정한다.** 예전엔 이 파일에 ROLE/ACTOR 를 상수로 박아 요청
+// 본문에 실어 보냈는데, 그러면 화면이 말하는 사람과 감사 로그에 남는 사람이
+// 달라진다. 지금은 로그인 토큰에서 서버가 꺼내 쓰고, 화면은 /api/auth/me 가
+// 준 이름을 그대로 보여주기만 한다.
 
-import { api } from "../api.js";
-
-const ROLE = "사회복지사";
-const ACTOR = "김○○ 사회복지사";
+import { api, session } from "../api.js";
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -240,7 +240,7 @@ function blockerBox(r, b, d, draft, readForm) {
     readForm();                       // 아래쪽에 적어 둔 값을 먼저 챙긴다
     save.disabled = true;
     try {
-      const res = await api.verifyField(r.id, b.field, value, ACTOR, ROLE);
+      const res = await api.verifyField(r.id, b.field, value);
       // 확인한 값이 확정값이다. 이걸 안 옮기면 확인 전 값으로 확정된다.
       if (b.field === "hospital") draft.hospital = value;
       if (b.field === "date") draft.date = value;
@@ -257,7 +257,7 @@ function blockerBox(r, b, d, draft, readForm) {
 
 async function sendConfirm(r, payload, acknowledge = false) {
   try {
-    await api.confirmIntake(r.id, { ...payload, actor: ACTOR, role: ROLE, acknowledge });
+    await api.confirmIntake(r.id, { ...payload, acknowledge });
     closeModal();
     loadQueue();
   } catch (e) {
@@ -644,7 +644,7 @@ function renderDraft(d) {
   const act = async (approved) => {
     ok.disabled = no.disabled = true;
     try {
-      const r = await api.approvePostRecord(d.record_id, approved, ROLE);
+      const r = await api.approvePostRecord(d.record_id, approved);
       msg.textContent = !r.changed ? "이미 같은 상태입니다(중복 요청)."
         : approved ? (r.applied ? "승인 — 프로필에 반영했습니다." : "승인했습니다(반영할 제안 없음).")
         : "거절했습니다.";
@@ -687,5 +687,68 @@ async function loadAudit() {
 
 $("btnBack").onclick = backToQueue;
 
-loadStatus();
-loadQueue();
+// ── 로그인 ─────────────────────────────────────────────────
+//
+// 화면을 두 덩어리로 나눠 두고(#view-login / #app) 통째로 바꾼다. 탭마다
+// 로그인 여부를 확인하는 방식은 한 군데만 빠뜨려도 401 이 새어 나온다.
+
+function showLogin(message) {
+  $("view-login").classList.remove("hidden");
+  $("app").classList.add("hidden");
+  $("whoami").textContent = "";
+  $("btnLogout").classList.add("hidden");
+  const err = $("loginError");
+  if (message) { err.textContent = message; err.classList.remove("hidden"); }
+  else { err.classList.add("hidden"); }
+  $("loginPassword").value = "";
+}
+
+function showApp(user) {
+  $("view-login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("whoami").textContent = user ? `${user.name} (${user.role})` : "";
+  $("btnLogout").classList.remove("hidden");
+  loadStatus();
+  loadQueue();
+}
+
+// 세션이 끊기면(만료·서버 재시작·/api/reset) 어느 요청에서든 여기로 돌아온다.
+// api.js 가 401 을 받으면 토큰을 지우고 이걸 부른다.
+session.onUnauthorized(() => showLogin("세션이 만료되었습니다. 다시 로그인해 주세요."));
+
+async function doLogin() {
+  const email = $("loginEmail").value.trim();
+  const password = $("loginPassword").value;
+  if (!email || !password) return showLogin("이메일과 비밀번호를 입력해 주세요.");
+  $("btnLogin").disabled = true;
+  try {
+    const d = await api.login(email, password);
+    session.save(d.token, d.user);
+    showApp(d.user);
+  } catch (e) {
+    showLogin(e.message);
+  } finally {
+    $("btnLogin").disabled = false;
+  }
+}
+
+$("btnLogin").onclick = doLogin;
+$("loginPassword").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
+$("btnLogout").onclick = async () => {
+  // 서버 세션도 지운다. 실패해도 화면은 로그아웃시킨다 — 토큰을 들고 있는
+  // 것보다 낫다.
+  try { await api.logout(); } catch { /* 이미 만료됐을 수 있다 */ }
+  session.clear();
+  showLogin();
+};
+
+// 새로고침해도 로그인이 유지되게 — 다만 토큰이 살아 있는지는 서버에 물어본다.
+// sessionStorage 에 남아 있다고 유효한 것은 아니다(서버 재시작·만료).
+(async () => {
+  if (!session.token) return showLogin();
+  try {
+    showApp(await api.me());
+  } catch {
+    showLogin();          // 401 이면 api.js 가 이미 토큰을 지웠다
+  }
+})();
