@@ -119,6 +119,15 @@ curl -X POST https://<도메인>/api/intakes/1/confirm \
   원래부터 무인증으로 설계됐다(`docs/FRONTEND.md` "1. 접수" 참조) — `phone`·
   `utterance`만 받고 `channel`은 서버가 강제로 고정한다. 여기로 할 수 있는 건
   "접수 신청 하나 만들기"뿐, 읽기는 전혀 없다.
+- **응답도 좁혀 두었다**(`GuardianIntakeOut`). 예전에는 직원용 응답을 그대로
+  돌려줘서, 남의 번호만 넣으면 이름·보호자 연락처·거동 상태·독거 여부·진료
+  이력이 통째로 나왔다 — 쓰기 전용이라는 말이 응답까지 안전하다는 뜻은
+  아니었다. 지금은 보호자가 적어 보낸 것만 돌려준다.
+  `tests/test_guardian_privacy.py` 가 회귀로 잡는다.
+- nginx 도 이 경로와 보호자 페이지 네 파일(`/`, `/index.html`, `/guardian.js`,
+  `/style.css`, `/api.js`)만 기본 인증에서 뺀다. `/staff` 와 나머지 `/api/` 는
+  그대로 막힌다 — `location =` 이 정규식 location 보다 먼저 매칭되는 성질을
+  쓴 것이라, 파일을 추가할 때 같은 방식으로 한 줄씩 여는 것이 안전하다.
 - 그 외 모든 쓰기·조회 API(`/api/intakes` 직원용, `/api/dashboard`, `/api/status`,
   `/api/facilities`, `confirm`/`verify`/`resolve`/`approve`/`audit` 등)는
   `Authorization: Bearer <token>`이 없으면 401이다. 보호자 웹의 JS는 애초에

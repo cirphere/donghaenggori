@@ -171,6 +171,32 @@ class GuardianIntakeIn(BaseModel):
     utterance: str = Field(..., description="신청 내용")
 
 
+class GuardianIntakeOut(BaseModel):
+    """보호자 웹 응답 — **부른 사람이 스스로 넣은 것만 돌려준다.**
+
+    이 엔드포인트는 로그인 없이 열려 있고, phone 은 누구나 임의로 적을 수 있다.
+    저장된 기록에서 나온 값을 하나라도 돌려주면 그 순간 조회 API 가 된다 —
+    번호를 바꿔가며 부르면 등록된 어르신의 이름·보호자 연락처·거동 상태·독거
+    여부·진료 이력이 그대로 빠져나간다(실제로 재현했다).
+
+    그래서 직원용 IntakeOut 을 쓰지 않는다. 여기 있는 값은 전부 발신자가 적어
+    보낸 문장에서 나온 것이라, 돌려줘도 새로 알려주는 것이 없다.
+
+    **절대 넣지 않는 것** — profile, card, target, target_candidates,
+    facilities, 그리고 과거 이력에서 고른 병원. card 는 근거 문장에도 이력이
+    들어간다("최근 6개월 내 ○○정형외과의원 2회 방문").
+    """
+    ok: bool = True
+    intake_id: int | None = None
+    urgent: bool = False
+    urgent_confident: bool = True
+    urgent_message: str | None = None
+    raw_utterance: str = ""                          # 본인이 적어 보낸 문장
+    dept: str | None = None                          # 그 문장에서 뽑은 진료과
+    date: dict | None = None                         # 그 문장에서 뽑은 날짜
+    policy: Policy = Policy()
+
+
 class ConfirmIn(BaseModel):
     hospital: str
     date: str
@@ -330,15 +356,29 @@ def create_intake(body: IntakeIn, user: dict = Depends(current_user)) -> dict:
     return _run_intake(body)
 
 
-@app.post("/api/guardian/intakes", tags=["보호자 웹"], response_model=IntakeOut)
+@app.post("/api/guardian/intakes", tags=["보호자 웹"], response_model=GuardianIntakeOut)
 def guardian_create_intake(body: GuardianIntakeIn) -> dict:
     """보호자 웹 전용 — 무인증. channel은 항상 '앱·웹(보호자)'로 고정된다.
 
-    로그인 없이 열려 있는 유일한 쓰기 API다. 읽기(목록·상태·감사로그 등)는 전혀
-    없고 접수 하나를 만드는 것만 할 수 있어서, 열어놔도 노출되는 정보가 없다.
+    로그인 없이 열려 있는 유일한 쓰기 API다. **응답은 GuardianIntakeOut 으로
+    좁힌다** — 예전에는 직원용 응답을 그대로 돌려줘서, 토큰 없이 남의 번호만
+    넣으면 그 어르신의 프로필과 진료 이력이 전부 나왔다.
     """
-    return _run_intake(IntakeIn(phone=body.phone, utterance=body.utterance,
-                                channel="앱·웹(보호자)", save=True))
+    res = _run_intake(IntakeIn(phone=body.phone, utterance=body.utterance,
+                               channel="앱·웹(보호자)", save=True))
+    # 화이트리스트로 옮겨 담는다. res 를 그대로 넘기고 response_model 로 거르는
+    # 방식은 쓰지 않는다 — 모델에 필드가 하나 늘거나 extra 설정이 바뀌면 조용히
+    # 다시 새기 때문이다. 여기서 명시적으로 고른 것만 나간다.
+    return {
+        "ok": True,
+        "intake_id": res.get("intake_id"),
+        "urgent": res.get("urgent", False),
+        "urgent_confident": res.get("urgent_confident", True),
+        "urgent_message": res.get("urgent_message"),
+        "raw_utterance": body.utterance,
+        "dept": res.get("dept"),        # analysis 값 — 발신자가 적은 문장에서 나온다
+        "date": res.get("date"),        # 〃
+    }
 
 
 @app.post("/api/stt", tags=["화면02 접수"])
