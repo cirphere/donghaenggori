@@ -732,14 +732,16 @@ def reset(request: Request, user: dict = Depends(current_user)) -> dict:
     헤더를 안 붙이는 경로가 하나만 생겨도 곧바로 삭제 버튼이 된다.
     직접 확인한 적이 있다(기본 인증을 끈 상태에서 200 {"ok":true}).
 
-    두 조건을 함께 건다.
+    세 조건을 함께 건다.
       · 로그인       — 누가 지웠는지가 남는다
+      · 관리자        — 사회복지사도 못 지운다. 확정·승인은 매일 하는 일이지만
+                       전체 삭제는 그렇지 않다. 같은 권한으로 묶을 일이 아니다
       · 서버 로컬     — 토큰이 유출돼도 인터넷에서는 못 지운다
     """
     if _via_internet(request):
         raise HTTPException(403, "외부에서는 초기화할 수 없습니다 (서버 로컬에서만 가능)")
-    if not db.can(user["role"], "intake.confirm"):
-        raise HTTPException(403, f"'{user['role']}' 역할에는 초기화 권한이 없습니다")
+    if not db.can(user["role"], "admin"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 초기화 권한이 없습니다 (관리자 전용)")
     db.reset_db()
     # 감사 로그도 지워지므로 지운 뒤에 남긴다 — 안 그러면 흔적이 함께 사라진다.
     db.log_audit(user["name"], user["role"], "초기화", "system", "-",

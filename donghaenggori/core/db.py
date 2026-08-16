@@ -119,6 +119,10 @@ CREATE INDEX IF NOT EXISTS idx_fac_region ON facilities(region);
 DEFAULT_USERS = [
     ("U001", "김○○ 사회복지사", "사회복지사"),
     ("U002", "최정미 동행매니저", "동행매니저"),
+    # 관리자는 데이터 전체 초기화(/api/reset)를 할 수 있는 유일한 역할이다.
+    # 자리를 만들어 두지 않으면 운영자가 역할 이름을 몰라 계정을 못 만든다.
+    # 비밀번호는 services/create_user.py 로 넣기 전까지 비어 있어 로그인이 안 된다.
+    ("U003", "운영자", "관리자"),
 ]
 
 # 역할별 권한 — 화면 01의 "권한: 접수 확정·수정 (RBAC)"

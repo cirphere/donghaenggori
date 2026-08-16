@@ -83,6 +83,10 @@ def main(full: bool = False) -> int:
     # 계정은 미리 만들어 둬야 한다: python -m donghaenggori.services.create_user
     sw_email, sw_pw = os.environ.get("DEMO_SW_EMAIL"), os.environ.get("DEMO_SW_PASSWORD")
     mgr_email, mgr_pw = os.environ.get("DEMO_MGR_EMAIL"), os.environ.get("DEMO_MGR_PASSWORD")
+    # 초기화는 관리자만 할 수 있다. 없으면 초기화를 건너뛰고 계속한다 —
+    # 리허설을 아예 못 돌리는 것보다는 낫지만, 남은 데이터 때문에 감사 로그
+    # 건수 같은 검사가 어긋날 수 있어서 크게 알린다.
+    adm_email, adm_pw = os.environ.get("DEMO_ADMIN_EMAIL"), os.environ.get("DEMO_ADMIN_PASSWORD")
     if not (sw_email and sw_pw and mgr_email and mgr_pw):
         print("DEMO_SW_EMAIL/DEMO_SW_PASSWORD, DEMO_MGR_EMAIL/DEMO_MGR_PASSWORD 환경변수가 필요합니다.")
         print("  python -m donghaenggori.services.create_user 로 사회복지사·동행매니저 계정을 먼저 만드세요.")
@@ -94,14 +98,22 @@ def main(full: bool = False) -> int:
     say(f"오늘 {today} · 대상자 박순자 · 시드 초기화 후 시작")
     say("=" * 74)
 
-    # 초기화도 로그인이 필요해졌다(가장 파괴적인 호출인데 유일하게 무인증이었다).
-    # 그래서 로그인 → 초기화 → **다시 로그인** 순이다. 초기화가 세션을 지우므로
-    # 방금 받은 토큰은 그 자리에서 죽는다.
-    r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
-    if r.status_code != 200:
-        print(f"사회복지사 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
-        return 1
-    api("POST", "/api/reset", headers={"Authorization": f"Bearer {r.json()['token']}"})
+    # 초기화는 **관리자 전용**이 됐다(가장 파괴적인 호출인데 유일하게 무인증이었다).
+    # 관리자로 로그인 → 초기화 순이다. 초기화가 세션을 전부 지우므로 아래에서
+    # 사회복지사·동행매니저 로그인을 **그다음에** 한다 — 먼저 받아두면 그 자리에서 죽는다.
+    if adm_email and adm_pw:
+        r, _ = api("POST", "/api/auth/login", json={"email": adm_email, "password": adm_pw})
+        if r.status_code != 200:
+            print(f"관리자 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+            return 1
+        rr, _ = api("POST", "/api/reset",
+                    headers={"Authorization": f"Bearer {r.json()['token']}"})
+        if rr.status_code != 200:
+            print(f"초기화 실패: HTTP {rr.status_code} {rr.text[:120]}")
+            return 1
+    else:
+        say("   \033[33m※ DEMO_ADMIN_EMAIL/PASSWORD 가 없어 초기화를 건너뜁니다 —"
+            " 남은 데이터 때문에 일부 검사가 어긋날 수 있습니다.\033[0m")
 
     r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
     if r.status_code != 200:
