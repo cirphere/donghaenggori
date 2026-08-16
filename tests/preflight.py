@@ -71,6 +71,63 @@ def _auth(token: str | None) -> dict:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+# 토큰 없이 부르는 검사들 — **토큰이 없어도 반드시 돈다.**
+#
+# 나머지 검사는 전부 --token 이 없으면 WARN 으로 건너뛴다. 그래서 인증이
+# 통째로 깨져도 preflight 가 초록으로 끝나던 구간이 있었다. 인증을 도입한
+# 커밋에서 무인증 거절을 확인하던 검사가 사라졌고, 그 뒤로 배포 게이트가
+# "대시보드가 익명에게 열려 있다" 를 잡지 못했다.
+#
+# 이 두 검사는 토큰이 필요 없다. 없다는 것 자체가 검사 조건이다.
+
+# 로그인해야만 열려야 하는 곳. 하나라도 200 이면 데이터가 익명에게 나간다.
+_MUST_BE_401 = (
+    ("GET", "/api/dashboard"),
+    ("GET", "/api/intakes?limit=1"),
+    ("GET", "/api/audit?limit=1"),
+    ("GET", "/api/status"),
+    ("POST", "/api/intakes"),
+)
+
+
+def check_auth_required() -> None:
+    open_paths = []
+    for method, path in _MUST_BE_401:
+        body = {"phone": "010-0000-0000", "utterance": "점검"} if method == "POST" else None
+        code, _ = req(path, method=method, body=body, timeout=20)
+        if code != 401:
+            open_paths.append(f"{path}→{code}")
+    if open_paths:
+        log(FAIL, "무인증 차단", "토큰 없이 열린다: " + ", ".join(open_paths))
+    else:
+        log(OK, "무인증 차단", f"{len(_MUST_BE_401)}개 경로가 토큰 없이는 401")
+
+
+def check_guardian_privacy() -> None:
+    """보호자 경로는 무인증이어야 하고, 그 응답에 저장된 기록이 섞이면 안 된다.
+
+    phone 을 아무나 적을 수 있어서, 프로필이 한 줄이라도 실리면 번호를 바꿔가며
+    부르는 조회 API 가 된다. 실제로 그런 적이 있어서 배포 전에 매번 확인한다.
+    """
+    code, body = req("/api/guardian/intakes", method="POST",
+                     body={"phone": "010-1234-5678", "utterance": "다음주에 병원 가야 해요"},
+                     timeout=60)
+    if code != 200:
+        log(FAIL, "보호자 접수", f"HTTP {code} — 무인증으로 열려 있어야 한다: {body}")
+        return
+    blob = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
+    # 시드 프로필에 있는 값들. 응답 어디에도 나오면 안 된다.
+    hits = [w for w in ("박순자", "이지현", "보행기", "낙상", "장기요양",
+                        "정형외과의원", "무릎", "생활지원사") if w in blob]
+    leaked_keys = [k for k in ("profile", "card", "target", "facilities")
+                   if isinstance(body, dict) and k in body]
+    if hits or leaked_keys:
+        log(FAIL, "보호자 응답 범위",
+            f"저장된 기록이 응답에 섞였다 — 값 {hits} 키 {leaked_keys}")
+    else:
+        log(OK, "보호자 응답 범위", "무인증 200, 프로필·이력 없음")
+
+
 def check_models(token: str | None) -> None:
     if not token:
         log(WARN, "상태 조회", "--token 또는 PREFLIGHT_TOKEN 이 없어 건너뜀")
@@ -349,6 +406,11 @@ def main() -> int:
     if not check_reachable():
         print("  서버에 연결할 수 없습니다. 컨테이너가 떠 있는지 확인하세요.\n")
         return 1
+
+    # 토큰 없이도 도는 것을 먼저. 이 둘이 preflight 의 최소 보장선이다 —
+    # --token 을 안 주고 돌려도 인증이 깨진 배포는 여기서 걸린다.
+    check_auth_required()
+    check_guardian_privacy()
 
     check_models(a.token)
     check_warmup(a.token)

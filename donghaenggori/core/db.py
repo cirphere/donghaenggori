@@ -178,6 +178,13 @@ def create_user(user_id: str, name: str, role: str, email: str, password: str) -
             "ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, "
             "email=excluded.email, password_hash=excluded.password_hash",
             (user_id, name, role, email, pw_hash))
+        # 비밀번호를 바꾸면 그 사람의 기존 세션도 끊는다.
+        #
+        # 안 끊으면 토큰이 유출됐을 때 비밀번호를 재설정해도 소용이 없다 —
+        # 훔친 토큰이 만료(기본 12시간)까지 그대로 살아서 확정도 하고 감사
+        # 로그도 읽는다. 운영자는 "막았다" 고 믿는데 안 막힌 상태가 된다.
+        # 토큰을 폐기할 경로가 이것 말고는 없다.
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         conn.commit()
         return {"id": user_id, "name": name, "role": role, "email": email}
     finally:
@@ -215,7 +222,7 @@ def create_session(user_id: str, ttl_seconds: int) -> str:
     try:
         conn.execute(
             "INSERT INTO sessions (token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)",
-            (_hash_token(token), user_id, _now(), expires.strftime("%Y-%m-%d %H:%M:%S")))
+            (_hash_token(token), user_id, _now(), _ts(expires)))
         conn.commit()
     finally:
         conn.close()
@@ -233,7 +240,12 @@ def resolve_session(token: str) -> dict | None:
             "JOIN users u ON u.id = s.user_id WHERE s.token_hash=?", (token_hash,)).fetchone()
         if not row:
             return None
-        if row["expires_at"] < _now():
+        # 같은 형식으로 만든 문자열끼리 비교한다. 예전엔 만료를 초까지
+        # ("%H:%M:%S"), 현재 시각을 분까지("%H:%M") 찍어 놓고 문자열로
+        # 비교했다 — 접두사가 같고 길이가 달라서 만료가 최대 59초 늦게
+        # 걸렸고, 맞아떨어진 것도 길이 덕분이지 의도가 아니었다. 한쪽
+        # 포맷만 바꾸면 조용히 뒤집힌다.
+        if row["expires_at"] < _ts():
             conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
             conn.commit()
             return None
@@ -850,7 +862,18 @@ def facility_counts() -> dict[str, int]:
 # ------------------------------------------------------------------ 기타 --
 
 def _now() -> str:
+    """사람이 읽는 시각 — 화면·감사 로그용. 분까지만."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def _ts(when: datetime.datetime | None = None) -> str:
+    """비교하는 시각 — 세션 만료용. **초까지 찍는다.**
+
+    _now() 와 섞어 쓰면 안 된다. 둘은 자리수가 달라서 문자열 비교가
+    엉킨다(접두사가 같고 길이가 다르면 짧은 쪽이 작다). 쓰는 쪽과 비교하는
+    쪽이 같은 함수를 쓰게 나눠 뒀다.
+    """
+    return (when or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def reset_db() -> None:
@@ -859,6 +882,12 @@ def reset_db() -> None:
     conn = get_conn()
     try:
         conn.executescript(SCHEMA)
+        # SCHEMA 에 없는 뒤늦게 늘어난 컬럼들(users.email·password_hash 등)을
+        # 여기서도 붙인다. 빠뜨리면 init_db 없이 reset_db 를 먼저 부른
+        # 프로세스가 _inited=True 를 보고 마이그레이션을 영영 건너뛴다 —
+        # 그 프로세스에서 로그인을 시도하면 `no such column: email` 로 죽는다.
+        # (services/seed.py 의 write_and_load 가 그 호출 순서다)
+        _migrate(conn)
         # users는 안 지운다 — 로그인 계정은 데모 데이터가 아니라 운영자 정보다.
         # 지우면 리셋할 때마다 비밀번호가 통째로 날아가 아무도 로그인 못 하게 된다.
         for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions"):
