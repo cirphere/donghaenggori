@@ -446,6 +446,36 @@ def get_profile(phone: str) -> dict | None:
         conn.close()
 
 
+def list_profiles(query: str | None = None, limit: int = 50) -> list[dict]:
+    """대상자 목록·검색 — 이름 또는 전화번호.
+
+    **목록에는 건강·보호자 정보를 싣지 않는다.** 화면에서 필요한 것은 누구인지
+    고르는 데 쓸 최소한이고, 상세는 get_profile 로 따로 받는다. 목록 한 번에
+    스무 명의 독거 여부와 보호자 연락처가 통째로 나가면, 그 화면을 여는 것
+    자체가 개인정보 열람이 된다.
+
+    전화번호로 찾을 때는 정규화해서 비교한다 — 화면에서 '010-1234-5678' 로
+    쳐도 '01012345678' 로 저장된 것을 찾아야 한다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        sql = ("SELECT phone, id, name, age, region, "
+               "       (SELECT COUNT(*) FROM history h WHERE h.phone = p.phone) AS visits, "
+               "       (SELECT MAX(date) FROM history h WHERE h.phone = p.phone) AS last_visit "
+               "FROM profiles p")
+        args: list = []
+        if query:
+            q = (query or "").strip()
+            sql += " WHERE name LIKE ? OR phone LIKE ?"
+            args += [f"%{q}%", f"%{normalize_phone(q)}%"]
+        sql += " ORDER BY name LIMIT ?"
+        args.append(limit)
+        return [dict(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.close()
+
+
 def find_by_guardian_phone(phone: str) -> list[dict]:
     """보호자 번호로 대상자 후보를 역조회한다 (대리 접수 대응).
 

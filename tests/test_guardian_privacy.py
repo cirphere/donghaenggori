@@ -94,6 +94,32 @@ def main() -> int:
     check("channel 을 클라이언트가 못 바꾼다",
           row and row["channel"] == "앱·웹(보호자)", row["channel"] if row else "접수 없음")
 
+    # ── 대상자 조회는 로그인 뒤에만, 목록에는 민감정보를 안 싣는다 ────
+    #
+    # 여기서 나가는 것이 건강 상태·보호자 연락처·독거 여부다. 목록 한 번에
+    # 스무 명 분이 통째로 나가면 화면을 여는 것 자체가 개인정보 열람이 된다.
+    check("대상자 목록은 토큰 없이 401", c.get("/api/profiles").status_code == 401)
+    check("대상자 상세는 토큰 없이 401",
+          c.get(f"/api/profiles/{REGISTERED}").status_code == 401)
+
+    db.create_user("T900", "테스트 복지사", "사회복지사", "pw-throwaway-only")
+    auth = {"Authorization": "Bearer " + c.post(
+        "/api/auth/login", json={"user_id": "T900", "password": "pw-throwaway-only"}
+    ).json()["token"]}
+
+    rows = c.get("/api/profiles", headers=auth).json()
+    check("로그인하면 목록이 보인다", isinstance(rows, list) and rows, f"{len(rows)}명")
+    sensitive = [k for k in ("guardian", "mobility", "fall_risk", "lives_alone",
+                             "notes", "ltci_grade", "caregiver", "care_program")
+                 if rows and k in rows[0]]
+    check("목록에 민감정보가 없다", not sensitive, f"섞인 키 {sensitive}")
+
+    d = c.get(f"/api/profiles/{REGISTERED}", headers=auth).json()
+    check("상세에는 이력이 딸려온다", len(d.get("history") or []) > 0,
+          f"{len(d.get('history') or [])}건")
+    check("없는 번호는 404",
+          c.get("/api/profiles/010-0000-0000", headers=auth).status_code == 404)
+
     # ── 직원용 경로는 여전히 잠겨 있다 ──────────────────────────
     r = c.post("/api/intakes", json={"phone": REGISTERED, "utterance": "정형외과 가야 해"})
     check("직원용 접수는 토큰 없이 401", r.status_code == 401, f"HTTP {r.status_code}")
