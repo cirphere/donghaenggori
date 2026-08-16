@@ -185,6 +185,22 @@ td.actions button + button { margin-left: 6px; }
 table.list tr.clickable { cursor: pointer; }
 table.list tr.clickable:hover { background: #fafbfa; }
 
+/* ── 로그인 ────────────────────────────────────────── */
+.panel.login { max-width: 380px; margin: 48px auto; }
+.panel.login h2 { font-size: 18px; margin-bottom: 4px; }
+.panel.login label { display: block; margin-top: 14px; font-size: 13px; color: var(--muted); }
+.panel.login input { width: 100%; margin-top: 4px; }
+.panel.login button { margin-top: 18px; }
+.panel.login .bad { margin-top: 12px; font-size: 13px; }
+.hidden { display: none; }
+
+/* 상단 우측 — 지금 누구로 로그인해 있는지. 감사 로그에 남는 이름과 같아야 한다. */
+.topbar .who { margin-left: auto; display: flex; align-items: center; gap: 10px;
+               font-size: 13px; color: var(--muted); }
+button.linkish { border: none; background: none; padding: 0; font-size: 13px;
+                 color: var(--muted); text-decoration: underline; cursor: pointer; }
+button.linkish:hover { color: var(--ink); background: none; }
+
 /* ── 확정 게이트 ───────────────────────────────────── */
 /* 막힌 항목마다 '되물을 질문 + 답 적는 칸'을 붙인다. 사회복지사가 이 화면을
    띄운 채로 어르신께 전화를 걸어 그대로 묻고 바로 적는 자리다. */
