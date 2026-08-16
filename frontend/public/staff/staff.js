@@ -10,6 +10,16 @@
 
 import { api, session } from "../api.js";
 
+// 서버가 로그인 응답에 실어 준 권한 목록으로 화면을 가린다.
+//
+// 역할 이름을 여기 하드코딩하지 않는다 — `role === "사회복지사"` 를 JS 에 두면
+// 권한표가 두 곳이 되고, 역할이 하나 늘 때 한쪽만 고치면 어긋난다.
+//
+// **가리는 것은 안내일 뿐 경계가 아니다.** 실제 차단은 서버의 403 이다.
+// 동행매니저가 확정 버튼을 못 보게 하는 이유는 권한 때문이 아니라, 눌러서
+// 값을 다 채운 뒤에야 실패하는 경험을 없애려는 것이다.
+const can = (perm) => (session.user?.permissions || []).includes(perm);
+
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -99,10 +109,12 @@ async function loadQueue() {
       if (r.status === "긴급") {
         // 긴급은 접수카드가 없어 확정할 대상이 없다. 사람이 연락을 끝냈다는
         // 표시만 한다 — 안 그러면 목록 맨 위에 쌓여 새 긴급이 묻힌다.
-        const b = el("button", null, "처리 완료");
-        b.onclick = () => resolveUrgent(r);
-        act.append(b);
-      } else if (r.status !== "확정" && r.status !== "긴급 처리됨") {
+        if (can("intake.confirm")) {
+          const b = el("button", null, "처리 완료");
+          b.onclick = () => resolveUrgent(r);
+          act.append(b);
+        }
+      } else if (r.status !== "확정" && r.status !== "긴급 처리됨" && can("intake.confirm")) {
         const b = el("button", null, "확정");
         b.onclick = () => confirmIntake(r);
         act.append(b);
@@ -625,8 +637,12 @@ const DRAFT_LABELS = {
 function renderDraft(d) {
   const frag = document.createDocumentFragment();
   if (d.needs_schedule_check) {
-    frag.append(el("div", "flags")).append(
-      el("span", "flag", "일정 재확인 — 상대날짜는 확정하지 않았습니다"));
+    // append() 는 undefined 를 돌려준다 — 체이닝하면 그 자리에서 죽는다.
+    // (파일 맨 위에 적어 둔 규칙인데 여기서 어기고 있었다. "2주 뒤" 처럼 상대
+    //  날짜가 든 메모에서만 터져서 오래 안 보였다.)
+    const flags = el("div", "flags");
+    flags.append(el("span", "flag", "일정 재확인 — 상대날짜는 확정하지 않았습니다"));
+    frag.append(flags);
   }
   const dl = el("dl", "receipt");
   for (const [k, label] of Object.entries(DRAFT_LABELS)) {
@@ -636,7 +652,17 @@ function renderDraft(d) {
   }
   frag.append(dl);
 
-  // AI는 프로필을 자동 변경하지 않는다 — 승인 버튼을 눌러야 반영된다
+  // AI는 프로필을 자동 변경하지 않는다 — 승인 버튼을 눌러야 반영된다.
+  //
+  // 다만 승인은 사회복지사·관리자만 할 수 있다(post.approve). 동행매니저는
+  // 기록을 **쓰는** 사람이라, 자기가 쓴 초안을 자기가 승인하면 "사람이 검토한다"
+  // 는 말이 무의미해진다. 버튼 대신 안내를 둔다.
+  if (!can("post.approve")) {
+    frag.append(el("p", "hint",
+      "초안이 저장되었습니다. 프로필 반영은 사회복지사가 확인 후 승인합니다."));
+    return frag;
+  }
+
   const row = el("div", "row");
   const ok = el("button", "primary", "승인 — 프로필에 반영");
   const no = el("button", null, "거절");
@@ -692,6 +718,22 @@ $("btnBack").onclick = backToQueue;
 // 화면을 두 덩어리로 나눠 두고(#view-login / #app) 통째로 바꾼다. 탭마다
 // 로그인 여부를 확인하는 방식은 한 군데만 빠뜨려도 401 이 새어 나온다.
 
+// 못 쓰는 탭은 아예 감춘다. 눌러서 "불러오지 못했습니다: 403" 을 보는 것보다,
+// 애초에 없는 편이 화면을 믿게 만든다.
+function applyPermissions() {
+  const rules = [["audit", "audit.view"]];
+  for (const [view, perm] of rules) {
+    const ok = can(perm);
+    document.querySelector(`.tab[data-view="${view}"]`)?.classList.toggle("hidden", !ok);
+    // 감춘 탭이 열려 있던 채로 로그아웃·재로그인하면 빈 화면이 남는다
+    if (!ok) $("view-" + view)?.classList.add("hidden");
+  }
+  // 감춘 탭이 활성 상태면 첫 탭으로 되돌린다
+  if (document.querySelector(".tab.active")?.classList.contains("hidden")) {
+    document.querySelector('.tab[data-view="queue"]')?.click();
+  }
+}
+
 function showLogin(message) {
   $("view-login").classList.remove("hidden");
   $("app").classList.add("hidden");
@@ -708,6 +750,7 @@ function showApp(user) {
   $("app").classList.remove("hidden");
   $("whoami").textContent = user ? `${user.name} (${user.role})` : "";
   $("btnLogout").classList.remove("hidden");
+  applyPermissions();
   loadStatus();
   loadQueue();
 }
