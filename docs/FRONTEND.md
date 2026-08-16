@@ -14,9 +14,12 @@ Swagger가 항상 맞다. 아래 주소에서 바로 눌러볼 수 있다.
 (확인 예정)"), 병원 후보의 내부 판정 근거를 노출하지 않는다. 긴급이면 접수하지
 않고 119 안내로 끝낸다.
 
-> ⚠️ **백엔드에는 아직 인증이 없다.** 요청 본문의 `role` 을 그대로 믿으므로,
-> 화면을 감추는 것만으로는 아무것도 막히지 않는다. 실제 경계는 Cloudflare
-> Access 다 — `docs/DEPLOY-ACCESS.md` 를 반드시 읽을 것.
+> ⚠️ **파괴적 변경 — 백엔드 인증이 붙었다.** `confirm`/`verify`/`resolve`/
+> `approve`/`audit`는 이제 `Authorization: Bearer <token>` 헤더가 없으면 401이다.
+> 요청 본문의 `role`/`actor`는 더 이상 읽지 않는다(보내도 조용히 무시됨 — 역할은
+> 로그인한 토큰이 정한다). 토큰은 `POST /api/auth/login`으로 받는다. 자세한 건
+> 아래 "인증" 절 참조. Cloudflare Access(`docs/DEPLOY-ACCESS.md`)는 이것과 별개
+> 층이고 계속 권장된다 — `/staff` 화면 자체를 가리는 역할.
 
 ---
 
@@ -48,33 +51,56 @@ fetch('/api/status')      // 이렇게. 도메인을 붙일 필요가 없다
 
 | 화면 | 메서드 | 경로 |
 |---|---|---|
-| **01 홈** | `GET` | `/api/dashboard` — 오늘 건수 + 접수 목록 |
-| | `GET` | `/api/intakes?limit=50` — 접수 목록만 |
-| **02 접수** | `POST` | `/api/intakes` — 텍스트 발화 → 접수카드 |
-| | `POST` | `/api/stt` — 음성 → 텍스트만 |
-| | `POST` | `/api/intakes/from-audio` — 음성 → 접수카드 (한 번에) |
-| **03 접수카드** | `GET` | `/api/intakes/{id}` — **접수 당시 카드 전문 + `gate`** |
-| | `POST` | `/api/intakes/{id}/confirm` — 사회복지사 확정 (확인 필요가 남으면 **409**) |
-| | `POST` | `/api/intakes/{id}/verify` — 통화로 확인한 값 입력 (게이트를 푸는 경로) |
-| | `POST` | `/api/intakes/{id}/resolve` — 긴급 처리 완료 표시 |
-| **05 사후기록** | `POST` | `/api/post-records` — 음성 메모 → 기록 초안 |
-| | `POST` | `/api/post-records/{id}/approve` — 프로필 반영 승인 |
-| | `GET` | `/api/post-records?limit=50` |
-| 지역 자원 | `GET` | `/api/facilities?region=&query=` |
-| 감사 로그 | `GET` | `/api/audit?limit=100&role=사회복지사` |
+| **인증** | `POST` | `/api/auth/login` — 이메일+비밀번호 → 토큰 |
+| | `POST` | `/api/auth/logout` — 토큰 무효화 |
+| | `GET` | `/api/auth/me` — 로그인한 사용자 정보 🔒 |
+| **보호자 웹** | `POST` | `/api/guardian/intakes` — 신청 (무인증, `phone`+`utterance`만) |
+| **01 홈** | `GET` | `/api/dashboard` — 오늘 건수 + 접수 목록 🔒 |
+| | `GET` | `/api/intakes?limit=50` — 접수 목록만 🔒 |
+| **02 접수(직원용)** | `POST` | `/api/intakes` — 텍스트 발화 → 접수카드 🔒 |
+| | `POST` | `/api/stt` — 음성 → 텍스트만 🔒 |
+| | `POST` | `/api/intakes/from-audio` — 음성 → 접수카드 (한 번에) 🔒 |
+| **03 접수카드** | `GET` | `/api/intakes/{id}` — **접수 당시 카드 전문 + `gate`** 🔒 |
+| | `POST` | `/api/intakes/{id}/confirm` — 사회복지사 확정 (확인 필요가 남으면 **409**) 🔒 |
+| | `POST` | `/api/intakes/{id}/verify` — 통화로 확인한 값 입력 (게이트를 푸는 경로) 🔒 |
+| | `POST` | `/api/intakes/{id}/resolve` — 긴급 처리 완료 표시 🔒 |
+| **05 사후기록** | `POST` | `/api/post-records` — 음성 메모 → 기록 초안 🔒 |
+| | `POST` | `/api/post-records/{id}/approve` — 프로필 반영 승인 🔒 |
+| | `GET` | `/api/post-records?limit=50` 🔒 |
+| 지역 자원 | `GET` | `/api/facilities?region=&query=` 🔒 |
+| 지역 자원 | `POST` | `/api/flywheel` — 동행 완료 → 이력 누적 🔒 |
+| 감사 로그 | `GET` | `/api/audit?limit=100` 🔒 |
+| 시스템 | `GET` | `/api/status` · `POST` `/api/warmup` 🔒 |
 | 전화(ClawOps) | `POST` | `/api/voice/*` — **프론트가 부를 일 없음**. 통신사가 부른다 |
+
+🔒 표시는 `Authorization: Bearer <token>` 필수 — 없으면 401, 토큰의 역할에
+권한이 없으면 403. **`/api/guardian/intakes`만 예외** — 보호자 웹은 로그인 없이
+신청만 하고, 목록·상세·확정 같은 읽기/쓰기는 전혀 못 한다(그래서 무인증으로 열어도
+안전하다). 직원용 `/api/intakes`와는 다른 엔드포인트이니 헷갈리지 말 것.
 
 ---
 
-## 1. 접수 — `POST /api/intakes`
+## 1. 접수
+
+**직원용 — `POST /api/intakes`** 🔒 (전화 상담·직접 접수. `/staff` 콘솔에서 씀)
 
 ```json
 { "phone": "010-1234-5678", "utterance": "모레 정형외과 가야겄어", "channel": "전화" }
 ```
 
 `phone`·`utterance` 필수. `channel`은 `전화` / `앱·웹(보호자)` / `직접(기관)` 중 하나(기본 `전화`).
+로그인만 하면 어느 역할이든 쓸 수 있다(세분화된 권한 없음).
 
-응답 최상위:
+**보호자용 — `POST /api/guardian/intakes`** (무인증, `/` 화면에서 씀)
+
+```json
+{ "phone": "010-1234-5678", "utterance": "어머니 모레 정형외과 모시고 가야 해요" }
+```
+
+`phone`·`utterance`만 받는다. `channel`을 클라이언트가 못 정한다 — 서버가 항상
+`앱·웹(보호자)`로 고정한다. 로그인 개념 자체가 없다.
+
+두 엔드포인트 모두 응답 모양은 같다. 최상위:
 
 ```
 urgent  urgent_confident  channel  intent  intent_source  intent_confidence
@@ -175,15 +201,16 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 
 ---
 
-## 2. 확정 — `POST /api/intakes/{id}/confirm`
+## 2. 확정 — `POST /api/intakes/{id}/confirm` 🔒
 
 ```json
-{ "hospital": "○○정형외과의원", "date": "2026-08-11", "level": "휠체어·부축 동행",
-  "actor": "김○○ 사회복지사", "role": "사회복지사" }
+{ "hospital": "○○정형외과의원", "date": "2026-08-11", "level": "휠체어·부축 동행" }
 ```
 
-`role`이 `사회복지사`가 아니면 **403**이 떨어진다(동행매니저는 확정 권한 없음). 화면에서도
-역할에 따라 버튼을 감추되, 서버가 최종 판정한다.
+`Authorization: Bearer <token>` 필수. 신원과 역할은 그 토큰이 정한다 — `actor`/`role`을
+본문에 실어도 읽지 않는다. 로그인한 계정의 역할이 `사회복지사`가 아니면 **403**이
+떨어진다(동행매니저는 확정 권한 없음). 화면에서도 역할에 따라 버튼을 감추되, 서버가
+최종 판정한다.
 
 ### 확인 필요가 남으면 **409로 막힌다**
 
@@ -222,18 +249,19 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 `GET /api/intakes/{id}` 와 `POST /api/intakes` 응답에도 같은 모양의 `gate` 가 실린다.
 **화면이 `fields` 를 훑어 스스로 판단하지 말 것** — `gate.allowed` 만 보고 버튼을 잠그면 된다.
 
-### 막힌 항목 풀기 — `POST /api/intakes/{id}/verify`
+### 막힌 항목 풀기 — `POST /api/intakes/{id}/verify` 🔒
 
 게이트를 푸는 유일한 경로다. 통화로 확인한 값을 넣는다.
 
 ```json
-{ "field": "time", "value": "15:00", "actor": "김○○ 사회복지사", "role": "사회복지사" }
+{ "field": "time", "value": "15:00" }
 → { "ok": true, "intake": { ..., "gate": { "allowed": true, "blockers": [] } } }
 ```
 
 - `field` 는 `target` `hospital` `dept` `date` `time` 중 하나다. 다른 값은 422.
-- 항목의 `status` 가 `확인됨` 이 되고 `evidence` 에 `"통화로 확인함 — {actor}"` 가 붙는다.
-  나중에 카드를 보는 사람이 추론값과 사람이 확인한 값을 구별할 수 있어야 한다.
+- 항목의 `status` 가 `확인됨` 이 되고 `evidence` 에 `"통화로 확인함 — {로그인한 사용자 이름}"`
+  이 붙는다(토큰에서 나온 이름 — 본문으로는 못 바꾼다). 나중에 카드를 보는 사람이
+  추론값과 사람이 확인한 값을 구별할 수 있어야 한다.
 - `field: "target"` 으로 확인하면 `말한 성함`·`말한 주소` 칸은 사라진다. 대상자를
   알아내려던 단서였고 역할이 끝났기 때문이다.
 - 응답에 새 `gate` 가 함께 오므로 다시 조회할 필요가 없다. 다 풀렸으면 바로 확정으로
@@ -249,13 +277,13 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 통하지 않는다. 그때는 `gate.hard_block` 이 `true` 로 오니, 화면은 "이대로 접수"
 버튼 자체를 띄우지 말아야 한다.
 
-### 긴급은 확정할 게 없다 — `POST /api/intakes/{id}/resolve`
+### 긴급은 확정할 게 없다 — `POST /api/intakes/{id}/resolve` 🔒
 
 긴급 접수는 접수카드를 만들지 않으므로 확정할 대상이 없다. 대신 **사람이 연락을
 끝냈다는 표시**를 한다.
 
 ```json
-{ "note": "담당자 통화 완료", "role": "사회복지사" }
+{ "note": "담당자 통화 완료" }
 → { "ok": true, "changed": true, "intake": {...} }
 ```
 
@@ -337,7 +365,7 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 응답의 `draft`에 6개 항목(`treatment` `next_visit` `pharmacy` `cautions` `guardian_msg`
 `profile_update`)이 담긴다. `needs_schedule_check: true`면 **일정 재확인 배지**를 띄워야 한다.
 
-승인: `POST /api/post-records/{id}/approve` — `{"approved": true, "role": "사회복지사"}`
+승인: `POST /api/post-records/{id}/approve` 🔒 — `{"approved": true}`
 
 응답은 `{"ok": true, "approved": true, "changed": …, "applied": …}`.
 `changed: false`면 이미 같은 상태였다는 뜻이다 — 더블클릭이나 타임아웃 후
@@ -393,11 +421,16 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 
 - **첫 요청이 느리다.** 모델 적재·외부 API 콜드 스타트로 20~30초 걸릴 수 있다.
   `POST /api/warmup` 한 번 치면 이후 1초대로 떨어진다. 데모 전에 꼭 호출할 것.
-- **백엔드에 인증이 없다.** 요청 본문의 `role`을 그대로 믿으므로, 화면에서 버튼을
-  감추는 것은 안내일 뿐 통제가 아니다. 실제 경계는 **Cloudflare Access**다
-  (`docs/DEPLOY-ACCESS.md`). 인증이 붙으면 `actor`·`role`을 요청에 싣는 부분이
-  사라지므로, 그 값을 화면 상태로 붙들지 말고 호출 시점에만 넘길 것.
-  단 `POST /api/reset`(데이터 전체 초기화)은 **외부에서 403**이고 서버 로컬에서만 동작한다.
+- **백엔드 인증이 있다.** `POST /api/auth/login`에 이메일·비밀번호를 보내면
+  `{"token": "...", "user": {...}}`이 온다. 토큰을 저장해뒀다가(예: `localStorage`)
+  🔒 표시된 요청마다 `Authorization: Bearer <token>` 헤더로 붙인다. 계정은
+  운영자가 `python -m donghaenggori.services.create_user`로 미리 만들어 둬야
+  로그인이 된다 — 화면에서 자체 가입은 없다. `POST /api/auth/logout`으로 무효화.
+  Cloudflare Access(`docs/DEPLOY-ACCESS.md`)는 별개 층으로 계속 권장된다 —
+  `/staff` 화면 자체를 가리는 역할이지, API를 보호하는 건 이 토큰이다.
+  `POST /api/reset`(데이터 전체 초기화)은 **관리자 토큰**이 있어야 하고(없으면 401,
+  사회복지사면 403), 서버 로컬에서만 동작한다(외부는 403). 초기화는 세션도 지우므로 **부른 직후
+  본인 토큰이 죽는다** — 리허설 스크립트는 로그인 → 초기화 → 재로그인 순서다.
 - **전화(`/api/voice/*`)는 프론트가 부르지 않는다.** 통신사가 부르는 웹훅이고,
   서명 검증이 걸려 있다. 다만 전화로 들어온 접수가 목록에 섞여 오므로
   `identity_*`·`transfer_status` 널 가드는 필요하다.

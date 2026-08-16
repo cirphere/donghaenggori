@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import sys
 import time
 
@@ -79,16 +80,54 @@ def main(full: bool = False) -> int:
         print("  uvicorn donghaenggori.web.api:app --port 8000")
         return 1
 
+    # 계정은 미리 만들어 둬야 한다: python -m donghaenggori.services.create_user
+    sw_email, sw_pw = os.environ.get("DEMO_SW_EMAIL"), os.environ.get("DEMO_SW_PASSWORD")
+    mgr_email, mgr_pw = os.environ.get("DEMO_MGR_EMAIL"), os.environ.get("DEMO_MGR_PASSWORD")
+    # 초기화는 관리자만 할 수 있다. 없으면 초기화를 건너뛰고 계속한다 —
+    # 리허설을 아예 못 돌리는 것보다는 낫지만, 남은 데이터 때문에 감사 로그
+    # 건수 같은 검사가 어긋날 수 있어서 크게 알린다.
+    adm_email, adm_pw = os.environ.get("DEMO_ADMIN_EMAIL"), os.environ.get("DEMO_ADMIN_PASSWORD")
+    if not (sw_email and sw_pw and mgr_email and mgr_pw):
+        print("DEMO_SW_EMAIL/DEMO_SW_PASSWORD, DEMO_MGR_EMAIL/DEMO_MGR_PASSWORD 환경변수가 필요합니다.")
+        print("  python -m donghaenggori.services.create_user 로 사회복지사·동행매니저 계정을 먼저 만드세요.")
+        return 1
+
     today = datetime.date.today()
     span = "본선 Day2 Demo 8분판" if full else "파일2 대표 시나리오 3분판"
     say(f"\033[1m동행고리 AI — 시연 리허설\033[0m  ({span})")
     say(f"오늘 {today} · 대상자 박순자 · 시드 초기화 후 시작")
     say("=" * 74)
 
-    api("POST", "/api/reset")
+    # 초기화는 **관리자 전용**이 됐다(가장 파괴적인 호출인데 유일하게 무인증이었다).
+    # 관리자로 로그인 → 초기화 순이다. 초기화가 세션을 전부 지우므로 아래에서
+    # 사회복지사·동행매니저 로그인을 **그다음에** 한다 — 먼저 받아두면 그 자리에서 죽는다.
+    if adm_email and adm_pw:
+        r, _ = api("POST", "/api/auth/login", json={"email": adm_email, "password": adm_pw})
+        if r.status_code != 200:
+            print(f"관리자 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+            return 1
+        rr, _ = api("POST", "/api/reset",
+                    headers={"Authorization": f"Bearer {r.json()['token']}"})
+        if rr.status_code != 200:
+            print(f"초기화 실패: HTTP {rr.status_code} {rr.text[:120]}")
+            return 1
+    else:
+        say("   \033[33m※ DEMO_ADMIN_EMAIL/PASSWORD 가 없어 초기화를 건너뜁니다 —"
+            " 남은 데이터 때문에 일부 검사가 어긋날 수 있습니다.\033[0m")
+
+    r, _ = api("POST", "/api/auth/login", json={"email": sw_email, "password": sw_pw})
+    if r.status_code != 200:
+        print(f"사회복지사 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+        return 1
+    SW_AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
+    r, _ = api("POST", "/api/auth/login", json={"email": mgr_email, "password": mgr_pw})
+    if r.status_code != 200:
+        print(f"동행매니저 로그인 실패: HTTP {r.status_code} {r.text[:120]}")
+        return 1
+    MGR_AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
 
     # 예열 — 외부 API 캐시를 미리 채워 시연 중 지연을 없앤다
-    rw, elw = api("POST", "/api/warmup")
+    rw, elw = api("POST", "/api/warmup", headers=SW_AUTH)
     warmed = rw.json() if rw.status_code == 200 else {}
     say(f"   예열 완료 {elw:.1f}s · {sum(1 for v in warmed.get('warmed',{}).values() if v=='ok')}개 캐시 적재")
 
@@ -104,7 +143,7 @@ def main(full: bool = False) -> int:
     say()
     say("\033[1mSTEP 2~4\033[0m  대상자 조회 → 이력 소환 → 접수카드 생성        (" + win("0:15~1:30","0:30~3:10") + ")")
     r, el = api("POST", "/api/intakes",
-                json={"phone": PHONE, "utterance": utt, "channel": "전화"})
+                json={"phone": PHONE, "utterance": utt, "channel": "전화"}, headers=SW_AUTH)
     ok = r.status_code == 200
     check("STEP 2~4 접수카드 생성", ok, f"HTTP {r.status_code} · {el:.1f}s")
     if not ok:
@@ -115,7 +154,12 @@ def main(full: bool = False) -> int:
     c = d["card"]
     iid = d["intake_id"]
     say(f"   {mark(True)} 대상자   : {c['target']} ({c['phone_masked']})")
-    say(f"   {mark(True)} 의도     : {d['intent']}  ({d['intent_source']} {d['intent_confidence']:.2f})")
+    # 확신도는 규칙 폴백일 때 None 이다. :.2f 로 바로 찍으면 TypeError 로 죽는데,
+    # 하필 **모델이 안 올라간 상태**에서만 그렇다 — 폴백이 도는지 확인하려고
+    # 돌리는 스크립트가 그때 죽으면 앞뒤가 안 맞는다.
+    conf = d.get("intent_confidence")
+    say(f"   {mark(True)} 의도     : {d['intent']}  "
+        f"({d['intent_source']}{f' {conf:.2f}' if conf is not None else ''})")
     say(f"   {mark(True)} 병원 후보: {c['hospital']}  [{c['hospital_status']}]")
     say(f"                근거: {c['reasons'][0] if c['reasons'] else '—'}")
     say(f"   {mark(True)} 방문 예정: {c['date_label']} → {c['date_value']}")
@@ -136,15 +180,15 @@ def main(full: bool = False) -> int:
         say(f"   콜백: {q}")
     r2, el2 = api("POST", f"/api/intakes/{iid}/confirm",
                   json={"hospital": c["hospital"], "date": c["date_value"],
-                        "level": c["need_level"]})
+                        "level": c["need_level"]}, headers=SW_AUTH)
     ok2 = r2.status_code == 200
     check("STEP 5 확정·배정", ok2, f"HTTP {r2.status_code}")
     say(f"   {mark(ok2)} 확정 저장 · 감사 로그 기록  ({el2:.1f}s)")
 
-    # 권한 분리 확인
+    # 권한 분리 확인 — role은 이제 토큰이 정한다, 본문으로는 못 바꾼다
     r3, _ = api("POST", f"/api/intakes/{iid}/confirm",
-                json={"hospital": "X", "date": "2026-01-01", "level": "단순 안내",
-                      "role": "동행매니저"})
+                json={"hospital": "X", "date": "2026-01-01", "level": "단순 안내"},
+                headers=MGR_AUTH)
     check("RBAC — 동행매니저 확정 거부", r3.status_code == 403, f"HTTP {r3.status_code}")
     say(f"   {mark(r3.status_code == 403)} 동행매니저 권한으로는 확정 불가 (403)")
 
@@ -155,7 +199,7 @@ def main(full: bool = False) -> int:
     say(f'   매니저 음성 메모: "{memo}"')
     r4, el4 = api("POST", "/api/post-records",
                   json={"intake_id": iid, "phone": PHONE, "memo": memo,
-                        "dept": "정형외과", "target": "박순자 어르신"})
+                        "dept": "정형외과", "target": "박순자 어르신"}, headers=SW_AUTH)
     ok4 = r4.status_code == 200
     check("STEP 6 사후기록 초안", ok4, f"HTTP {r4.status_code}")
     if ok4:
@@ -166,7 +210,7 @@ def main(full: bool = False) -> int:
         check("상대날짜 미확정 처리", pr["needs_schedule_check"], str(pr["needs_schedule_check"]))
         say(f"   {mark(pr['needs_schedule_check'])} '2주 뒤'는 확정하지 않고 일정 재확인 항목으로 분리")
         r5, _ = api("POST", f"/api/post-records/{pr['record_id']}/approve",
-                    json={"approved": True})
+                    json={"approved": True}, headers=SW_AUTH)
         check("프로필 업데이트 승인", r5.status_code == 200, f"HTTP {r5.status_code}")
         say(f"   {mark(r5.status_code == 200)} 사회복지사 승인 → 프로필 반영 + 감사 로그")
 
@@ -175,17 +219,20 @@ def main(full: bool = False) -> int:
         say()
         say("\033[1mSTEP 7\033[0m  다음 접수에서 달라지는 것 — 플라이휠           (4:40~5:20)")
         u = "허리가 아파서 정형외과 가야 하는디"
-        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u})
+        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u},
+                   headers=SW_AUTH)
         c1 = r.json()["card"]
         say(f'   1차 접수: "{u}"')
         say(f"   {mark(True)} {c1['hospital']}  [{c1['hospital_status']}]  ← 1회 방문이라 '추정'")
 
         today = datetime.date.today().isoformat()
         api("POST", "/api/flywheel", json={"phone": PHONE_FLYWHEEL, "date": today,
-                                           "hospital": c1["hospital"], "dept": "정형외과"})
+                                           "hospital": c1["hospital"], "dept": "정형외과"},
+            headers=SW_AUTH)
         say(f"   {mark(True)} 동행 완료 → 이력에 누적")
 
-        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u})
+        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u},
+                   headers=SW_AUTH)
         c2 = r.json()["card"]
         rose = c1["hospital_status"] == "추정" and c2["hospital_status"] == "확인됨"
         check("STEP 7 플라이휠 — 상태 상승", rose,
@@ -200,7 +247,8 @@ def main(full: bool = False) -> int:
     # B-1 정보 부족
     say("\033[1mB-1\033[0m  이력에 없는 요청                                 (" + win("2:00~2:15","5:20~5:55") + ")")
     r, el = api("POST", "/api/intakes",
-                json={"phone": "010-7777-8888", "utterance": "내일 그 큰 병원 좀 가야 쓰겄는디"})
+                json={"phone": "010-7777-8888", "utterance": "내일 그 큰 병원 좀 가야 쓰겄는디"},
+                headers=SW_AUTH)
     b1 = r.json()["card"] if r.status_code == 200 else {}
     ok = b1.get("hospital") is None and b1.get("hospital_status") == "확인 필요"
     check("B-1 확정 후보 없음", ok, f"{b1.get('hospital')} [{b1.get('hospital_status')}]")
@@ -215,7 +263,7 @@ def main(full: bool = False) -> int:
     say()
     say("\033[1mB-2\033[0m  대상자 식별 실패                                 (" + win("2:15~2:30","5:55~6:30") + ")")
     r, _ = api("POST", "/api/intakes",
-               json={"phone": PHONE_NEW, "utterance": "병원 좀 가야 해"})
+               json={"phone": PHONE_NEW, "utterance": "병원 좀 가야 해"}, headers=SW_AUTH)
     b2 = r.json()["card"] if r.status_code == 200 else {}
     ok = "신규" in (b2.get("target") or "")
     check("B-2 대상자 미확인 처리", ok, b2.get("target", ""))
@@ -224,7 +272,8 @@ def main(full: bool = False) -> int:
 
     # B-2' 보호자 대리 전화
     r, _ = api("POST", "/api/intakes",
-               json={"phone": GUARDIAN, "utterance": "우리 어매 병원 좀 델꼬 가야 쓰겄는디"})
+               json={"phone": GUARDIAN, "utterance": "우리 어매 병원 좀 델꼬 가야 쓰겄는디"},
+               headers=SW_AUTH)
     b2b = r.json()["card"] if r.status_code == 200 else {}
     cands = b2b.get("target_candidates") or []
     ok = b2b.get("requester") == "대리" and len(cands) == 1
@@ -235,7 +284,7 @@ def main(full: bool = False) -> int:
     say()
     say("\033[1mB-3\033[0m  긴급 신호 감지                                   (" + win("2:30~2:45","6:30~7:00") + ")")
     r, _ = api("POST", "/api/intakes",
-               json={"phone": PHONE, "utterance": "가슴이 답답하고 숨이 차"})
+               json={"phone": PHONE, "utterance": "가슴이 답답하고 숨이 차"}, headers=SW_AUTH)
     b3 = r.json() if r.status_code == 200 else {}
     ok = b3.get("urgent") and b3.get("card") is None
     check("B-3 긴급 → 카드 미생성", ok, f"urgent={b3.get('urgent')} card={b3.get('card')}")
@@ -247,12 +296,13 @@ def main(full: bool = False) -> int:
     if full:
         head("시나리오 C — 데이터 활용 근거 확인", "목표 7:00 ~ 7:40")
         say("   AI가 지어낸 정보가 아니라 공공데이터에 근거한 결과임을 화면에서 확인시킨다.")
-        r, _ = api("GET", "/api/facilities", params={"region": "광주광역시 서구", "limit": 3})
+        r, _ = api("GET", "/api/facilities", params={"region": "광주광역시 서구", "limit": 3},
+                   headers=SW_AUTH)
         fac = r.json() if r.status_code == 200 else []
         check("데이터 활용 — 복지자원 검색", len(fac) > 0, f"{len(fac)}건")
         for f in fac[:3]:
             say(f"   {mark(True)} {f['name']} | {f['region']} | 출처 {f['source']}")
-        r, _ = api("GET", "/api/status")
+        r, _ = api("GET", "/api/status", headers=SW_AUTH)
         st = r.json() if r.status_code == 200 else {}
         say(f"   {mark(True)} 적재 현황: {st.get('facilities')}")
         say(f"   {mark(True)} 의도 분류기: {'학습 완료' if st.get('intent_model_loaded') else '미학습'}"
@@ -262,10 +312,10 @@ def main(full: bool = False) -> int:
 
     # ══════════════════════ 마무리 ══════════════════════
     head("마무리", "목표 " + win("2:45 ~ 3:00","7:40 ~ 8:00"))
-    r, _ = api("GET", "/api/dashboard")
+    r, _ = api("GET", "/api/dashboard", headers=SW_AUTH)
     counts = r.json()["counts"] if r.status_code == 200 else {}
     say(f"   대시보드: {counts}")
-    r, _ = api("GET", "/api/audit")
+    r, _ = api("GET", "/api/audit", headers=SW_AUTH)
     n = len(r.json()) if r.status_code == 200 else 0
     check("감사 로그 기록", n > 0, f"{n}건")
     say(f"   {mark(n>0)} 감사 로그 {n}건 — 누가 무엇을 확정·승인했는지 남음")
