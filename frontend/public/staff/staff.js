@@ -717,12 +717,12 @@ function showApp(user) {
 session.onUnauthorized(() => showLogin("세션이 만료되었습니다. 다시 로그인해 주세요."));
 
 async function doLogin() {
-  const email = $("loginEmail").value.trim();
+  const userId = $("loginId").value.trim();
   const password = $("loginPassword").value;
-  if (!email || !password) return showLogin("이메일과 비밀번호를 입력해 주세요.");
+  if (!userId || !password) return showLogin("아이디와 비밀번호를 입력해 주세요.");
   $("btnLogin").disabled = true;
   try {
-    const d = await api.login(email, password);
+    const d = await api.login(userId, password);
     session.save(d.token, d.user);
     showApp(d.user);
   } catch (e) {

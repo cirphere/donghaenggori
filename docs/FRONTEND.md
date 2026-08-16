@@ -51,7 +51,7 @@ fetch('/api/status')      // 이렇게. 도메인을 붙일 필요가 없다
 
 | 화면 | 메서드 | 경로 |
 |---|---|---|
-| **인증** | `POST` | `/api/auth/login` — 이메일+비밀번호 → 토큰 |
+| **인증** | `POST` | `/api/auth/login` — **아이디**+비밀번호 → 토큰 |
 | | `POST` | `/api/auth/logout` — 토큰 무효화 |
 | | `GET` | `/api/auth/me` — 로그인한 사용자 정보 🔒 |
 | **보호자 웹** | `POST` | `/api/guardian/intakes` — 신청 (무인증, `phone`+`utterance`만) |
@@ -421,13 +421,22 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 
 - **첫 요청이 느리다.** 모델 적재·외부 API 콜드 스타트로 20~30초 걸릴 수 있다.
   `POST /api/warmup` 한 번 치면 이후 1초대로 떨어진다. 데모 전에 꼭 호출할 것.
-- **백엔드 인증이 있다.** `POST /api/auth/login`에 이메일·비밀번호를 보내면
-  `{"token": "...", "user": {...}}`이 온다. 토큰을 저장해뒀다가(예: `localStorage`)
-  🔒 표시된 요청마다 `Authorization: Bearer <token>` 헤더로 붙인다. 계정은
-  운영자가 `python -m donghaenggori.services.create_user`로 미리 만들어 둬야
-  로그인이 된다 — 화면에서 자체 가입은 없다. `POST /api/auth/logout`으로 무효화.
-  Cloudflare Access(`docs/DEPLOY-ACCESS.md`)는 별개 층으로 계속 권장된다 —
-  `/staff` 화면 자체를 가리는 역할이지, API를 보호하는 건 이 토큰이다.
+- **백엔드 인증이 있다.** `POST /api/auth/login`에 `user_id`·비밀번호를 보내면
+  `{"token": "...", "user": {...}}`이 온다. 🔒 표시된 요청마다
+  `Authorization: Bearer <token>` 헤더로 붙인다.
+
+  **토큰은 `sessionStorage` 에 둔다. `localStorage` 가 아니다.** 복지관 공용
+  PC 에서 쓰는 화면이라 탭을 닫으면 사라지는 편이 맞다 — `localStorage` 는
+  브라우저를 껐다 켜도 남고 같은 오리진의 모든 탭이 공유해서, 다음 사람이
+  앉으면 그대로 로그인된 상태가 된다. 배선은 `frontend/public/api.js` 가
+  이미 해두었으니 그 파일을 가져가면 된다.
+
+  계정은 운영자가 `python -m donghaenggori.services.create_user`로 미리 만들어
+  둬야 로그인이 된다 — 화면에서 자체 가입은 없다. 아이디는 직원번호(U001)이고
+  **대소문자를 가리지 않는다**. `POST /api/auth/logout`으로 무효화.
+
+  nginx 기본 인증은 이제 `/docs`·`/dev` 에만 걸린다(`docs/DEPLOY-ACCESS.md`).
+  API 를 지키는 것은 이 토큰이다.
   `POST /api/reset`(데이터 전체 초기화)은 **관리자 토큰**이 있어야 하고(없으면 401,
   사회복지사면 403), 서버 로컬에서만 동작한다(외부는 403). 초기화는 세션도 지우므로 **부른 직후
   본인 토큰이 죽는다** — 리허설 스크립트는 로그인 → 초기화 → 재로그인 순서다.

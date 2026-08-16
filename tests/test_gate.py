@@ -141,12 +141,12 @@ def test_api() -> None:
     client = TestClient(app)
 
     # 임시 tempdir DB에만 존재하는 테스트 전용 계정 — 실제 신원 확인 경로를 탄다.
-    db.create_user("T001", "테스트 사회복지사", "사회복지사", "test-sw@local", TEST_PASSWORD)
-    db.create_user("T002", "테스트 동행매니저", "동행매니저", "test-mgr@local", TEST_PASSWORD)
-    r = client.post("/api/auth/login", json={"email": "test-sw@local", "password": TEST_PASSWORD})
+    db.create_user("T001", "테스트 사회복지사", "사회복지사", TEST_PASSWORD)
+    db.create_user("T002", "테스트 동행매니저", "동행매니저", TEST_PASSWORD)
+    r = client.post("/api/auth/login", json={"user_id": "T001", "password": TEST_PASSWORD})
     check("사회복지사 로그인 성공", r.status_code == 200, f"HTTP {r.status_code}")
     AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
-    r = client.post("/api/auth/login", json={"email": "test-mgr@local", "password": TEST_PASSWORD})
+    r = client.post("/api/auth/login", json={"user_id": "T002", "password": TEST_PASSWORD})
     AUTH_MGR = {"Authorization": f"Bearer {r.json()['token']}"}
 
     # 토큰 없이 접수 생성 시도 → 401 (직원용 엔드포인트는 이제 로그인 필요)
