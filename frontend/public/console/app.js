@@ -49,6 +49,7 @@ export const state = {
   audit: [],
 
   scheduleFilter: "전체",
+  managers: [],             // 배정 후보(동행매니저)
 };
 
 // 서버가 준 권한 목록으로 버튼을 가린다. 역할 이름을 여기 박지 않는다 —
@@ -115,6 +116,10 @@ async function load(screen) {
       state.dashboard = await api.dashboard();
       state.intakes = state.dashboard.intakes || [];
       if (screen === "home") state.records = await api.postRecords().catch(() => []);
+      // 배정 후보는 자주 바뀌지 않는다 — 한 번 받아 두고 재사용한다.
+      if (screen === "schedule" && !state.managers.length) {
+        state.managers = await api.managers().catch(() => []);
+      }
     } else if (screen === "elders") {
       state.profiles = await api.profiles(state.profileQuery);
     } else if (screen === "records") {

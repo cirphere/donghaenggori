@@ -59,12 +59,15 @@ function detailPane() {
   return el("div", "detail-pane", [
     el("div", "detail-head", [
       el("h1", null, `${p.name} · ${p.age}세`),
-      el("span", "sub", p.region || ""),
+      // 생년은 따로 저장하지 않고 나이에서 낸다. 가상 데이터라 나이가 기준이고,
+      // 두 곳에 적어 두면 한쪽만 고쳐져 어긋난다.
+      el("span", "sub", [birthYear(p.age), p.region].filter(Boolean).join(" · ")),
     ]),
     el("div", "cols", [
       el("div", "col", [
         sectionTitle("기본 정보"),
         frow("전화", p.phone),
+        frow("주소", p.address || p.region),
         frow("보호자", guardianText(p.guardian)),
         sectionTitle("이동 지원"),
         frow("거동", p.mobility, {
@@ -94,6 +97,12 @@ function detailPane() {
       ]),
     ]),
   ]);
+}
+
+/** 나이 → "1945년생". 정확한 생일은 모르므로 연도만 말한다. */
+function birthYear(age) {
+  if (!age) return null;
+  return `${new Date().getFullYear() - age}년생`;
 }
 
 function guardianText(g) {

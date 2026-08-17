@@ -17,7 +17,9 @@ export function renderHome() {
   const intakes = state.intakes;
   const todos = pendingIntakes(intakes);
   const urgent = todos.filter((r) => r.status === "긴급").length;
-  const today = scheduleOf(intakes).filter((s) => s.date === todayIso());
+  const sched = scheduleOf(intakes);
+  const today = sched.filter((s) => s.date === todayIso());
+  const unassigned = sched.filter((s) => s.status === "배정 필요").length;
 
   return el("div", "wide-pane", [
     el("h1", "home-h1", "오늘의 동행"),
@@ -25,8 +27,8 @@ export function renderHome() {
     // 부풀려 말하게 된다 — 아침에 처음 보는 숫자라 틀리면 안 된다.
     el("div", "home-sub",
        `${dateLabel(todayIso())} · 오늘 일정 ${today.length}건 · `
-       + `확인 필요 ${todos.length}건`
-       + (urgent ? ` (그중 긴급 ${urgent}건)` : "")),
+       + `확인 필요 ${todos.length}건 · 배정 필요 ${unassigned}건`
+       + (urgent ? ` (긴급 ${urgent}건)` : "")),
     el("div", "home-cols", [
       el("div", "col", [
         el("h3", "sec-title", `먼저 처리할 일 · ${todos.length}건`),

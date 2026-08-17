@@ -165,6 +165,16 @@ export const api = {
 
   postRecords: (limit = 50) => req(`/api/post-records?limit=${limit}`),
 
+  // 임시 저장 — 승인하지 않고 적던 것만 남긴다. 매니저가 차 안에서 적다 말고
+  // 나중에 마저 쓰는 경우가 있어서, 승인만 있으면 대충 승인해 버리게 된다.
+  savePostRecord: (id, edits) =>
+    req(`/api/post-records/${id}/save`, { method: "POST", body: { ...edits } }),
+
+  // 동행 담당자 — 확정된 접수에만 붙는다. manager 를 비우면 배정 해제.
+  managers: () => req("/api/managers"),
+  assign: (intakeId, manager) =>
+    req(`/api/intakes/${intakeId}/assign`, { method: "POST", body: { manager } }),
+
   // changed:false 면 이미 같은 상태였다는 뜻 — 오류가 아니다(더블클릭·재요청).
   //
   // edits 로 초안을 고쳐서 승인할 수 있다. 안 보낸 칸은 초안 그대로 둔다 —
