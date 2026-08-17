@@ -30,7 +30,8 @@ export function scheduleOf(intakes) {
         id: r.id,
         date,
         time: r.time_value || "",
-        target: `${r.target || "미확인 대상자"}`,
+        target: r.target_age ? `${r.target} · ${r.target_age}세`
+                             : (r.target || "미확인 대상자"),
         hospital: r.confirmed_hospital || r.hospital || "",
         dept: r.dept || "",
         level: r.confirmed_level || r.need_level || "",

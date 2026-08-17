@@ -62,22 +62,210 @@ function render() {
 function go(v) { view = v; error = ""; render(); }
 
 // ── 첫 화면 ─────────────────────────────────────────────────
+//
+// 히어로만 두면 "신청하기 버튼 하나 있는 페이지"가 된다. 아래 섹션들이
+// 하는 일이 따로 있다 — **전화로도 된다는 것을 설명하는 것**이다.
+//
+// 이 서비스의 주된 입구는 웹이 아니라 전화다. 어르신은 앱을 깔지 않고,
+// 이 화면을 여는 사람은 대개 자녀다. 자녀에게 "부모님은 전화만 하시면
+// 된다"를 납득시키지 못하면 서비스가 시작되지 않는다.
 function hero() {
-  return el("section", "hero", [
-    el("div", "tag", "전남 어르신 병원동행 서비스"),
-    el("h1", null, [
-      document.createTextNode("병원 가는 길,"), el("br"),
-      document.createTextNode("혼자 준비하지 마세요."),
+  const startBtn = () => button("병원동행 신청하기", "btn primary",
+                                () => { step = 1; go("step"); });
+  return el("div", null, [
+    el("section", "hero", [
+      el("div", "tag", "전남 어르신 병원동행 서비스"),
+      el("h1", null, [
+        document.createTextNode("병원 가는 길,"), el("br"),
+        document.createTextNode("혼자 준비하지 마세요."),
+      ]),
+      el("p", null, "어르신의 병원 일정과 필요한 도움을 알려주세요. "
+        + "동행고리AI가 신청 내용을 정리하고, 담당 사회복지사가 확인합니다."),
+      el("div", "cta", [
+        startBtn(),
+        button("신청 내용 확인", "btn line", () => go("lookup")),
+      ]),
+      el("div", "phone", [
+        document.createTextNode("전화로도 신청하실 수 있어요 · "),
+        el("b", null, "070-5275-3856"),
+      ]),
     ]),
-    el("p", null, "어르신의 병원 일정과 필요한 도움을 알려주세요. "
-      + "동행고리AI가 신청 내용을 정리하고, 담당 사회복지사가 확인합니다."),
-    el("div", "cta", [
-      button("병원동행 신청하기", "btn primary", () => { step = 1; go("step"); }),
-      button("신청 내용 확인", "btn line", () => go("lookup")),
+    howSection(),
+    phoneSection(),
+    promiseSection(),
+    closingSection(startBtn),
+    footer(),
+  ]);
+}
+
+/** 신청은 이렇게 진행돼요 — 3단계 */
+function howSection() {
+  const steps = [
+    ["01", "필요한 내용을 알려주세요", "어르신과 병원 방문 정보를 간단하게 입력합니다."],
+    ["02", "담당자가 확인해요",
+     "신청 내용을 담당 사회복지사가 확인하고 필요한 내용을 다시 확인합니다."],
+    ["03", "확정된 일정에 맞춰 함께해요", "확정된 일정에 맞춰 병원동행이 진행됩니다."],
+  ];
+  return el("section", "sec sec-cream", [
+    el("div", "sec-in", [
+      el("h2", "sec-h", "신청은 이렇게 진행돼요"),
+      el("p", "sec-p", "복잡한 절차 없이, 휴대폰으로 몇 분이면 충분해요."),
+      el("div", "how", steps.map(([n, t, s]) => el("div", "how-i", [
+        el("div", "how-n", n),
+        el("div", "how-t", t),
+        el("div", "how-s", s),
+      ]))),
     ]),
-    el("div", "phone", [
-      document.createTextNode("전화로도 신청하실 수 있어요 · "),
-      el("b", null, "070-5275-3856"),
+  ]);
+}
+
+/** AI 전화 신청 — 전화가 어떻게 접수가 되는지 4단계로 보여준다.
+ *
+ *  **여기가 이 페이지에서 제일 중요한 자리다.** 시연에서 말하는 것과 같은
+ *  내용을 화면으로 보여준다: 평소처럼 말하면 → 맥락을 이해하고 → 모르는 것만
+ *  되묻고 → 접수 정보로 정리된다. 마지막 확인은 사람이 한다. */
+function phoneSection() {
+  return el("section", "sec", [
+    el("div", "sec-in", [
+      el("div", "tag", "AI 전화 신청"),
+      el("h2", "sec-h left", [
+        document.createTextNode("전화 한 통이면,"), el("br"),
+        document.createTextNode("동행 신청이 시작돼요."),
+      ]),
+      el("p", "sec-p left", "익숙한 말 그대로 이야기하세요. "
+        + "동행고리AI가 필요한 내용을 듣고 정리해드려요."),
+
+      el("div", "steps4", [
+        stepCard("STEP 01 · 평소처럼 말해요", [
+          el("div", "call", [
+            el("div", "call-t", "동행고리AI"),
+            el("div", "call-s", "통화 중 · 00:12"),
+            el("div", "bubble", "“나 모레 저번에 무릎 봐준 데 가야겄어.”"),
+          ]),
+        ], "익숙한 전화로, 평소 말하듯 이야기하면 돼요. 앱 설치나 복잡한 입력은 필요하지 않아요."),
+
+        stepCard("STEP 02 · 말의 맥락을 이해해요", [
+          mapRow("“모레”", "8월 19일"),
+          mapRow("“저번에 무릎 봐준 데”", "지난 동행 기록 · 정형외과"),
+          mapRow("“가야겄어”", "병원동행 요청"),
+        ], "단어만 받아 적지 않아요. 지난 동행 정보와 대화의 맥락을 함께 살펴봐요."),
+
+        stepCard("STEP 03 · 모르는 내용만 다시 확인해요", [
+          el("div", "chat", [
+            el("div", "said ai", "지난번에 방문하셨던 정형외과 말씀하시는 게 맞을까요?"),
+            el("div", "said me", "응, 거기."),
+            el("div", "said ai", "알겠습니다. 몇 시까지 병원에 가셔야 하나요?"),
+          ]),
+        ], "확실하지 않은 정보는 임의로 결정하지 않고, 필요한 내용만 다시 확인해요."),
+
+        stepCard("STEP 04 · 접수 정보로 정리돼요", [
+          el("div", "mini", [
+            el("div", "mini-h", [
+              el("b", null, "병원동행 요청"),
+              el("span", "mini-tag", "새 요청"),
+            ]),
+            miniRow("어르신", "김영자"),
+            miniRow("방문일", "8월 19일"),
+            miniRow("병원", "성가롤로병원"),
+            miniRow("진료과", "정형외과"),
+            miniRow("예약시간", "확인 필요", true),
+          ]),
+        ], "통화가 끝나면 필요한 정보가 자동으로 정리됩니다. 마지막 확인은 담당자가 해요."),
+      ]),
+
+      el("div", "band", [
+        el("div", "band-t", "마지막 확인은 담당자가 해요."),
+        el("div", "band-s",
+           "AI가 정리한 내용을 담당 사회복지사가 확인한 뒤 병원동행 일정이 확정됩니다."),
+      ]),
+
+      el("div", "roles", [
+        roleCol("어르신", ["익숙한 전화로 이야기해요"], "070-5275-3856"),
+        roleCol("보호자", ["웹에서 신청하고", "가족 정보를 관리해요"]),
+        roleCol("담당자", ["내용을 확인하고", "일정을 확정해요"]),
+      ]),
+
+      el("div", "webline", [
+        el("span", null, "직접 입력이 편하신가요?"),
+        button("웹으로 신청하기", "btn line sm", () => { step = 1; go("step"); }),
+      ]),
+    ]),
+  ]);
+}
+
+function stepCard(title, body, note) {
+  return el("div", "s4", [
+    el("div", "s4-t", title),
+    el("div", "s4-b", body),
+    el("div", "s4-n", note),
+  ]);
+}
+
+function mapRow(from, to) {
+  return el("div", "maprow", [
+    el("span", "from", from),
+    el("span", "arrow", "→"),
+    el("span", "to", to),
+  ]);
+}
+
+function miniRow(k, v, warn) {
+  return el("div", "mini-r", [
+    el("span", "k", k),
+    el("span", warn ? "v warn" : "v", v),
+  ]);
+}
+
+function roleCol(title, lines, phone) {
+  return el("div", "role", [
+    el("div", "role-t", title),
+    ...lines.map((l) => el("div", "role-s", l)),
+    phone ? el("div", "role-p", phone) : null,
+  ]);
+}
+
+/** 신청해도 바로 확정되지 않는다는 것 — 기대를 미리 맞춘다.
+ *
+ *  이 문단이 없으면 보호자가 신청 직후 병원에 갈 준비를 한다. 확정은
+ *  담당자가 하고, 그 사이에 확인 전화가 갈 수 있다는 것을 먼저 말해 둔다. */
+function promiseSection() {
+  return el("section", "sec sec-cream", [
+    el("div", "sec-in narrow", [
+      el("div", "shield", "🛡"),
+      el("h2", "sec-h", "신청했다고 바로 확정되는 것은 아니에요"),
+      el("p", "sec-p", "담당 사회복지사가 신청 내용을 확인한 뒤 일정이 정해집니다. "
+        + "확인이 필요한 부분이 있으면 보호자님께 먼저 연락드려요."),
+      el("p", "sec-note", "AI는 신청 내용을 정리하는 역할을 하며, 의료적 판단이나 진단을 하지 않습니다."),
+    ]),
+  ]);
+}
+
+function closingSection(startBtn) {
+  return el("section", "closing", [
+    el("div", "hills"),
+    el("div", "closing-in", [
+      el("h2", null, "지금 바로 신청해 보세요"),
+      el("p", null, "3분이면 충분해요. 나머지는 담당자가 함께합니다."),
+      el("div", "cta", [
+        startBtn(),
+        el("div", "callbtn", "📞 070-5275-3856"),
+      ]),
+    ]),
+  ]);
+}
+
+function footer() {
+  return el("footer", "foot", [
+    el("div", "sec-in", [
+      el("div", "foot-b", "동행고리AI"),
+      el("div", "foot-p", [
+        document.createTextNode("전화 문의 "),
+        el("b", null, "070-5275-3856"),
+      ]),
+      el("div", "foot-s", "동행고리AI는 의료적 진단이나 판단을 하지 않습니다. "
+        + "최종 일정과 지원 내용은 담당자가 확인합니다."),
+      el("div", "foot-s", "신청 확인과 연락을 위해 필요한 정보만 수집합니다."),
+      el("div", "foot-c", "© 동행고리AI"),
     ]),
   ]);
 }

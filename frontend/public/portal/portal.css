@@ -166,3 +166,102 @@ button { cursor: pointer; }
   .hero h1 { font-size: 28px; }
   .q { font-size: 21px; }
 }
+
+/* ── 랜딩 아래 섹션들 ────────────────────────────────────── */
+.sec { padding: 72px 20px; }
+.sec-cream { background: #fdf6e8; }
+.sec-in { max-width: 1060px; margin: 0 auto; }
+.sec-in.narrow { max-width: 620px; text-align: center; }
+.sec-h { font-size: 28px; text-align: center; margin: 14px 0 8px; }
+.sec-h.left { text-align: left; font-size: 32px; line-height: 1.35; }
+.sec-p { color: var(--muted); text-align: center; margin: 0 0 40px; }
+.sec-p.left { text-align: left; margin-bottom: 34px; }
+.sec-note { font-size: 14px; color: #8b827a; margin-top: 18px; }
+.sec .tag { display: inline-block; background: var(--accent-l); color: var(--accent-d);
+            border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 700; }
+
+/* 신청은 이렇게 진행돼요 */
+.how { display: flex; gap: 24px; flex-wrap: wrap; }
+.how-i { flex: 1; min-width: 220px; text-align: center; }
+.how-n { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;
+         background: var(--white); color: var(--accent); font-weight: 800;
+         line-height: 56px; font-size: 17px; border: 1px solid #f2e4cf; }
+.how-t { font-weight: 800; margin-bottom: 6px; }
+.how-s { font-size: 15px; color: var(--muted); }
+
+/* AI 전화 신청 — 4단계 카드 */
+.steps4 { display: flex; gap: 18px; flex-wrap: wrap; }
+.s4 { flex: 1; min-width: 280px; }
+.s4-t { color: var(--accent-d); font-weight: 800; font-size: 14px; margin-bottom: 10px; }
+.s4-b { background: #fdf6ee; border: 1px solid #f3e6d6; border-radius: 16px;
+        padding: 18px; min-height: 190px; }
+.s4-n { font-size: 14px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+
+.call { background: var(--white); border-radius: 12px; padding: 18px; text-align: center; }
+.call-t { font-weight: 800; }
+.call-s { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+.bubble { background: var(--accent-l); border-radius: 12px; padding: 12px;
+          font-weight: 700; font-size: 15px; }
+
+.maprow { display: flex; align-items: center; gap: 8px; background: var(--white);
+          border-radius: 10px; padding: 11px 13px; margin-bottom: 8px; font-size: 14px; }
+.maprow .from { background: var(--accent-l); color: var(--accent-d); border-radius: 6px;
+                padding: 3px 8px; font-weight: 700; white-space: nowrap; }
+.maprow .arrow { color: #b9aea2; }
+.maprow .to { font-weight: 700; }
+
+.chat .said { border-radius: 12px; padding: 10px 13px; margin-bottom: 8px;
+              font-size: 14px; max-width: 88%; }
+.chat .ai { background: var(--white); }
+.chat .me { background: var(--accent); color: var(--white); margin-left: auto;
+            width: fit-content; font-weight: 700; }
+
+.mini { background: var(--white); border-radius: 12px; padding: 14px; }
+.mini-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.mini-tag { margin-left: auto; background: var(--accent-l); color: var(--accent-d);
+            border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
+.mini-r { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line);
+          font-size: 14px; }
+.mini-r .k { width: 62px; flex: 0 0 62px; color: var(--muted); }
+.mini-r .v { font-weight: 700; }
+.mini-r .v.warn { color: var(--accent-d); background: var(--accent-l);
+                  border-radius: 5px; padding: 1px 7px; font-size: 13px; }
+
+.band { background: #fdf6e8; border-radius: 16px; padding: 22px 26px; margin-top: 34px; }
+.band-t { font-weight: 800; margin-bottom: 4px; }
+.band-s { font-size: 15px; color: var(--muted); }
+
+.roles { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 34px; }
+.role { flex: 1; min-width: 220px; border-top: 2px solid var(--ink); padding-top: 14px; }
+.role-t { font-weight: 800; margin-bottom: 6px; }
+.role-s { font-size: 15px; color: var(--muted); }
+.role-p { color: var(--accent-d); font-weight: 800; margin-top: 6px; }
+
+.webline { display: flex; align-items: center; gap: 14px; margin-top: 26px;
+           color: var(--muted); flex-wrap: wrap; }
+
+.shield { font-size: 34px; }
+
+/* 마무리 */
+.closing { background: #9ccb7e; padding: 0 20px 64px; position: relative; }
+.closing .hills { height: 110px; background:
+  radial-gradient(120% 100% at 50% 100%, #b7dc9c 0%, #9ccb7e 60%); }
+.closing-in { text-align: center; color: var(--white); }
+.closing-in h2 { font-size: 26px; margin: 0 0 8px; }
+.closing-in p { margin: 0 0 22px; opacity: .95; }
+.closing .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+                align-items: center; }
+.callbtn { background: var(--white); color: var(--ink); border-radius: 999px;
+           padding: 14px 24px; font-weight: 800; }
+
+.foot { background: #3f372f; color: #d8d0c6; padding: 40px 20px 52px; }
+.foot-b { font-weight: 800; color: var(--white); margin-bottom: 10px; }
+.foot-p { margin-bottom: 14px; }
+.foot-p b { color: #f3b95f; }
+.foot-s { font-size: 14px; color: #a99f93; line-height: 1.7; }
+.foot-c { font-size: 13px; color: #8a8177; margin-top: 18px; }
+
+@media (max-width: 720px) {
+  .sec-h { font-size: 23px; } .sec-h.left { font-size: 26px; }
+  .sec { padding: 52px 18px; }
+}
