@@ -132,7 +132,9 @@ def main() -> int:
     check("신청번호가 추측하기 어렵다", bool(code) and len(code.split("-")[-1]) >= 8,
           f"뒷자리 {len(code.split('-')[-1]) if code else 0}글자")
 
-    look = lambda cd, ph: c.post("/api/guardian/lookup", json={"code": cd, "phone": ph})
+    def look(cd, ph):
+        return c.post("/api/guardian/lookup", json={"code": cd, "phone": ph})
+
     r = look(code, "010-9876-5432")
     check("번호+연락처가 맞으면 열린다", r.status_code == 200, f"HTTP {r.status_code}")
     check("번호만 맞으면 안 열린다", look(code, "010-0000-0000").status_code == 404)
