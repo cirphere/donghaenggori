@@ -1202,7 +1202,7 @@ def _ts(when: datetime.datetime | None = None) -> str:
 
 
 def reset_db() -> None:
-    """데모 초기화 — 사용자·세션을 포함한 데이터를 비우고 시드를 재적재한다."""
+    """데모 초기화 — 시드 데이터를 재적재하고 로그인 계정은 보존한다."""
     global _inited
     conn = get_conn()
     try:
@@ -1213,7 +1213,9 @@ def reset_db() -> None:
         # 그 프로세스에서 로그인을 시도하면 `no such column: password_hash` 로 죽는다.
         # (services/seed.py 의 write_and_load 가 그 호출 순서다)
         _migrate(conn)
-        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions", "users"):
+        # 로그인 계정은 시드 데이터가 아니라 운영자 정보이므로 보존한다.
+        # 세션만 지워 모든 사용자가 다시 로그인하도록 한다.
+        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions"):
             conn.execute(f"DELETE FROM {t}")
         _seed_profiles(conn)
         conn.commit()
