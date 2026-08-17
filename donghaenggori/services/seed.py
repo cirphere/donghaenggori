@@ -22,6 +22,13 @@ from ..core import db
 TODAY = datetime.date(2026, 8, 7)
 OUT_PATH = os.path.join(db.DATA_DIR, "care_profiles.json")
 
+# 시드 실행 때 함께 생성할 데모 로그인 계정.
+SEED_USERS = (
+    ("test1", "테스트 사회복지사", "사회복지사", "12341234"),
+    ("test2", "테스트 동행매니저", "동행매니저", "12341234"),
+    ("admin", "관리자", "관리자", "admin1234"),
+)
+
 # 시나리오 고정 3명 — 파일2·3·4에서 참조되므로 값을 바꾸지 않는다
 FIXED = {
     "010-1234-5678": {
@@ -157,6 +164,9 @@ def write_and_load(seed: int = 20260807, verbose: bool = True) -> dict:
         json.dump(profiles, f, ensure_ascii=False, indent=2)
 
     db.reset_db()      # 시드 파일을 다시 읽어 적재
+    for user_id, name, role, password in SEED_USERS:
+        db.create_user(user_id, name, role, password)
+
     conn = db.get_conn()
     n_p = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
     n_h = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]

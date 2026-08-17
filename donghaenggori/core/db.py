@@ -123,17 +123,6 @@ CREATE TABLE IF NOT EXISTS facilities (
 CREATE INDEX IF NOT EXISTS idx_fac_region ON facilities(region);
 """
 
-# 비밀번호 없이 시드된다 — 소스에 비밀번호를 넣지 않는다. 이 두 계정은
-# services/create_user.py 로 비밀번호를 설정하기 전까진 로그인이 안 된다.
-DEFAULT_USERS = [
-    ("U001", "김○○ 사회복지사", "사회복지사"),
-    ("U002", "최정미 동행매니저", "동행매니저"),
-    # 관리자는 데이터 전체 초기화(/api/reset)를 할 수 있는 유일한 역할이다.
-    # 자리를 만들어 두지 않으면 운영자가 역할 이름을 몰라 계정을 못 만든다.
-    # 비밀번호는 services/create_user.py 로 넣기 전까지 비어 있어 로그인이 안 된다.
-    ("U003", "운영자", "관리자"),
-]
-
 # 역할별 권한 — 화면 01의 "권한: 접수 확정·수정 (RBAC)"
 ROLE_PERMISSIONS = {
     "사회복지사": {"intake.view", "intake.confirm", "intake.edit", "post.approve", "audit.view"},
@@ -329,8 +318,6 @@ def init_db(force: bool = False) -> None:
             _migrate(conn)
             if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:
                 _seed_profiles(conn)
-            if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-                conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
             conn.commit()
             _inited = True
         finally:
@@ -1215,7 +1202,7 @@ def _ts(when: datetime.datetime | None = None) -> str:
 
 
 def reset_db() -> None:
-    """데모 초기화 — 모든 테이블 비우고 시드 재적재(복지시설 제외)."""
+    """데모 초기화 — 사용자·세션을 포함한 데이터를 비우고 시드를 재적재한다."""
     global _inited
     conn = get_conn()
     try:
@@ -1226,13 +1213,9 @@ def reset_db() -> None:
         # 그 프로세스에서 로그인을 시도하면 `no such column: password_hash` 로 죽는다.
         # (services/seed.py 의 write_and_load 가 그 호출 순서다)
         _migrate(conn)
-        # users는 안 지운다 — 로그인 계정은 데모 데이터가 아니라 운영자 정보다.
-        # 지우면 리셋할 때마다 비밀번호가 통째로 날아가 아무도 로그인 못 하게 된다.
-        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions"):
+        for t in ("audit_log", "post_records", "intakes", "history", "profiles", "sessions", "users"):
             conn.execute(f"DELETE FROM {t}")
         _seed_profiles(conn)
-        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-            conn.executemany("INSERT INTO users (id,name,role) VALUES (?,?,?)", DEFAULT_USERS)
         conn.commit()
         _inited = True
     finally:
