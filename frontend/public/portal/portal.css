@@ -29,8 +29,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 17px/1.6 -apple-system, "Apple SD Gothic Neo", Pretendard,
-        "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font: 17px/1.6 "Pretendard Variable", Pretendard, -apple-system,
+        "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 button, input, textarea, select { font: inherit; color: inherit; }

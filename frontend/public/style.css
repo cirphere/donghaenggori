@@ -10,7 +10,8 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; color: var(--ink); background: #f5f6f4;
-  font: 15px/1.65 -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  font: 15px/1.65 'Pretendard Variable', Pretendard, -apple-system,
+        'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 }
 
 .topbar {
