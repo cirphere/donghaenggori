@@ -517,8 +517,10 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
   donghaenggori.dohyeongops.com          ← Public Hostname 하나뿐
              │
       frontend:80  (nginx)
-        ├── /            정적 파일 (프론트 빌드 결과)
+        ├── /            → next:3000  (관리자 콘솔)
+        ├── /api/v1/     → next:3000  (Next Route Handler/BFF)
         ├── /api/        → app:8000   프록시
+        ├── /portal      정적 파일 (보호자 포털)
         └── /docs        → app:8000   프록시 (Swagger)
 ```
 
@@ -542,7 +544,7 @@ docker compose up -d --build
 `.env`의 `COMPOSE_FILE`에 파일들을 콜론으로 나열해두면 `-f` 없이 위 한 줄로 끝난다.
 
 ```
-COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.tunnel.yml:docker-compose.frontend.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.tunnel.yml:docker-compose.frontend.yml:docker-compose.next.yml
 ```
 
 > **`--build`를 빼면 코드 변경이 반영되지 않는다.** 소스가 이미지 안으로 복사되기
