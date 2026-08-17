@@ -10,9 +10,13 @@
 
 import { api } from "../../api.js";
 import { badge, button, chips, dateLabel, el, empty, errorBox, listRow, sectionTitle } from "../ui.js";
-import { can, reload, state, update } from "../app.js";
+import { can, reload, render, state, update } from "../app.js";
 
 const FILTERS = [["전체", "전체"], ["기록 필요", "기록 필요"], ["기록 완료", "기록 완료"]];
+
+// 동행이 어떻게 끝났는지. **AI 가 만들지 않는다** — 매니저가 고른다.
+// 그래서 초안 수정률(파일1 4-2)의 분모에도 넣지 않는다.
+const OUTCOMES = ["진료 정상 완료", "일부만 진행", "진료 못 함"];
 
 // 초안 6칸. 서버의 POST_FIELDS 와 순서까지 맞춰 둔다.
 const FIELDS = [
@@ -116,7 +120,10 @@ function filtered() {
 function rowOf(r) {
   return listRow({
     name: `기록 #${r.id}`,
-    right: badge(r.approved ? "기록 완료" : "기록 필요", r.approved ? "ok" : "need"),
+    // 임시 저장은 '아직 안 끝났지만 손대긴 했다' 는 뜻이다. '기록 필요' 와
+    // 같이 보이면 어디까지 썼는지 열어 봐야 안다.
+    right: badge(r.approved ? "기록 완료" : (r.saved ? "임시 저장" : "기록 필요"),
+                 r.approved ? "ok" : (r.saved ? "guess" : "need")),
     sub: r.treatment || "(초안 없음)",
     meta: [r.created_at && dateLabel(r.created_at.slice(0, 10)), `접수 #${r.intake_id}`]
       .filter(Boolean).join(" · "),
@@ -148,13 +155,56 @@ function detailPane() {
     ]);
   });
 
+  // 이 기록이 어느 동행인지. 목업처럼 병원·방문일·담당자를 위에 붙인다 —
+  // 기록만 덩그러니 있으면 무엇에 대한 기록인지 접수 화면으로 건너가 봐야 한다.
+  const trip = state.intakes.find((x) => x.id === r.intake_id);
+
+  const extra = {};
+  const timeInput = (key, label) => {
+    const t = el("input");
+    t.type = "time";
+    t.value = r[key] || "";
+    t.disabled = !!r.approved;
+    t.style.cssText = "padding:8px 11px;border:1px solid var(--line);"
+                    + "border-radius:8px;background:var(--white)";
+    extra[key] = t;
+    return el("div", null, [el("div", "lb", label), t]);
+  };
+
   return el("div", "detail-pane", [
     el("div", "detail-head", [
       el("h1", null, `사후기록 #${r.id}`),
-      badge(r.approved ? "기록 완료" : "기록 필요", r.approved ? "ok" : "need"),
+      badge(r.approved ? "기록 완료" : (r.saved ? "임시 저장" : "기록 필요"),
+            r.approved ? "ok" : (r.saved ? "guess" : "need")),
       el("div", "right", `접수 #${r.intake_id}`),
     ]),
     el("div", "cols", [el("div", "col", [
+      trip ? el("div", null, [
+        sectionTitle("동행 정보"),
+        el("div", "frow", [el("div", "lb", "병원"),
+          el("div", "vl", [trip.confirmed_hospital || trip.hospital || "—",
+                           trip.dept ? ` · ${trip.dept}` : ""].join(""))]),
+        el("div", "frow", [el("div", "lb", "방문일"),
+          el("div", "vl", [dateLabel(trip.confirmed_date || trip.date_value) || "—",
+                           trip.time_value ? ` ${trip.time_value}` : ""].join(""))]),
+        el("div", "frow", [el("div", "lb", "담당자"),
+          el("div", "vl", trip.manager || "배정 필요")]),
+      ]) : null,
+
+      sectionTitle("동행 결과"),
+      (() => {
+        const box = el("div", "chips");
+        for (const o of OUTCOMES) {
+          const b = el("button", "chip" + (r.outcome === o ? " on" : ""), o);
+          b.disabled = !!r.approved;
+          b.onclick = () => { r.outcome = r.outcome === o ? null : o; render(); };
+          box.append(b);
+        }
+        return box;
+      })(),
+      el("div", "verify", [timeInput("depart_at", "출발"),
+                           timeInput("return_at", "복귀")]),
+
       sectionTitle("동행 매니저 메모", "음성으로 받은 원문"),
       el("div", "quote", [
         el("div", "who", "매니저"),
@@ -162,12 +212,12 @@ function detailPane() {
       ]),
       sectionTitle("AI 초안", "그대로 쓰거나 고쳐서 승인하세요"),
       ...rows,
-      footer(r, inputs),
+      footer(r, inputs, extra),
     ])]),
   ]);
 }
 
-function footer(r, inputs) {
+function footer(r, inputs, extra) {
   if (r.approved) {
     return el("div", "footbar", [
       el("div", "msg", "승인된 기록이에요. 케어 프로필에 반영됐습니다."),
@@ -181,26 +231,43 @@ function footer(r, inputs) {
     ]);
   }
 
-  const go = button("승인하고 프로필에 반영", "btn primary", async () => {
-    go.disabled = true;
-    // 고친 칸만 보낸다. 안 보낸 칸은 서버가 초안 그대로 둔다 —
-    // 빈 문자열과 '안 보냄'은 다르다.
+  // 고친 칸만 보낸다. 안 보낸 칸은 서버가 초안 그대로 둔다 —
+  // 빈 문자열과 '안 보냄'은 다르다.
+  const collect = () => {
     const edits = {};
     for (const [key] of FIELDS) {
       const v = inputs[key].value;
       if (v !== (r[key] || "")) edits[key] = v;
     }
+    for (const key of ["depart_at", "return_at"]) {
+      const v = extra[key]?.value;
+      if (v && v !== (r[key] || "")) edits[key] = v;
+    }
+    if (r.outcome) edits.outcome = r.outcome;
+    return edits;
+  };
+
+  const go = button("승인하고 프로필에 반영", "btn primary", async () => {
+    go.disabled = true;
+    const edits = collect();
     try {
       await api.approvePostRecord(r.id, true, Object.keys(edits).length ? edits : null);
       await reload();
     } catch (e) {
       update({ error: e });
+      go.disabled = false;
     }
   });
 
   return el("div", "footbar", [
     el("div", "msg", ""),
     el("div", "grow"),
+    // 적다 말고 나중에 마저 쓰는 경우가 있다. 승인만 있으면 그럴 때 창을
+    // 닫지 못하고 결국 대충 승인해 버린다.
+    button("임시 저장", "btn", async () => {
+      try { await api.savePostRecord(r.id, collect()); await reload(); }
+      catch (e) { update({ error: e }); }
+    }),
     button("반영하지 않음", "btn", async () => {
       try { await api.approvePostRecord(r.id, false); await reload(); }
       catch (e) { update({ error: e }); }

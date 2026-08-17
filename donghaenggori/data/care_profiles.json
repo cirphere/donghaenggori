@@ -40,7 +40,8 @@
         "pharmacy": true
       }
     ],
-    "ltci_grade": "2"
+    "ltci_grade": "2",
+    "address": "전남 고흥군 ○○면 ○○길 4"
   },
   "010-2222-3333": {
     "id": "P002",
@@ -75,7 +76,8 @@
         "pharmacy": false
       }
     ],
-    "care_program": "일반돌봄군"
+    "care_program": "일반돌봄군",
+    "address": "전남 신안군 ○○면(섬) ○○길 41"
   },
   "010-7777-8888": {
     "id": "P003",
@@ -90,7 +92,8 @@
     "preferred_time": "오전",
     "notes": "보호자 없음 — 동행 매니저 필수",
     "history": [],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "전남 보성군 ○○리 ○○길 8"
   },
   "010-3562-3157": {
     "id": "P004",
@@ -105,7 +108,8 @@
     "preferred_time": "오전",
     "notes": "큰 소리로 천천히 안내 필요",
     "history": [],
-    "care_program": "중점돌봄군"
+    "care_program": "중점돌봄군",
+    "address": "광주광역시 동구 ○○동 ○○길 40"
   },
   "010-8736-7732": {
     "id": "P005",
@@ -124,7 +128,8 @@
     "lives_alone": true,
     "preferred_time": "오전",
     "notes": "당뇨 관리 중",
-    "history": []
+    "history": [],
+    "address": "전남 강진군 ○○면 ○○길 10"
   },
   "010-4218-8885": {
     "id": "P006",
@@ -179,7 +184,8 @@
         "symptom": "가려움",
         "pharmacy": false
       }
-    ]
+    ],
+    "address": "광주광역시 동구 ○○동 ○○길 13"
   },
   "010-6585-4286": {
     "id": "P007",
@@ -235,7 +241,8 @@
         "pharmacy": true
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "전남 장성군 ○○면 ○○길 36"
   },
   "010-5352-2398": {
     "id": "P008",
@@ -277,7 +284,8 @@
         "pharmacy": true
       }
     ],
-    "care_program": "중점돌봄군"
+    "care_program": "중점돌봄군",
+    "address": "광주광역시 북구 ○○동 ○○길 8"
   },
   "010-8321-5932": {
     "id": "P009",
@@ -299,7 +307,8 @@
         "symptom": "어지럼 경과",
         "pharmacy": true
       }
-    ]
+    ],
+    "address": "전남 장성군 ○○면 ○○길 42"
   },
   "010-4565-6845": {
     "id": "P010",
@@ -326,7 +335,8 @@
         "symptom": "잇몸 치료",
         "pharmacy": false
       }
-    ]
+    ],
+    "address": "광주광역시 동구 ○○동 ○○길 6"
   },
   "010-3855-9490": {
     "id": "P011",
@@ -377,7 +387,8 @@
         "pharmacy": false
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "전남 강진군 ○○면 ○○길 6"
   },
   "010-7426-1577": {
     "id": "P012",
@@ -428,7 +439,8 @@
         "pharmacy": false
       }
     ],
-    "care_program": "중점돌봄군"
+    "care_program": "중점돌봄군",
+    "address": "광주광역시 서구 ○○동 ○○길 6"
   },
   "010-3478-7237": {
     "id": "P013",
@@ -472,7 +484,8 @@
         "pharmacy": false
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "전남 담양군 ○○면 ○○길 4"
   },
   "010-5457-5765": {
     "id": "P014",
@@ -527,7 +540,8 @@
         "symptom": "잇몸 치료",
         "pharmacy": false
       }
-    ]
+    ],
+    "address": "광주광역시 동구 ○○동 ○○길 37"
   },
   "010-5945-5332": {
     "id": "P015",
@@ -569,7 +583,8 @@
         "pharmacy": false
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "전남 함평군 ○○면 ○○길 3"
   },
   "010-6015-6195": {
     "id": "P016",
@@ -611,7 +626,8 @@
         "pharmacy": false
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "광주광역시 동구 ○○동 ○○길 12"
   },
   "010-5018-8226": {
     "id": "P017",
@@ -653,7 +669,8 @@
         "pharmacy": false
       }
     ],
-    "care_program": "중점돌봄군"
+    "care_program": "중점돌봄군",
+    "address": "전남 곡성군 ○○면 ○○길 8"
   },
   "010-2757-9322": {
     "id": "P018",
@@ -689,7 +706,8 @@
         "symptom": "가려움",
         "pharmacy": true
       }
-    ]
+    ],
+    "address": "광주광역시 광산구 ○○동 ○○길 41"
   },
   "010-6177-2510": {
     "id": "P019",
@@ -737,7 +755,8 @@
         "symptom": "가려움",
         "pharmacy": true
       }
-    ]
+    ],
+    "address": "전남 곡성군 ○○면 ○○길 7"
   },
   "010-9085-9283": {
     "id": "P020",
@@ -788,6 +807,7 @@
         "pharmacy": false
       }
     ],
-    "ltci_grade": "1"
+    "ltci_grade": "1",
+    "address": "광주광역시 서구 ○○동 ○○길 10"
   }
 }

@@ -5,15 +5,18 @@
 // 들어 있다 — 누가(target) 언제(confirmed_date) 어디로(confirmed_hospital)
 // 어떤 지원으로(confirmed_level).
 //
-// 없는 것은 **동행 담당자**와 **수행 상태**(배정 필요 → 예정 → 완료) 둘뿐이다.
-// 그 둘 때문에 테이블을 새로 파면 같은 사실이 두 곳에 적히고, 확정을 취소했을 때
-// 어느 쪽이 진짜인지 알 수 없게 된다. 지금은 백엔드에 그 두 칸이 없어서
-// 담당자는 비어 있고 상태는 날짜로만 가른다.
+// 없던 것은 **동행 담당자** 하나였고, intakes 에 manager 한 칸을 더해 채웠다.
+// 테이블을 새로 파지 않은 이유는 같은 사실이 두 곳에 적히면 확정을 취소했을 때
+// 어느 쪽이 진짜인지 알 수 없어지기 때문이다.
 //
-// TODO(본선 후): intakes 에 manager · sched_status 두 칸을 더한다.
+// 수행 상태는 따로 저장하지 않는다 — **담당자와 날짜에서 나온다.**
+//   담당자 없음 → 배정 필요 · 오늘 이후 → 예정 · 지난 날짜 → 완료
+// 저장하면 날짜가 지나도 '예정' 으로 남아 있는 행이 생기고, 그걸 고칠 사람이
+// 없으면 목록이 조용히 거짓말을 한다.
 
-import { badge, dateLabel, el, empty, errorBox, listRow } from "../ui.js";
-import { openIntake, state, update } from "../app.js";
+import { api } from "../../api.js";
+import { badge, button, dateLabel, el, empty, errorBox, listRow } from "../ui.js";
+import { can, openIntake, reload, state, update } from "../app.js";
 
 const FILTERS = [["전체", "전체"], ["배정 필요", "배정 필요"],
                  ["예정", "예정"], ["완료", "완료"]];
@@ -36,8 +39,6 @@ export function scheduleOf(intakes) {
         dept: r.dept || "",
         level: r.confirmed_level || r.need_level || "",
         region: r.region || "",
-        // 담당자 배정은 아직 백엔드에 없다. 있는 척 채우지 않는다 —
-        // 화면에 이름이 뜨면 배정된 줄 알고 아무도 안 나간다.
         manager: r.manager || null,
         status: !r.manager ? "배정 필요" : (d < today ? "완료" : "예정"),
       };
@@ -100,7 +101,8 @@ function detail(rows) {
   return el("div", "detail-pane", [
     el("div", "detail-head", [
       el("h1", null, s.target),
-      badge(s.status, s.status === "완료" ? "ok" : "plain"),
+      badge(s.status, s.status === "완료" ? "ok"
+                    : s.status === "배정 필요" ? "need" : "plain"),
       el("div", "right", [open]),
     ]),
     el("div", "cols", [el("div", "col", [
@@ -108,8 +110,43 @@ function detail(rows) {
       row("예약 시각", `${dateLabel(s.date)} ${s.time || "시간 미정"}`),
       row("출발지", s.region || "자택"),
       row("이동 지원", s.level),
-      row("동행 담당자", s.manager || "아직 배정하지 않았어요"),
+      assignRow(s),
     ])]),
+  ]);
+}
+
+/** 동행 담당자 배정 — 이름을 타이핑하게 두지 않는다.
+ *  오타 하나로 '박나눔' 과 '박나눔 매니저' 가 다른 사람이 되고, 그러면 그
+ *  사람 일정이 둘로 갈린다. */
+function assignRow(s) {
+  if (!can("intake.confirm")) {
+    return row("동행 담당자", s.manager || "아직 배정하지 않았어요");
+  }
+  const sel = el("select");
+  const opts = [["", "배정하지 않음"],
+                ...(state.managers || []).map((m) => [m.name, m.name])];
+  for (const [v, t] of opts) {
+    const o = el("option", null, t);
+    o.value = v;
+    if ((s.manager || "") === v) o.selected = true;
+    sel.append(o);
+  }
+  sel.style.cssText = "padding:8px 11px;border:1px solid var(--line);"
+                    + "border-radius:8px;background:var(--white);min-width:180px";
+
+  const save = button("배정", "btn sm", async () => {
+    save.disabled = true;
+    try {
+      await api.assign(s.id, sel.value || null);
+      await reload();
+    } catch (e) {
+      update({ error: e });
+    }
+  });
+
+  return el("div", "frow", [
+    el("div", "lb", "동행 담당자"),
+    el("div", "vl", [el("div", "verify", [sel, save])]),
   ]);
 }
 

@@ -9,7 +9,8 @@
 
 import { api } from "../../api.js";
 import {
-  badge, button, chips, dateLabelRelative, el, empty, errorBox, frow, listRow, sectionTitle,
+  badge, button, chips, dateLabelRelative, el, empty, errorBox, frow, listRow,
+  sectionTitle, statusLabel,
 } from "../ui.js";
 import { can, openIntake, reload, state, update } from "../app.js";
 
@@ -75,7 +76,8 @@ function rowOf(r) {
   const urgent = r.status === "긴급";
   return listRow({
     name: nameWithAge(r),
-    right: badge(r.status, urgent ? "urgent" : r.status === "확정" ? "ok" : "need"),
+    right: badge(statusLabel(r.status),
+                 urgent ? "urgent" : r.status === "확정" ? "ok" : "need"),
     // 어르신이 무엇을 말했는지를 목록에서 바로 보여준다. 병원·날짜만 적으면
     // 아직 아무것도 안 정해진 건이 전부 "확인 전" 한 줄로 똑같아 보인다.
     sub: [r.hospital, r.date_value && dateLabelRelative(r.date_value)]
@@ -143,7 +145,7 @@ function urgentPane(d) {
   return el("div", "detail-pane", [
     el("div", "detail-head", [
       el("h1", null, splitTarget(d.target)[0]),
-      badge(done ? "긴급 처리됨" : "긴급", done ? "ok" : "urgent"),
+      badge(statusLabel(d.status), done ? "ok" : "urgent"),
       el("div", "right", `${d.channel || "전화"} 접수 · ${d.created_at || ""}`),
     ]),
     el("div", "cols", [

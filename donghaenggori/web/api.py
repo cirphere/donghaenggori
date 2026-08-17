@@ -255,6 +255,11 @@ class ApproveIn(BaseModel):
     cautions: str | None = None
     guardian_msg: str | None = None
     profile_update: str | None = None
+    # 초안 밖에서 사람이 직접 채우는 것들. AI 가 만들지 않으므로 초안
+    # 수정률에는 세지 않는다.
+    outcome: Literal["진료 정상 완료", "일부만 진행", "진료 못 함"] | None = None
+    depart_at: str | None = Field(None, description="출발 시각 HH:MM")
+    return_at: str | None = Field(None, description="복귀 시각 HH:MM")
 
 
 class LoginIn(BaseModel):
@@ -691,6 +696,21 @@ def approve_post_record(record_id: int, body: ApproveIn,
     return {"ok": True, "approved": body.approved, **res}
 
 
+@app.post("/api/post-records/{record_id}/save", tags=["화면05 사후기록"])
+def save_post_record(record_id: int, body: ApproveIn,
+                     user: dict = Depends(current_user)) -> dict:
+    """임시 저장 — 승인하지 않고 적던 것만 남긴다.
+
+    동행 매니저가 차 안에서 적다 말고 나중에 마저 쓰는 경우가 실제로 있다.
+    승인만 있으면 그럴 때 창을 닫지 못하고, 결국 대충 승인해 버린다.
+    """
+    if not (db.can(user["role"], "post.write") or db.can(user["role"], "post.approve")):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 기록 권한이 없습니다")
+    edits = body.model_dump(exclude={"approved"}, exclude_none=True)
+    db.update_post_record(record_id, {**edits, "saved": 1})
+    return {"ok": True, "saved": True}
+
+
 @app.get("/api/post-records", tags=["화면05 사후기록"])
 def list_post_records(limit: int = Query(50, le=200),
                       user: dict = Depends(current_user)) -> list[dict]:
@@ -741,6 +761,35 @@ def get_profile(phone: str, user: dict = Depends(current_user)) -> dict:
     if not prof:
         raise HTTPException(404, "등록된 대상자가 아닙니다")
     return prof
+
+
+class AssignIn(BaseModel):
+    """동행 담당자 배정. manager 를 비우면 배정을 해제한다."""
+    manager: str | None = Field(None, description="동행매니저 이름. 비우면 해제")
+
+
+@app.get("/api/managers", tags=["일정"])
+def managers(user: dict = Depends(current_user)) -> list[dict]:
+    """배정할 수 있는 사람 목록 — 동행매니저 역할만."""
+    if not db.can(user["role"], "intake.view"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 조회 권한이 없습니다")
+    return db.list_managers()
+
+
+@app.post("/api/intakes/{intake_id}/assign", tags=["일정"])
+def assign(intake_id: int, body: AssignIn, user: dict = Depends(current_user)) -> dict:
+    """확정된 접수에 동행 담당자를 붙인다.
+
+    확정과 별개다 — 확정은 "무엇을 할지" 를 정하는 것이고, 배정은 "누가 갈지"
+    를 정하는 것이다. 확정 전에는 배정할 수 없다(db.assign_manager).
+    """
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 배정 권한이 없습니다")
+    ok = db.assign_manager(intake_id, (body.manager or "").strip() or None,
+                           user["name"], user["role"])
+    if not ok:
+        raise HTTPException(409, "확정된 접수에만 담당자를 배정할 수 있습니다")
+    return {"ok": True, "manager": body.manager or None}
 
 
 @app.get("/api/facilities", tags=["지역 자원"])

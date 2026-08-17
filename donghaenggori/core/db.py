@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   fall_risk INTEGER, lives_alone INTEGER,
   preferred_time TEXT, notes TEXT,
   ltci_grade TEXT,        -- 장기요양등급 1~5 · 인지지원 (공단 판정)
-  care_program TEXT       -- 노인맞춤돌봄서비스 군 (지자체 선정)
+  care_program TEXT,      -- 노인맞춤돌봄서비스 군 (지자체 선정)
+  address TEXT            -- 상세 주소. region 은 읍면동까지, 여기는 그 뒤
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -70,7 +71,8 @@ CREATE TABLE IF NOT EXISTS intakes (
   identity_answer TEXT,   -- 전화에서 '맞으실까요' 에 답한 내용 (원문 그대로)
   identity_status TEXT,   -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
   card_json TEXT,         -- 접수 당시 생성된 카드 전문(근거·확인질문 포함)
-  transfer_status TEXT    -- 긴급 전환 결과 (연결됨 | 통화중 | 응답없음 | 실패)
+  transfer_status TEXT,   -- 긴급 전환 결과 (연결됨 | 통화중 | 응답없음 | 실패)
+  manager TEXT            -- 동행 담당자(동행매니저 이름). 없으면 '배정 필요'
 );
 
 CREATE TABLE IF NOT EXISTS post_records (
@@ -85,7 +87,10 @@ CREATE TABLE IF NOT EXISTS post_records (
   guardian_msg TEXT,                      -- 보호자 공유 메시지 초안
   profile_update TEXT,                    -- 케어 프로필 업데이트 제안
   approved INTEGER DEFAULT 0,             -- 사회복지사 승인 여부
-  draft_json TEXT                         -- AI가 처음 낸 초안(수정 전) 스냅샷
+  draft_json TEXT,                        -- AI가 처음 낸 초안(수정 전) 스냅샷
+  outcome TEXT,                           -- 진료 정상 완료 | 일부만 진행 | 진료 못 함
+  depart_at TEXT, return_at TEXT,         -- 출발·복귀 시각 (HH:MM)
+  saved INTEGER DEFAULT 0                 -- 임시 저장 여부(승인과 별개)
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -355,6 +360,14 @@ _ADDED_COLUMNS = [
     # 추측 가능하면 안 된다 — 목업의 DH-260817-920(날짜+3자리)은 하루치가
     # 1000 개뿐이라 번호만 돌리면 그날 신청이 전부 열린다.
     ("intakes", "access_code", "TEXT"),
+    # 동행 담당자. 없으면 일정이 "배정 필요" 로 남는다 — 배정하지 않은 것과
+    # 배정할 사람이 없는 것을 화면이 구분할 수 있어야 한다.
+    ("intakes", "manager", "TEXT"),
+    ("post_records", "outcome", "TEXT"),
+    ("post_records", "depart_at", "TEXT"),
+    ("post_records", "return_at", "TEXT"),
+    ("post_records", "saved", "INTEGER DEFAULT 0"),
+    ("profiles", "address", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -406,14 +419,15 @@ def upsert_profile(conn: sqlite3.Connection, phone: str, p: dict) -> None:
     conn.execute(
         """INSERT OR REPLACE INTO profiles
            (phone,id,name,age,region,guardian_json,caregiver,mobility,
-            fall_risk,lives_alone,preferred_time,notes,ltci_grade,care_program)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            fall_risk,lives_alone,preferred_time,notes,ltci_grade,care_program,
+            address)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (phone, p.get("id"), p.get("name"), p.get("age"), p.get("region"),
          json.dumps(p.get("guardian"), ensure_ascii=False) if p.get("guardian") else None,
          p.get("caregiver"), p.get("mobility"),
          int(bool(p.get("fall_risk"))), int(bool(p.get("lives_alone"))),
          p.get("preferred_time"), p.get("notes"),
-         p.get("ltci_grade"), p.get("care_program")))
+         p.get("ltci_grade"), p.get("care_program"), p.get("address")))
 
 
 # ------------------------------------------------------------- 프로필/이력 --
@@ -450,7 +464,9 @@ def get_profile(phone: str) -> dict | None:
             (row["phone"],)).fetchall()
         return {
             "phone": row["phone"], "id": row["id"], "name": row["name"], "age": row["age"],
-            "region": row["region"],
+            # region 은 읍면동까지, address 는 그 뒤까지. 목록(list_profiles)에는
+            # region 만 싣는다 — 상세 주소는 상세를 열었을 때만 나간다.
+            "region": row["region"], "address": row["address"],
             "guardian": json.loads(row["guardian_json"]) if row["guardian_json"] else None,
             "caregiver": row["caregiver"], "mobility": row["mobility"],
             "fall_risk": bool(row["fall_risk"]), "lives_alone": bool(row["lives_alone"]),
@@ -881,6 +897,11 @@ def intake_counts() -> dict:
 POST_FIELDS = ("treatment", "next_visit", "pharmacy",
                "cautions", "guardian_msg", "profile_update")
 
+# 초안 6칸 밖에서 사람이 직접 채우는 것들. AI 가 만들지 않으므로 초안
+# 수정률(POST_FIELDS)의 분모에 넣지 않는다 — 넣으면 안 고쳤다는 이유로
+# 수정률이 좋아진다.
+POST_EXTRA = ("outcome", "depart_at", "return_at")
+
 
 def save_post_record(intake_id: int, phone: str, memo_raw: str, draft: dict) -> int:
     init_db()
@@ -905,12 +926,52 @@ def save_post_record(intake_id: int, phone: str, memo_raw: str, draft: dict) -> 
         conn.close()
 
 
+def list_managers() -> list[dict]:
+    """배정할 수 있는 사람 — 동행매니저 역할만.
+
+    화면이 이름을 직접 타이핑하게 두지 않는다. 오타 하나로 '박나눔' 과
+    '박나눔 매니저' 가 다른 사람이 되고, 그러면 그 사람 일정이 둘로 갈린다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, name FROM users WHERE role='동행매니저' ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def assign_manager(intake_id: int, manager: str | None,
+                   actor: str = "", role: str = "") -> bool:
+    """동행 담당자를 배정하거나(이름) 해제한다(None).
+
+    **확정된 접수에만 배정한다.** 아직 확정도 안 된 건에 사람을 붙이면
+    매니저 일정에는 잡혀 있는데 정작 갈 병원이 안 정해진 상태가 된다.
+    """
+    init_db()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT status, target FROM intakes WHERE id=?",
+                           (intake_id,)).fetchone()
+        if row is None or row["status"] != "확정":
+            return False
+        conn.execute("UPDATE intakes SET manager=? WHERE id=?", (manager, intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, role, "배정" if manager else "배정 해제", "intake", str(intake_id),
+              f"{row['target']} → {manager or '(해제)'}")
+    return True
+
+
 def update_post_record(record_id: int, edits: dict) -> int:
     """승인 전에 사회복지사가 고친 내용을 반영한다. 고친 칸 수를 돌려준다.
 
     초안(draft_json)은 건드리지 않는다 — 그게 비교 기준이다.
     """
-    fields = {k: v for k, v in edits.items() if k in POST_FIELDS}
+    allowed = POST_FIELDS + POST_EXTRA + ("saved",)
+    fields = {k: v for k, v in edits.items() if k in allowed}
     if not fields:
         return 0
     init_db()

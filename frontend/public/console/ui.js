@@ -27,6 +27,21 @@ export function button(label, cls, onClick) {
   return b;
 }
 
+// 접수 상태를 **사람 말로** 옮긴다.
+//
+// DB 값(접수 대기·임시 접수·확정)은 우리가 코드에서 쓰는 말이고, 화면에
+// 그대로 띄우면 복지사가 "임시 접수가 뭔가요" 를 묻게 된다. 목업이 쓰는
+// 말로 바꿔서 보여준다 — **DB 값은 건드리지 않는다.** 바꾸면 파이프라인·
+// 게이트·통계가 전부 딸려 온다.
+const STATUS_LABEL = {
+  "접수 대기": "접수 전",
+  "임시 접수": "확인 필요",
+  "확정": "접수 완료",
+  "긴급": "긴급",
+  "긴급 처리됨": "처리 완료",
+};
+export const statusLabel = (s) => STATUS_LABEL[s] || s || "";
+
 /** 상태 배지 — 확인됨 / 추정 / 확인 필요 */
 const STATUS_CLASS = { "확인됨": "ok", "추정": "guess", "확인 필요": "need" };
 export function badge(text, cls) {
