@@ -135,9 +135,14 @@ export const api = {
   // actor·role 을 더 이상 보내지 않는다. 서버가 토큰에서 신원을 꺼내 쓰고,
   // 본문에 실어 보내도 무시한다. 예전엔 화면이 "김○○ 사회복지사" 라고 적어
   // 보냈는데, 그러면 감사 로그에 남는 사람과 화면이 말하는 사람이 달라진다.
-  confirmIntake: (id, { hospital, date, level, acknowledge = false }) =>
+  // acknowledgeReason 은 확인 없이 넘어간 이유 — 서버가 감사 로그에 남긴다.
+  // 안 보내면 '미기재'로 기록된다(옛 호출부 호환).
+  confirmIntake: (id, { hospital, date, level, acknowledge = false,
+                        acknowledgeReason = null }) =>
     req(`/api/intakes/${id}/confirm`,
-        { method: "POST", body: { hospital, date, level, acknowledge } }),
+        { method: "POST",
+          body: { hospital, date, level, acknowledge,
+                  acknowledge_reason: acknowledgeReason || null } }),
 
   // 통화로 확인한 값을 항목에 반영한다 — 게이트를 푸는 유일한 경로.
   // field: target | hospital | dept | date | time
