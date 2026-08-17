@@ -15,6 +15,17 @@ import { can, openIntake, reload, state, update } from "../app.js";
 
 const FILTERS = [["전체", "전체"], ["확인 필요", "확인 필요"], ["확정됨", "확정됨"]];
 
+// 손이 더 가야 하는 접수 — 네비 배지·홈·목록이 **전부 이 함수 하나**를 쓴다.
+//
+// 예전엔 네비가 dashboard.counts.waiting 을, 목록이 intakes 를 봤다. waiting 은
+// status='접수 대기' 만 세기 때문에 **임시 접수(미등록 번호)와 긴급이 빠졌고**,
+// 그래서 배지 숫자와 실제 목록 건수가 달랐다. 둘 다 손봐야 하는 건들이다.
+//
+// 기준은 하나다 — 사회복지사가 아직 무언가 해야 하는가.
+const DONE = ["확정", "긴급 처리됨"];
+export const pendingIntakes = (intakes) =>
+  (intakes || []).filter((r) => !DONE.includes(r.status));
+
 export function renderRequests() {
   return el("div", "main", [listPane(), detailPane()]);
 }
@@ -22,11 +33,14 @@ export function renderRequests() {
 // ── 왼쪽: 목록 ──────────────────────────────────────────────
 function listPane() {
   const rows = filtered();
+  const n = pendingIntakes(state.intakes).length;
   return el("div", "list-pane", [
     el("div", "pane-head", [
       el("h2", null, [
         document.createTextNode("요청"),
-        el("span", "sub", `오늘 ${state.intakes.length}건`),
+        // 전체 건수와 손봐야 할 건수를 함께 적는다. 하나만 적으면 네비 배지와
+        // 다른 숫자가 되어 어느 쪽이 맞는지 매번 세어 봐야 한다.
+        el("span", "sub", `${state.intakes.length}건 · 확인 필요 ${n}`),
       ]),
     ]),
     chips(FILTERS, state.requestFilter, (k) => update({ requestFilter: k })),
@@ -38,9 +52,7 @@ function listPane() {
 function filtered() {
   const f = state.requestFilter;
   if (f === "확정됨") return state.intakes.filter((r) => r.status === "확정");
-  if (f === "확인 필요") {
-    return state.intakes.filter((r) => r.status !== "확정" && r.status !== "긴급 처리됨");
-  }
+  if (f === "확인 필요") return pendingIntakes(state.intakes);
   return state.intakes;
 }
 

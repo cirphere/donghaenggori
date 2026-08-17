@@ -25,7 +25,67 @@ const FIELDS = [
 ];
 
 export function renderRecords() {
-  return el("div", "main", [listPane(), detailPane()]);
+  return el("div", "main", [listPane(), state.recordDraft ? writePane() : detailPane()]);
+}
+
+// ── 새 기록 쓰기 ────────────────────────────────────────────
+//
+// 동행이 끝나면 매니저가 음성으로 메모를 남기고, 그게 AI 초안이 된다.
+// 목업에는 이미 만들어진 초안을 고치는 화면만 있어서 **메모를 넣는 입구가
+// 없었다** — 시연 장면 5 가 이 경로다.
+function writePane() {
+  const memo = el("textarea");
+  memo.rows = 5;
+  memo.placeholder = "동행 매니저 메모 — 오늘 진료가 어땠는지 그대로 적거나 말하세요";
+  memo.style.cssText = "width:100%;padding:9px 11px;border:1px solid var(--line);"
+                     + "border-radius:8px;background:var(--white);resize:vertical";
+
+  const intakeId = el("select");
+  // 확정된 접수만 고를 수 있다 — 동행을 다녀왔어야 사후기록이 있다.
+  const done = state.intakes.filter((r) => r.status === "확정");
+  for (const r of done) {
+    const o = el("option", null,
+      `#${r.id} ${r.target} · ${r.confirmed_hospital || r.hospital || ""}`);
+    o.value = r.id;
+    intakeId.append(o);
+  }
+  intakeId.style.cssText = "padding:9px 11px;border:1px solid var(--line);"
+                         + "border-radius:8px;background:var(--white);width:100%";
+
+  const status = el("div", "ask", "");
+  const go = button("초안 만들기", "btn primary", async () => {
+    const text = memo.value.trim();
+    if (!text) { status.textContent = "메모를 적어 주세요."; return; }
+    if (!intakeId.value) { status.textContent = "확정된 접수가 없어요 — 먼저 확정해 주세요."; return; }
+    go.disabled = true;
+    status.textContent = "초안을 만드는 중…";
+    try {
+      const r = state.intakes.find((x) => String(x.id) === intakeId.value);
+      const res = await api.createPostRecord(Number(intakeId.value), r.phone, text,
+                                             r.dept || null, r.target || null);
+      update({ recordDraft: false, selectedRecord: res.record_id });
+      await reload();
+    } catch (e) {
+      status.textContent = "실패 — " + e.message;
+      go.disabled = false;
+    }
+  });
+
+  return el("div", "detail-pane", [
+    el("div", "detail-head", [
+      el("h1", null, "새 사후기록"),
+      el("div", "right", [
+        button("취소", "btn ghost", () => update({ recordDraft: false })),
+      ]),
+    ]),
+    el("div", "cols", [el("div", "col", [
+      sectionTitle("어느 동행인가요"),
+      el("div", "frow", [el("div", "lb", "접수"), el("div", "vl", [intakeId])]),
+      sectionTitle("매니저 메모", "말한 그대로 적으면 AI 가 항목별로 정리합니다"),
+      el("div", "frow", [el("div", "lb", "메모"), el("div", "vl", [memo])]),
+      el("div", "footbar", [status, el("div", "grow"), go]),
+    ])]),
+  ]);
 }
 
 function listPane() {
@@ -34,6 +94,10 @@ function listPane() {
     el("div", "pane-head", [
       el("h2", null, [document.createTextNode("사후기록"),
                       el("span", "sub", `기록 필요 ${pending().length}건`)]),
+      can("post.write") || can("post.approve")
+        ? button("+ 새 기록 쓰기", "btn sm",
+                 () => update({ recordDraft: true, selectedRecord: null }))
+        : null,
     ]),
     chips(FILTERS, state.recordFilter, (k) => update({ recordFilter: k })),
     el("div", "pane-scroll",
