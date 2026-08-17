@@ -193,6 +193,9 @@ class GuardianIntakeOut(BaseModel):
     """
     ok: bool = True
     intake_id: int | None = None
+    # 조회용 신청번호. **접수 직후 이 응답에서 한 번만 알려준다** — 이후에는
+    # 이 값 자체가 조회의 열쇠라, 어디서도 다시 내보내지 않는다.
+    access_code: str | None = None
     urgent: bool = False
     urgent_confident: bool = True
     urgent_message: str | None = None
@@ -446,18 +449,91 @@ def guardian_create_intake(body: GuardianIntakeIn) -> dict:
     """
     res = _run_intake(IntakeIn(phone=body.phone, utterance=body.utterance,
                                channel="앱·웹(보호자)", save=True))
+    # 조회용 신청번호를 발급한다. 보호자는 계정을 만들지 않으므로 이게 유일한
+    # 열쇠다 — 연락처와 함께 있어야만 열린다(db.find_by_access_code).
+    code = None
+    if res.get("intake_id"):
+        code = db.new_access_code()
+        db.set_access_code(res["intake_id"], code)
     # 화이트리스트로 옮겨 담는다. res 를 그대로 넘기고 response_model 로 거르는
     # 방식은 쓰지 않는다 — 모델에 필드가 하나 늘거나 extra 설정이 바뀌면 조용히
     # 다시 새기 때문이다. 여기서 명시적으로 고른 것만 나간다.
     return {
         "ok": True,
         "intake_id": res.get("intake_id"),
+        "access_code": code,            # 조회용 신청번호 — 이때 한 번만 알려준다
         "urgent": res.get("urgent", False),
         "urgent_confident": res.get("urgent_confident", True),
         "urgent_message": res.get("urgent_message"),
         "raw_utterance": body.utterance,
         "dept": res.get("dept"),        # analysis 값 — 발신자가 적은 문장에서 나온다
         "date": res.get("date"),        # 〃
+    }
+
+
+class GuardianLookupIn(BaseModel):
+    """신청번호와 연락처를 **둘 다** 받는다 — 하나만으로는 열리지 않는다."""
+    code: str = Field(..., min_length=4, description="접수할 때 받은 신청번호")
+    phone: str = Field(..., min_length=4, description="신청할 때 적은 보호자 연락처")
+
+
+# 진행 상태 — 보호자에게 보여줄 말로 옮긴다. 내부 status 를 그대로 내보내면
+# '임시 접수' 같은 우리 용어가 보호자 화면에 뜬다.
+_GUARDIAN_STEPS = ["접수됨", "확인 중", "일정 확정", "동행 완료"]
+
+
+def _guardian_step(row: dict) -> str:
+    if row.get("status") == "확정":
+        return "일정 확정"
+    if row.get("status") in ("긴급", "긴급 처리됨"):
+        return "확인 중"
+    return "확인 중"
+
+
+@app.post("/api/guardian/lookup", tags=["보호자 웹"])
+def guardian_lookup(body: GuardianLookupIn, request: Request) -> dict:
+    """보호자가 자기 신청 하나를 조회한다 — 무인증이지만 두 값이 맞아야 한다.
+
+    **돌려주는 것을 좁게 고른다.** 여기서 프로필이나 AI 가 이력에서 고른 병원
+    근거를 내보내면, 신청번호를 아는 사람이 그 어르신의 진료 이력까지 알게
+    된다("최근 6개월 내 ○○정형외과 2회 방문" 같은 문장이 근거에 들어 있다).
+    보호자가 **자기가 적어 보낸 것과 진행 상태**만 본다.
+    """
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    key = f"guardian:{ip}"
+    wait = _login_locked(key)
+    if wait:
+        raise HTTPException(429, f"시도가 많습니다. {int(wait) + 1}초 뒤에 다시 해주세요.")
+
+    row = db.find_by_access_code(body.code, body.phone)
+    if not row:
+        # 무엇이 틀렸는지 알려주지 않는다 — "번호는 맞는데 연락처가 틀렸다"를
+        # 알려주면 신청번호를 대입해 찾는 길을 열어 주는 셈이다.
+        _login_failed(key)
+        raise HTTPException(404, "신청번호와 연락처를 다시 확인해 주세요.")
+
+    # **확정되기 전에는 병원·일정을 내보내지 않는다.**
+    #
+    # 확정 전 값은 AI 가 고른 후보다. 그걸 보호자 화면에 적으면 두 가지가 나쁘다.
+    #  ① 보호자가 정해진 줄 알고 그 병원으로 간다 — 아직 아무도 확정하지 않았다
+    #  ② 후보는 어르신의 과거 이력에서 나온다. 보호자가 적지 않은 병원 이름이
+    #     뜨면, 그건 우리가 그 어르신의 진료 이력을 알려 준 것이다
+    # **target 을 내보내지 않는다.** AI 가 보호자 번호로 역조회해 찾은 이름이라,
+    # 보호자가 적은 이름과 다를 수 있다 — 실제로 "김순자"로 신청했는데 화면에
+    # "박순자"가 떴다. 그건 우리가 **그 번호로 등록된 다른 어르신의 이름을
+    # 알려 준 것**이다. 보호자는 자기가 적어 보낸 것만 본다.
+    confirmed = row.get("status") == "확정"
+    return {
+        "ok": True,
+        "code": row.get("access_code"),
+        "requested": row.get("raw_utterance"),      # 보호자가 적어 보낸 것
+        "hospital": row.get("confirmed_hospital") if confirmed else None,
+        "date": row.get("confirmed_date") if confirmed else None,
+        "time": row.get("time_value") if confirmed else None,
+        "level": row.get("confirmed_level") if confirmed else None,
+        "step": _guardian_step(row),
+        "steps": _GUARDIAN_STEPS,
+        "policy": Policy(),
     }
 
 
