@@ -106,6 +106,12 @@ export const api = {
   guardianIntake: (phone, utterance) =>
     req("/api/guardian/intakes", { method: "POST", body: { phone, utterance }, auth: false }),
 
+  // 보호자가 자기 신청 하나를 조회한다. **신청번호와 연락처가 둘 다 맞아야**
+  // 열린다 — 로그인 없이 여는 문이라 하나만으로는 안 된다. 확정 전에는 병원·
+  // 일정이 null 로 온다(AI 후보를 확정처럼 보여주지 않는다).
+  guardianLookup: (code, phone) =>
+    req("/api/guardian/lookup", { method: "POST", body: { code, phone }, auth: false }),
+
   // 화면 02 → 03. 긴급이면 card 가 null 로 온다(카드를 만들지 않는다).
   createIntake: (phone, utterance, channel = "전화", save = true) =>
     req("/api/intakes", { method: "POST", body: { phone, utterance, channel, save } }),

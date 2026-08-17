@@ -120,6 +120,38 @@ def main() -> int:
     check("없는 번호는 404",
           c.get("/api/profiles/010-0000-0000", headers=auth).status_code == 404)
 
+    # ── 보호자 조회 — 무인증인데 남의 신청이 열리면 안 된다 ──────
+    #
+    # 로그인 없이 여는 문이 하나 늘었다. 신청번호만 알면 열린다면 목업의
+    # DH-260817-920(날짜+3자리) 처럼 대입으로 뚫린다.
+    made = c.post("/api/guardian/intakes",
+                  json={"phone": "010-9876-5432",
+                        "utterance": "어머니 모레 정형외과 모시고 가야 해요"}).json()
+    code = made.get("access_code")
+    check("접수하면 신청번호를 준다", bool(code), str(code))
+    check("신청번호가 추측하기 어렵다", bool(code) and len(code.split("-")[-1]) >= 8,
+          f"뒷자리 {len(code.split('-')[-1]) if code else 0}글자")
+
+    look = lambda cd, ph: c.post("/api/guardian/lookup", json={"code": cd, "phone": ph})
+    r = look(code, "010-9876-5432")
+    check("번호+연락처가 맞으면 열린다", r.status_code == 200, f"HTTP {r.status_code}")
+    check("번호만 맞으면 안 열린다", look(code, "010-0000-0000").status_code == 404)
+    check("연락처만 맞으면 안 열린다",
+          look("DH-260817-AAAAAAAA", "010-9876-5432").status_code == 404)
+
+    body = r.json()
+    # 여기서 프로필·이력이 새면 신청번호를 아는 사람이 그 어르신의 병력을 알게 된다.
+    for key in ("target", "profile", "card", "history", "reasons", "evidence",
+                "need_basis", "guardian_contact", "target_candidates"):
+        check(f"조회 응답에 {key} 가 없다", key not in body, str(body.get(key))[:40])
+    check("확정 전에는 병원을 안 알려준다", body.get("hospital") is None, str(body.get("hospital")))
+    check("확정 전에는 일정을 안 알려준다", body.get("date") is None, str(body.get("date")))
+    check("보호자가 적어 보낸 것은 돌려준다", bool(body.get("requested")))
+
+    # 대입 차단. 앞의 실패 2건이 이미 쌓여 있으므로 3회면 잠긴다.
+    codes = [look(f"DH-260817-BAD{i:05d}", "010-9876-5432").status_code for i in range(5)]
+    check("연속 실패하면 잠긴다", 429 in codes, f"{codes}")
+
     # ── 직원용 경로는 여전히 잠겨 있다 ──────────────────────────
     r = c.post("/api/intakes", json={"phone": REGISTERED, "utterance": "정형외과 가야 해"})
     check("직원용 접수는 토큰 없이 401", r.status_code == 401, f"HTTP {r.status_code}")

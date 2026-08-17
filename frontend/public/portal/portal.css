@@ -1,0 +1,168 @@
+/* 보호자 포털 — 병원동행 신청·조회
+ *
+ * 사회복지사 콘솔과 **의도적으로 다르게** 만든다. 쓰는 사람이 다르다.
+ *   · 어르신의 자녀가 휴대폰으로 연다 — 글자를 키우고 한 번에 하나만 묻는다
+ *   · 업무 화면이 아니라 안내 화면이다 — 밀도를 낮추고 여백을 넉넉히
+ *   · 우리 용어(접수카드·확인 필요·동행 수준)를 쓰지 않는다
+ *
+ * 목업과 마찬가지로 **외부에서 아무것도 받지 않는다**. 글꼴도 웹폰트로 받지
+ * 않고 설치돼 있으면 쓰고 없으면 시스템 글꼴로 떨어진다.
+ */
+
+:root {
+  --bg:      #fdfaf4;
+  --sky:     #d9ecf5;
+  --hill:    #cfe6bd;
+  --ink:     #2b2622;
+  --muted:   #6b625a;
+  --line:    #ece6dc;
+  --white:   #fff;
+  --accent:  #e2551f;
+  --accent-d:#c2410c;
+  --accent-l:#fff1e7;
+  --ok:      #15803d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 17px/1.6 -apple-system, "Apple SD Gothic Neo", Pretendard,
+        "Noto Sans KR", "Malgun Gothic", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.hidden { display: none !important; }
+
+/* ── 머리말 ─────────────────────────────────────────────── */
+.top {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; background: var(--white); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+.top .brand { font-weight: 800; font-size: 17px; }
+.top .brand span { color: var(--accent); }
+.top .grow { margin-left: auto; }
+
+/* ── 첫 화면 ────────────────────────────────────────────── */
+.hero {
+  background: linear-gradient(180deg, var(--sky) 0%, #eaf4ea 60%, var(--hill) 100%);
+  padding: 56px 20px 90px; text-align: center;
+}
+.hero .tag {
+  display: inline-block; background: #fdf0c9; color: #8a6a12;
+  border-radius: 999px; padding: 5px 14px; font-size: 14px; font-weight: 700;
+}
+.hero h1 { font-size: 34px; line-height: 1.35; margin: 18px 0 14px; }
+.hero p { color: #4b463f; margin: 0 0 26px; font-size: 16px; }
+.hero .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.hero .phone { margin-top: 18px; font-size: 15px; color: #4b463f; }
+.hero .phone b { color: var(--accent-d); }
+
+/* ── 버튼 ───────────────────────────────────────────────── */
+.btn {
+  padding: 14px 26px; border-radius: 999px; font-size: 17px; font-weight: 700;
+  border: 2px solid transparent; background: var(--white); color: var(--ink);
+}
+.btn.primary { background: var(--accent); color: var(--white); }
+.btn.primary:disabled { background: #e5ded4; color: #9b938a; cursor: not-allowed; }
+.btn.line { border-color: var(--ink); background: var(--white); }
+.btn.sm { padding: 8px 16px; font-size: 15px; border-radius: 10px; }
+.btn.text { background: none; border: 0; color: var(--muted); text-decoration: underline; }
+
+/* ── 단계 ───────────────────────────────────────────────── */
+.wrap { max-width: 640px; margin: 0 auto; padding: 0 20px 120px; }
+.step-top {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; font-size: 15px; color: var(--muted);
+}
+.step-top .mid { flex: 1; text-align: center; font-weight: 700; color: var(--ink); }
+.bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+
+.q { font-size: 24px; font-weight: 800; margin: 28px 0 6px; }
+.q-sub { color: var(--muted); font-size: 15px; margin-bottom: 22px; }
+
+.field { margin-bottom: 20px; }
+.field > label { display: block; font-size: 15px; font-weight: 700; margin-bottom: 7px; }
+.field .req { color: var(--accent); }
+.field input, .field textarea, .field select {
+  width: 100%; padding: 13px 14px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--white);
+}
+.field textarea { resize: vertical; min-height: 96px; }
+.field .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+/* 고르는 칩 — 손가락으로 누르는 크기 */
+.picks { display: flex; gap: 8px; flex-wrap: wrap; }
+.pick {
+  padding: 11px 18px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--white); font-size: 16px;
+}
+.pick.on { background: var(--accent-l); border-color: var(--accent); color: var(--accent-d); font-weight: 700; }
+
+/* 아래 고정 버튼 — 휴대폰에서 엄지가 닿는 자리 */
+.footfix {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(253,250,244,0) 0%, var(--bg) 30%);
+}
+.footfix .inner { max-width: 640px; margin: 0 auto; }
+.footfix .btn { width: 100%; }
+.err { color: #b91c1c; font-size: 15px; margin-bottom: 10px; text-align: center; }
+
+/* ── 확인 화면 ──────────────────────────────────────────── */
+.review { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 6px 16px; }
+.rrow { display: flex; gap: 12px; align-items: baseline; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.rrow:last-child { border-bottom: 0; }
+.rrow .k { width: 92px; flex: 0 0 92px; color: var(--muted); font-size: 15px; }
+.rrow .v { flex: 1; font-weight: 700; }
+.rrow .edit { background: none; border: 0; color: var(--accent-d); font-size: 14px; }
+.note { font-size: 14px; color: var(--muted); margin-top: 18px; text-align: center; line-height: 1.6; }
+
+/* ── 완료 ───────────────────────────────────────────────── */
+.done { text-align: center; padding: 60px 20px; }
+.done .mark {
+  width: 74px; height: 74px; border-radius: 50%; background: var(--accent);
+  color: var(--white); font-size: 38px; line-height: 74px; margin: 0 auto 22px;
+}
+.done h2 { font-size: 26px; margin: 0 0 10px; }
+.done p { color: var(--muted); margin: 0 0 26px; }
+.codebox {
+  display: inline-flex; align-items: center; gap: 14px;
+  background: var(--white); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 22px; margin-bottom: 12px;
+}
+.codebox .k { color: var(--muted); font-size: 14px; }
+.codebox .v { font-size: 20px; font-weight: 800; letter-spacing: .5px; }
+.keep {
+  background: #fff8e6; border: 1px solid #f2e2b8; border-radius: 12px;
+  padding: 14px 16px; font-size: 15px; color: #7a5f10; margin: 16px auto 26px; max-width: 460px;
+}
+
+/* ── 진행 상태 ──────────────────────────────────────────── */
+.track { margin-top: 26px; }
+.tstep { display: flex; gap: 14px; padding-bottom: 22px; position: relative; }
+.tstep:last-child { padding-bottom: 0; }
+.tstep .dot {
+  width: 20px; height: 20px; border-radius: 50%; flex: 0 0 20px; margin-top: 3px;
+  border: 3px solid var(--line); background: var(--white); z-index: 1;
+}
+.tstep.done .dot { background: var(--accent); border-color: var(--accent); }
+.tstep.now .dot { border-color: var(--accent); }
+.tstep:not(:last-child)::before {
+  content: ""; position: absolute; left: 9px; top: 22px; bottom: 0;
+  width: 2px; background: var(--line);
+}
+.tstep.done:not(:last-child)::before { background: var(--accent); }
+.tstep .t { font-weight: 700; }
+.tstep:not(.done):not(.now) .t { color: #a8a099; font-weight: 400; }
+.tstep .s { font-size: 14px; color: var(--muted); margin-top: 2px; }
+
+@media (max-width: 480px) {
+  .hero h1 { font-size: 28px; }
+  .q { font-size: 21px; }
+}

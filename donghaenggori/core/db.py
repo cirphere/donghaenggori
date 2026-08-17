@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS intakes (
   hospital TEXT, hospital_status TEXT, dept TEXT,
   date_value TEXT, date_label TEXT,
   time_value TEXT,
+  access_code TEXT,      -- 보호자 조회용 신청번호(무인증 조회 열쇠)
   need_level TEXT,
   status TEXT DEFAULT '접수 대기',        -- 접수 대기 | 확정 | 임시 접수 | 긴급
   confirmed INTEGER DEFAULT 0,
@@ -350,6 +351,10 @@ _ADDED_COLUMNS = [
     # verify("time") 이 행에는 반영되지 않았다 — 상세는 오후 3시인데 목록은
     # 여전히 비어 있는 상태가 된다.
     ("intakes", "time_value", "TEXT"),
+    # 보호자가 자기 신청을 조회할 때 쓰는 열쇠. 로그인 없이 여는 문이라
+    # 추측 가능하면 안 된다 — 목업의 DH-260817-920(날짜+3자리)은 하루치가
+    # 1000 개뿐이라 번호만 돌리면 그날 신청이 전부 열린다.
+    ("intakes", "access_code", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -671,6 +676,64 @@ def _with_card(row: dict) -> dict:
     except (TypeError, ValueError):
         row["card"] = None
     return row
+
+
+# ------------------------------------------------- 보호자 조회 (무인증) --
+#
+# 보호자가 로그인 없이 자기 신청 하나만 열어 보는 경로. **여기서 두 가지를
+# 동시에 지켜야 한다** — 보호자는 계정을 만들지 않고(어르신 가족에게 계정을
+# 요구하면 아무도 안 쓴다), 그렇다고 아무나 남의 신청을 봐서도 안 된다.
+#
+# 그래서 **신청번호 + 보호자 연락처** 둘을 함께 요구한다.
+#   · 신청번호만: 번호가 새면(문자 전달·스크린샷) 그걸로 끝이다
+#   · 연락처만: 번호를 아는 사람은 많다
+#   · 둘 다: 신청한 본인이 아니면 맞추기 어렵다
+#
+# 코드는 전화로 불러 줄 수 있어야 해서 **헷갈리는 글자를 뺀다**(0/O, 1/I/L).
+# 8자리 × 30글자 = 6560억 가지. 시도 제한과 함께면 대입은 불가능하다.
+_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def new_access_code() -> str:
+    """추측할 수 없는 신청번호. DH-YYMMDD-XXXXXXXX 형태."""
+    today = datetime.date.today().strftime("%y%m%d")
+    body = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+    return f"DH-{today}-{body}"
+
+
+def set_access_code(intake_id: int, code: str) -> None:
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE intakes SET access_code=? WHERE id=?", (code, intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def find_by_access_code(code: str, phone: str) -> dict | None:
+    """신청번호와 보호자 연락처가 **둘 다** 맞아야 돌려준다.
+
+    코드 비교에 compare_digest 를 쓴다. 문자열 == 는 앞에서부터 비교하다
+    다른 글자가 나오면 바로 끝나서, 응답 시간으로 몇 글자까지 맞았는지가
+    새어 나간다. 여기는 로그인 없이 열려 있어 시도 횟수를 많이 줄 수밖에
+    없는 경로라 더 조심한다.
+    """
+    if not code or not phone:
+        return None
+    init_db()
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM intakes WHERE phone=? AND access_code IS NOT NULL",
+            (normalize_phone(phone),)).fetchall()
+    finally:
+        conn.close()
+    want = (code or "").strip().upper()
+    for r in rows:
+        if hmac.compare_digest((r["access_code"] or "").upper(), want):
+            return dict(r)
+    return None
 
 
 def get_intake(intake_id: int) -> dict | None:
