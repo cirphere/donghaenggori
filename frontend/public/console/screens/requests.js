@@ -78,6 +78,12 @@ function detailPane() {
   const d = state.intakeDetail;
   if (!d) return el("div", "detail-pane", [empty("불러오는 중…")]);
 
+  // **긴급은 접수카드가 없다.** AI 가 응급 여부를 판정하지 않기 때문에
+  // 카드를 만들다 말고 사람에게 넘긴다(pipeline). 그래서 card 가 null 인데,
+  // 카드 화면을 그대로 그리면 항목이 전부 '—' 인 빈 표가 뜬다 — 시연 장면 3 이
+  // 이 경로다. 무엇을 해야 하는지를 보여주는 다른 화면이어야 한다.
+  if (d.status === "긴급" || d.status === "긴급 처리됨" || !d.card) return urgentPane(d);
+
   const card = d.card || {};
   const g = d.gate || {};
   const f = card.fields || {};
@@ -100,6 +106,75 @@ function detailPane() {
       el("div", "col", [visitSection(card, f), supportSection(card), guardianSection(card)]),
     ]),
     footbar(d, g),
+  ]);
+}
+
+// ── 긴급 ────────────────────────────────────────────────────
+//
+// 여기서 보여줄 것은 접수 내용이 아니라 **지금 사람이 무엇을 해야 하는가**다.
+// 병원·방문일 같은 칸을 비워서 늘어놓으면 "아직 안 채워진 접수" 처럼 보이는데,
+// 긴급은 채우다 만 것이 아니라 **일부러 만들지 않은** 것이다.
+function urgentPane(d) {
+  const done = d.status === "긴급 처리됨";
+  const connected = d.transfer_status === "연결됨";
+
+  return el("div", "detail-pane", [
+    el("div", "detail-head", [
+      el("h1", null, splitTarget(d.target)[0]),
+      badge(done ? "긴급 처리됨" : "긴급", done ? "ok" : "urgent"),
+      el("div", "right", `${d.channel || "전화"} 접수 · ${d.created_at || ""}`),
+    ]),
+    el("div", "cols", [
+      el("div", "col", [
+        sectionTitle("요청 내용", "원문 그대로"),
+        el("div", "quote", [
+          el("div", "who", "어르신"),
+          el("div", "txt", `“${d.raw_utterance || "—"}”`),
+        ]),
+        sectionTitle("접수카드를 만들지 않았습니다"),
+        el("div", "ask",
+          "동행고리 AI 는 응급 여부를 판단하지 않습니다. 긴급 신호가 잡히면 "
+          + "카드 생성을 중단하고 담당자·사람 상담으로 넘깁니다."),
+      ]),
+      el("div", "col", [
+        sectionTitle("담당자 연결"),
+        // 담당자가 못 받은 건은 반드시 눈에 띄어야 한다. 어르신은 안내를 듣고
+        // 끊었는데 아무도 다시 걸지 않는 상태가 제일 위험하다.
+        frow("전환 결과", d.transfer_status || "기록 없음", {
+          right: d.transfer_status
+            ? badge(d.transfer_status, connected ? "ok" : "urgent") : null,
+          evidence: connected ? [] : ["어르신께 다시 연락이 필요해요."],
+        }),
+        frow("연락처", d.phone),
+        done ? null : resolveBox(d),
+      ]),
+    ]),
+  ]);
+}
+
+function resolveBox(d) {
+  if (!can("intake.confirm")) {
+    return el("div", "ask", "처리 완료 표시는 사회복지사가 합니다.");
+  }
+  const note = el("input");
+  note.placeholder = "어떻게 처리했는지 (감사 로그에 남아요)";
+  const go = button("처리 완료로 표시", "btn primary", async () => {
+    go.disabled = true;
+    try {
+      await api.resolveUrgent(d.id, note.value.trim());
+      await openIntake(d.id);
+      await reload();
+    } catch (e) {
+      update({ error: e });
+    }
+  });
+  note.onkeydown = (e) => { if (e.key === "Enter") go.click(); };
+  return el("div", "frow needbox", [
+    el("div", "vl", [
+      el("div", null, "연락을 마쳤으면 표시해 주세요"),
+      el("div", "ask", "확정과는 다릅니다 — 긴급은 확정할 카드가 없습니다."),
+      el("div", "verify", [note, go]),
+    ]),
   ]);
 }
 
