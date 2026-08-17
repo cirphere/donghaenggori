@@ -157,9 +157,16 @@ export const api = {
     req("/api/post-records",
         { method: "POST", body: { intake_id: intakeId, phone, memo, dept, target } }),
 
+  postRecords: (limit = 50) => req(`/api/post-records?limit=${limit}`),
+
   // changed:false 면 이미 같은 상태였다는 뜻 — 오류가 아니다(더블클릭·재요청).
-  approvePostRecord: (id, approved) =>
-    req(`/api/post-records/${id}/approve`, { method: "POST", body: { approved } }),
+  //
+  // edits 로 초안을 고쳐서 승인할 수 있다. 안 보낸 칸은 초안 그대로 둔다 —
+  // 빈 문자열과 '안 보냄'은 다르다. 서버가 초안 원본과 비교해 몇 칸을 그대로
+  // 썼는지 감사 로그에 남긴다(파일1 4-2 '사후기록 초안 수정률').
+  approvePostRecord: (id, approved, edits = null) =>
+    req(`/api/post-records/${id}/approve`,
+        { method: "POST", body: { approved, ...(edits || {}) } }),
 
   audit: (limit = 20) => req(`/api/audit?limit=${limit}`),
 
