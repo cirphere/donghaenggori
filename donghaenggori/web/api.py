@@ -628,6 +628,20 @@ def confirm(intake_id: int, body: ConfirmIn, user: dict = Depends(current_user))
     if not row:
         raise HTTPException(404, "접수를 찾을 수 없습니다")
 
+    # **긴급은 이 경로로 확정하지 않는다.**
+    #
+    # 긴급은 접수카드를 만들지 않으므로 게이트가 볼 fields 가 없고, 그래서
+    # blockers 가 비어 allowed=true 로 통과한다. 통과하면 status 가 '긴급' →
+    # '확정' 으로 덮여 **긴급 표시가 목록에서 사라진다.** 실측으로 확인했다.
+    #
+    # 확정은 "무엇을 할지 정했다"는 뜻인데 긴급은 정할 카드가 없다. 사람이
+    # 연락을 마쳤다는 것은 resolve 로 남긴다.
+    if row.get("status") in ("긴급", "긴급 처리됨"):
+        raise HTTPException(409, detail={
+            "message": "긴급 접수는 확정하지 않습니다. 연락을 마쳤으면 '처리 완료'로 표시해 주세요.",
+            "resolve_path": f"/api/intakes/{intake_id}/resolve",
+        })
+
     g = gate.check(row.get("card"), body.acknowledge)
     if not g["allowed"]:
         # 422 가 아니라 409 다 — 요청이 잘못된 게 아니라 지금 상태에서 못 하는 것이다.
@@ -636,8 +650,11 @@ def confirm(intake_id: int, body: ConfirmIn, user: dict = Depends(current_user))
             "gate": g,
         })
 
-    db.confirm_intake(intake_id, body.hospital, body.date, body.level, user["name"], user["role"])
-    if g["acknowledged"]:
+    res = db.confirm_intake(intake_id, body.hospital, body.date, body.level,
+                            user["name"], user["role"])
+    # 아무것도 안 바뀌었으면 '미확인 확정' 도 다시 남기지 않는다. 안 그러면
+    # 재요청 한 번에 확정 로그는 안 늘고 이것만 느는 이상한 상태가 된다.
+    if g["acknowledged"] and res.get("changed"):
         # 확인 없이 넘어간 것은 반드시 흔적이 남아야 한다. 나중에 문제가 생겼을 때
         # "누가 무엇을 확인하지 않고 확정했는가"에 답할 수 있어야 한다.
         db.log_audit(user["name"], user["role"], "미확인 확정", "intake", str(intake_id),
@@ -667,7 +684,13 @@ def resolve_urgent(intake_id: int, body: ResolveIn, user: dict = Depends(current
 
 @app.post("/api/post-records", tags=["화면05 사후기록"])
 def create_post_record(body: PostRecordIn, user: dict = Depends(current_user)) -> dict:
-    """음성 메모 → 기록 초안. 항상 '검토 필요' 상태로 사람에게 넘긴다."""
+    """음성 메모 → 기록 초안. 항상 '검토 필요' 상태로 사람에게 넘긴다.
+
+    승인(post.approve)은 권한을 보는데 생성은 인증만 보고 있었다 — 로그인만
+    하면 누구나 남의 어르신 앞으로 기록을 만들 수 있었다.
+    """
+    if not (db.can(user["role"], "post.write") or db.can(user["role"], "post.approve")):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 기록 작성 권한이 없습니다")
     draft = summarize.summarize(body.memo, target=body.target, dept=body.dept)
     rid = db.save_post_record(body.intake_id, body.phone, body.memo, draft.as_dict())
     return {

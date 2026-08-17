@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS post_records (
   draft_json TEXT,                        -- AI가 처음 낸 초안(수정 전) 스냅샷
   outcome TEXT,                           -- 진료 정상 완료 | 일부만 진행 | 진료 못 함
   depart_at TEXT, return_at TEXT,         -- 출발·복귀 시각 (HH:MM)
-  saved INTEGER DEFAULT 0                 -- 임시 저장 여부(승인과 별개)
+  saved INTEGER DEFAULT 0,                -- 임시 저장 여부(승인과 별개)
+  reviewed INTEGER DEFAULT 0              -- 사람이 판단을 내렸나(승인이든 거절이든)
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -367,6 +368,10 @@ _ADDED_COLUMNS = [
     ("post_records", "depart_at", "TEXT"),
     ("post_records", "return_at", "TEXT"),
     ("post_records", "saved", "INTEGER DEFAULT 0"),
+    # approved 0 이 "아직 안 봤다" 와 "보고 반영하지 않기로 했다" 를 같이
+    # 뜻해서, 거절이 아무 흔적도 남기지 못했다. 판단을 내렸다는 사실을
+    # 따로 둔다.
+    ("post_records", "reviewed", "INTEGER DEFAULT 0"),
     ("profiles", "address", "TEXT"),
 ]
 
@@ -599,19 +604,43 @@ def save_intake(card, phone: str, channel: str = "전화", status: str = "접수
 
 
 def confirm_intake(intake_id: int, hospital: str, date: str, level: str,
-                   actor: str = "김○○ 사회복지사", role: str = "사회복지사") -> None:
+                   actor: str = "김○○ 사회복지사", role: str = "사회복지사") -> dict:
+    """사회복지사 확정. **같은 값으로 다시 불러도 로그가 늘지 않는다.**
+
+    예전에는 부를 때마다 감사 로그를 남겨서, 버튼을 두 번 누르거나 타임아웃
+    뒤 재요청이 들어오면 같은 확정이 두 줄로 쌓였다(실측 2건 → 4건). 감사
+    로그는 "무슨 일이 있었나"를 답하는 기록인데, 없던 일이 두 번 있었던 것처럼
+    보이면 그 기록을 믿을 수 없게 된다.
+
+    값이 실제로 달라졌을 때만 남긴다 — 확정 내용을 고친 것은 사건이 맞다.
+    """
     init_db()
     conn = get_conn()
     try:
+        before = conn.execute(
+            "SELECT confirmed, confirmed_hospital, confirmed_date, confirmed_level"
+            " FROM intakes WHERE id=?", (intake_id,)).fetchone()
+        if before is None:
+            return {"changed": False, "reason": "없는 접수"}
+
+        same = (before["confirmed"] == 1
+                and (before["confirmed_hospital"] or "") == (hospital or "")
+                and (before["confirmed_date"] or "") == (date or "")
+                and (before["confirmed_level"] or "") == (level or ""))
         conn.execute(
             """UPDATE intakes SET confirmed=1, status='확정',
                confirmed_hospital=?, confirmed_date=?, confirmed_level=? WHERE id=?""",
             (hospital, date, level, intake_id))
         conn.commit()
-        log_audit(actor, role, "확정", "intake", str(intake_id),
-                  f"병원={hospital} / 방문일={date} / 지원수준={level}")
     finally:
         conn.close()
+
+    if same:
+        return {"changed": False, "reason": "이미 같은 값으로 확정됨"}
+    log_audit(actor, role, "확정" if not before["confirmed"] else "확정 수정",
+              "intake", str(intake_id),
+              f"병원={hospital} / 방문일={date} / 지원수준={level}")
+    return {"changed": True}
 
 
 # 확인 입력이 건드리는 곳 — 카드 안의 평면 키와 intakes 컬럼.
@@ -1029,16 +1058,27 @@ def approve_post_record(record_id: int, approved: bool,
     conn = get_conn()
     try:
         row = conn.execute(
-            "SELECT phone, profile_update, approved FROM post_records WHERE id=?",
+            "SELECT phone, profile_update, approved, reviewed FROM post_records WHERE id=?",
             (record_id,)).fetchone()
         if row is None:
             return {"changed": False, "applied": False, "reason": "없는 기록"}
 
         want = 1 if approved else 0
-        # 조건부 상태 전이 — 0→1 또는 1→0 일 때만 rowcount 가 1이다
+        # 조건부 상태 전이 — 0→1 또는 1→0 일 때만 rowcount 가 1이다.
+        # 프로필 반영은 이 전이가 있을 때만 한다(같은 메모가 두 번 붙는 것을 막는다).
         cur = conn.execute("UPDATE post_records SET approved=? WHERE id=? AND approved=?",
                            (want, record_id, 1 - want))
         changed = cur.rowcount == 1
+
+        # **판단을 내렸다는 사실은 상태 전이와 별개다.**
+        #
+        # 검토 대기(approved=0) 인 초안을 거절하면 approved 는 그대로 0 이라
+        # 위 UPDATE 가 아무것도 안 바꾸고, 그래서 감사 로그도 안 남았다 —
+        # 사회복지사가 "보고 반영하지 않기로 했다" 고 판단한 것이 기록되지
+        # 않는다는 뜻이다. 나중에 "왜 이 기록은 프로필에 없나" 를 물으면
+        # 아무도 답할 수 없다.
+        first_review = row["reviewed"] == 0
+        conn.execute("UPDATE post_records SET reviewed=1 WHERE id=?", (record_id,))
 
         applied = False
         if changed and approved and row["profile_update"]:
@@ -1050,7 +1090,7 @@ def approve_post_record(record_id: int, approved: bool,
     finally:
         conn.close()
 
-    if not changed:
+    if not changed and not first_review:
         return {"changed": False, "applied": False, "reason": "이미 같은 상태"}
 
     detail = row["profile_update"] or ""
@@ -1067,7 +1107,8 @@ def approve_post_record(record_id: int, approved: bool,
                    + "]")
 
     log_audit(actor, role, "승인" if approved else "거절", "post_record", str(record_id), detail)
-    return {"changed": True, "applied": applied, "draft_kept": stats}
+    return {"changed": changed, "applied": applied, "draft_kept": stats,
+            "reviewed": True}
 
 
 def list_post_records(limit: int = 50) -> list[dict]:
