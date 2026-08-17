@@ -10,11 +10,13 @@
 import { api, session } from "../api.js";
 import { el } from "./ui.js";
 import { renderHome } from "./screens/home.js";
-import { renderRequests } from "./screens/requests.js";
+import { pendingIntakes, renderRequests } from "./screens/requests.js";
 import { renderSchedule } from "./screens/schedule.js";
 import { renderElders } from "./screens/elders.js";
 import { renderRecords } from "./screens/records.js";
 import { renderSettings } from "./screens/settings.js";
+import { renderNewIntake } from "./screens/newintake.js";
+import { loadAudit, renderAudit } from "./screens/audit.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -42,6 +44,9 @@ export const state = {
   records: [],
   selectedRecord: null,
   recordFilter: "전체",
+  recordDraft: false,        // 새 기록 쓰기 화면을 펼쳤나
+
+  audit: [],
 
   scheduleFilter: "전체",
 };
@@ -56,6 +61,8 @@ const SCREENS = {
   schedule: renderSchedule,
   elders: renderElders,
   records: renderRecords,
+  newintake: renderNewIntake,
+  audit: renderAudit,
   settings: renderSettings,
 };
 
@@ -76,7 +83,9 @@ export function render() {
   for (const b of document.querySelectorAll(".nav-item")) {
     b.classList.toggle("on", b.dataset.screen === state.screen);
   }
-  $("navReqN").textContent = state.dashboard?.counts?.waiting || "";
+  // 배지는 목록과 **같은 함수**로 센다. 예전엔 여기서 counts.waiting 을 읽었는데
+  // 그건 status='접수 대기' 만 세어서, 임시 접수와 긴급이 빠진 숫자가 떴다.
+  $("navReqN").textContent = pendingIntakes(state.intakes).length || "";
   $("navRecN").textContent = state.records.filter((r) => !r.approved).length || "";
 }
 
@@ -99,19 +108,21 @@ export function update(patch) {
 async function load(screen) {
   state.loading = true;
   try {
-    if (screen === "home") {
-      state.dashboard = await api.dashboard();
-      state.records = await api.postRecords().catch(() => []);
-    } else if (screen === "requests") {
-      state.dashboard = await api.dashboard();
-      state.intakes = state.dashboard.intakes || [];
-    } else if (screen === "schedule") {
+    // 대시보드는 카운트와 접수 목록을 함께 준다. 화면마다 따로 담으면
+    // 어떤 화면에서는 intakes 가 비어 네비 배지가 사라진다 — 실제로 그랬다.
+    // 접수를 쓰는 화면은 전부 여기서 한 번에 채운다.
+    if (["home", "requests", "schedule"].includes(screen)) {
       state.dashboard = await api.dashboard();
       state.intakes = state.dashboard.intakes || [];
+      if (screen === "home") state.records = await api.postRecords().catch(() => []);
     } else if (screen === "elders") {
       state.profiles = await api.profiles(state.profileQuery);
     } else if (screen === "records") {
       state.records = await api.postRecords();
+      // 새 기록은 확정된 접수에 붙는다 — 고를 목록이 있어야 한다
+      state.intakes = (await api.dashboard()).intakes || [];
+    } else if (screen === "audit") {
+      await loadAudit();
     }
   } catch (e) {
     state.error = e;
@@ -189,6 +200,11 @@ function showApp(user) {
   $("view-login").classList.add("hidden");
   $("app").classList.remove("hidden");
   $("whoami").textContent = user ? `${user.name}\n${user.role}` : "";
+  // 권한이 없는 메뉴는 감춘다. 눌러 봐야 403 을 받는 화면을 보여줄 이유가 없다.
+  // **가리는 것은 안내일 뿐 경계가 아니다** — 실제 차단은 서버가 한다.
+  for (const b of document.querySelectorAll(".nav-item[data-perm]")) {
+    b.classList.toggle("hidden", !can(b.dataset.perm));
+  }
   startPolling();
   go("home");
 }

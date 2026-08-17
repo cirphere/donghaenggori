@@ -6,6 +6,7 @@
 
 import { badge, dateLabel, el, empty, errorBox } from "../ui.js";
 import { openIntake, state, update } from "../app.js";
+import { pendingIntakes } from "./requests.js";
 import { scheduleOf } from "./schedule.js";
 
 export function renderHome() {
@@ -13,16 +14,19 @@ export function renderHome() {
   const d = state.dashboard;
   if (!d) return el("div", "wide-pane", [empty("불러오는 중…")]);
 
-  const c = d.counts || {};
-  const intakes = d.intakes || [];
-  const todos = intakes.filter((r) => r.status !== "확정" && r.status !== "긴급 처리됨");
+  const intakes = state.intakes;
+  const todos = pendingIntakes(intakes);
+  const urgent = todos.filter((r) => r.status === "긴급").length;
   const today = scheduleOf(intakes).filter((s) => s.date === todayIso());
 
   return el("div", "wide-pane", [
     el("h1", "home-h1", "오늘의 동행"),
+    // 긴급은 '확인 필요'에 이미 들어 있다. 따로 더하면 6건짜리를 8건으로
+    // 부풀려 말하게 된다 — 아침에 처음 보는 숫자라 틀리면 안 된다.
     el("div", "home-sub",
        `${dateLabel(todayIso())} · 오늘 일정 ${today.length}건 · `
-       + `확인 필요 ${todos.length}건 · 긴급 ${c.urgent || 0}건`),
+       + `확인 필요 ${todos.length}건`
+       + (urgent ? ` (그중 긴급 ${urgent}건)` : "")),
     el("div", "home-cols", [
       el("div", "col", [
         el("h3", "sec-title", `먼저 처리할 일 · ${todos.length}건`),
