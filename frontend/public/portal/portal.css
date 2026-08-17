@@ -17,7 +17,7 @@
   --muted:   #6b625a;
   --line:    #ece6dc;
   --white:   #fff;
-  --accent:  #e2551f;
+  --accent:  #F94704;
   --accent-d:#c2410c;
   --accent-l:#fff1e7;
   --ok:      #15803d;
@@ -67,7 +67,11 @@ button { cursor: pointer; }
   padding: 14px 26px; border-radius: 999px; font-size: 17px; font-weight: 700;
   border: 2px solid transparent; background: var(--white); color: var(--ink);
 }
+/* 목업의 CTA 는 높이 56px 고정이다 — 전화 버튼과 나란히 서므로 맞춰야 한다 */
+.closing .btn, .hero .btn { height: 56px; padding: 0 34px; display: inline-flex;
+                            align-items: center; font-size: 16px; }
 .btn.primary { background: var(--accent); color: var(--white); }
+.btn.primary:hover { background: #E04004; }
 .btn.primary:disabled { background: #e5ded4; color: #9b938a; cursor: not-allowed; }
 .btn.line { border-color: var(--ink); background: var(--white); }
 .btn.sm { padding: 8px 16px; font-size: 15px; border-radius: 10px; }
@@ -170,13 +174,20 @@ button { cursor: pointer; }
 /* ── 랜딩 아래 섹션들 ────────────────────────────────────── */
 .sec { padding: 72px 20px; }
 .sec-cream { background: #fdf6e8; }
+/* 목업 값 그대로 — 흰 배경 + 위쪽 실선 한 줄 */
+.sec-white { background: #fff; border-top: 1px solid #F0E7D8; }
 .sec-in { max-width: 1060px; margin: 0 auto; }
-.sec-in.narrow { max-width: 620px; text-align: center; }
-.sec-h { font-size: 28px; text-align: center; margin: 14px 0 8px; }
+.sec-in.narrow { max-width: 760px; text-align: center;
+                 padding-top: 64px; padding-bottom: 72px; }
+.sec-h { font-size: 24px; font-weight: 800; letter-spacing: -.015em;
+         text-align: center; margin: 14px 0 0; }
 .sec-h.left { text-align: left; font-size: 32px; line-height: 1.35; }
-.sec-p { color: var(--muted); text-align: center; margin: 0 0 40px; }
+.sec-p { color: #6E6259; text-align: center; margin: 16px 0 40px;
+         font-size: 16px; line-height: 1.7; text-wrap: pretty; }
+/* 마무리 문단은 아래 여백을 좁게 — 그 아래가 곧 언덕이다 */
+.sec-p.tight { margin-bottom: 0; }
 .sec-p.left { text-align: left; margin-bottom: 34px; }
-.sec-note { font-size: 14px; color: #8b827a; margin-top: 18px; }
+.sec-note { font-size: 14px; line-height: 1.6; color: #9A8F86; margin-top: 14px; }
 .sec .tag { display: inline-block; background: var(--accent-l); color: var(--accent-d);
             border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 700; }
 
@@ -240,26 +251,31 @@ button { cursor: pointer; }
 .webline { display: flex; align-items: center; gap: 14px; margin-top: 26px;
            color: var(--muted); flex-wrap: wrap; }
 
-.shield { font-size: 34px; }
+.sec-in.narrow > svg { margin-bottom: 16px; }
 
-/* 마무리 */
-.closing { background: #9ccb7e; padding: 0 20px 64px; position: relative; }
-.closing .hills { height: 110px; background:
-  radial-gradient(120% 100% at 50% 100%, #b7dc9c 0%, #9ccb7e 60%); }
-.closing-in { text-align: center; color: var(--white); }
-.closing-in h2 { font-size: 26px; margin: 0 0 8px; }
-.closing-in p { margin: 0 0 22px; opacity: .95; }
-.closing .cta { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
-                align-items: center; }
-.callbtn { background: var(--white); color: var(--ink); border-radius: 999px;
-           padding: 14px 24px; font-weight: 800; }
+/* 마무리 — 언덕은 SVG 곡선 두 겹이다(목업 좌표). CSS 그라데이션으로는
+   깊이가 안 나와서 직선처럼 보였다. */
+.closing { background: #fff; position: relative; overflow: hidden; }
+.closing .hills { display: block; width: 100%; height: clamp(120px, 14vw, 170px); }
+.closing-in {
+  background: #7CBF5E; text-align: center; color: var(--white);
+  padding: 8px 20px 64px; margin-top: -2px;   /* SVG 와 바닥 사이 실틈을 덮는다 */
+}
+.closing-in h2 { font-size: 24px; font-weight: 800; letter-spacing: -.015em; margin: 0; }
+.closing-in p { margin: 10px 0 22px; font-size: 15px; color: rgba(255,255,255,.92); }
+.closing .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.callbtn {
+  height: 56px; padding: 0 26px; background: var(--white); color: #3A3128;
+  border-radius: 999px; font-size: 16px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 8px;
+}
 
-.foot { background: #3f372f; color: #d8d0c6; padding: 40px 20px 52px; }
-.foot-b { font-weight: 800; color: var(--white); margin-bottom: 10px; }
-.foot-p { margin-bottom: 14px; }
-.foot-p b { color: #f3b95f; }
-.foot-s { font-size: 14px; color: #a99f93; line-height: 1.7; }
-.foot-c { font-size: 13px; color: #8a8177; margin-top: 18px; }
+.foot { background: #3F362C; color: #d8d0c6; padding: 40px 20px 52px; }
+.foot-b { font-weight: 700; font-size: 15px; color: #FFF6DE; margin-bottom: 10px; }
+.foot-p { margin-bottom: 14px; font-size: 13px; color: #D8CDBB; }
+.foot-p b { color: #FFC93C; }
+.foot-s { font-size: 13px; color: #B8AC9B; line-height: 1.7; }
+.foot-c { font-size: 13px; color: #8F8373; margin-top: 18px; }
 
 @media (max-width: 720px) {
   .sec-h { font-size: 23px; } .sec-h.left { font-size: 26px; }
