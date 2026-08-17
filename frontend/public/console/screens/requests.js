@@ -56,6 +56,14 @@ function filtered() {
   return state.intakes;
 }
 
+/** 목록·홈에서 부르는 이름 — 목업이 어디서나 "박순자 · 81세" 로 쓴다.
+ *  나이는 급한 순서를 가리는 데 실제로 쓰이는 정보다. */
+export function nameWithAge(r) {
+  const [name, note] = splitTarget(r.target);
+  const who = r.target_age ? `${name} · ${r.target_age}세` : name;
+  return note ? `${who} · ${note}` : who;
+}
+
 /** "박순자 (보호자 대리 요청 — 확인 필요)" → ["박순자", "보호자 대리 요청 — 확인 필요"] */
 export function splitTarget(target) {
   const t = target || "미확인 대상자";
@@ -65,12 +73,14 @@ export function splitTarget(target) {
 
 function rowOf(r) {
   const urgent = r.status === "긴급";
-  const [name, note] = splitTarget(r.target);
   return listRow({
-    name: note ? `${name} · ${note}` : name,
+    name: nameWithAge(r),
     right: badge(r.status, urgent ? "urgent" : r.status === "확정" ? "ok" : "need"),
+    // 어르신이 무엇을 말했는지를 목록에서 바로 보여준다. 병원·날짜만 적으면
+    // 아직 아무것도 안 정해진 건이 전부 "확인 전" 한 줄로 똑같아 보인다.
     sub: [r.hospital, r.date_value && dateLabelRelative(r.date_value)]
-      .filter(Boolean).join(" · ") || "확인 전",
+      .filter(Boolean).join(" · ")
+      || (r.raw_utterance ? `“${r.raw_utterance}”` : "확인 전"),
     // 담당자가 못 받은 긴급은 반드시 눈에 띄어야 한다. 어르신은 안내를 듣고
     // 끊었는데 아무도 다시 걸지 않는 상태가 제일 위험하다.
     alert: r.transfer_status && r.transfer_status !== "연결됨"

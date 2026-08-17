@@ -6,7 +6,7 @@
 
 import { badge, dateLabel, el, empty, errorBox } from "../ui.js";
 import { openIntake, state, update } from "../app.js";
-import { pendingIntakes } from "./requests.js";
+import { nameWithAge, pendingIntakes } from "./requests.js";
 import { scheduleOf } from "./schedule.js";
 
 export function renderHome() {
@@ -51,7 +51,7 @@ function todoRow(r) {
   return el("div", "todo", [
     badge(r.status, urgent ? "urgent" : "need"),
     el("div", "body", [
-      el("div", "t", `${r.target || "미확인 대상자"}${r.hospital ? " — " + r.hospital : ""}`),
+      el("div", "t", `${nameWithAge(r)}${r.hospital ? " — " + r.hospital : ""}`),
       el("div", "s", [r.raw_utterance && `“${r.raw_utterance}”`, r.channel]
         .filter(Boolean).join(" · ")),
     ]),

@@ -803,8 +803,11 @@ def recent_intakes(phone: str, minutes: int = 10, exclude_id: int | None = None)
 # 최신순만 쓰면 긴급 접수가 이후 접수들에 밀려 화면 중간에 묻힌다. 실제로
 # 시연 데이터에서 긴급 한 건이 다섯 건 아래로 내려가 있었다. 이건 보기 좋고
 # 나쁘고의 문제가 아니라 놓치면 안 되는 것을 놓치는 문제다.
-_ORDER = ("CASE status WHEN '긴급' THEN 0 "
-          "WHEN '확정' THEN 2 WHEN '긴급 처리됨' THEN 2 ELSE 1 END, id DESC")
+#
+# 컬럼을 i. 로 못박아 둔다 — profiles 를 조인해 나이를 끌어오는데, 거기에도
+# id 컬럼이 있어서(P005…) 수식어가 없으면 SQLite 가 어느 쪽인지 모른다.
+_ORDER = ("CASE i.status WHEN '긴급' THEN 0 "
+          "WHEN '확정' THEN 2 WHEN '긴급 처리됨' THEN 2 ELSE 1 END, i.id DESC")
 
 
 def list_intakes(limit: int = 50) -> list[dict]:
@@ -812,8 +815,19 @@ def list_intakes(limit: int = 50) -> list[dict]:
     conn = get_conn()
     try:
         # 목록에는 카드 전문을 싣지 않는다 — 상세는 GET /api/intakes/{id} 로 따로 받는다
+        #
+        # 나이와 지역만 프로필에서 끌어온다. 화면이 "박순자 · 81세" 로 부르는데
+        # 접수 행에는 이름밖에 없어서, 나이를 보려면 어르신 화면으로 건너가야
+        # 했다. 목록에서 급한 순서를 가리는 데 나이가 실제로 쓰인다.
+        #
+        # **건강 정보는 끌어오지 않는다.** 목록에 거동·독거·보호자 연락처가
+        # 실리면 화면을 여는 것 자체가 개인정보 열람이 된다(profiles 목록을
+        # 나눠 둔 것과 같은 이유).
         rows = conn.execute(
-            f"SELECT * FROM intakes ORDER BY {_ORDER} LIMIT ?", (limit,)).fetchall()
+            f"""SELECT i.*, p.age AS target_age, p.region AS target_region
+                FROM intakes i LEFT JOIN profiles p ON p.phone = i.phone
+                ORDER BY {_ORDER} LIMIT ?""",
+            (limit,)).fetchall()
         return [{k: v for k, v in dict(r).items() if k != "card_json"} for r in rows]
     finally:
         conn.close()
