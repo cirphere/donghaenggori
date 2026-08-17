@@ -229,26 +229,94 @@ function roleCol(title, lines, phone) {
  *  이 문단이 없으면 보호자가 신청 직후 병원에 갈 준비를 한다. 확정은
  *  담당자가 하고, 그 사이에 확인 전화가 갈 수 있다는 것을 먼저 말해 둔다. */
 function promiseSection() {
-  return el("section", "sec sec-cream", [
+  return el("section", "sec sec-white", [
     el("div", "sec-in narrow", [
-      el("div", "shield", "🛡"),
-      el("h2", "sec-h", "신청했다고 바로 확정되는 것은 아니에요"),
-      el("p", "sec-p", "담당 사회복지사가 신청 내용을 확인한 뒤 일정이 정해집니다. "
-        + "확인이 필요한 부분이 있으면 보호자님께 먼저 연락드려요."),
+      // 이모지(🛡)를 쓰지 않는다. 기계마다 다른 그림이 나오고, 안드로이드에서는
+      // 파란 방패가 뜬다. 인라인 SVG 로 두면 어디서나 같다.
+      svg(44, 44, "#F94704", 1.8,
+          "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "M9 12l2 2 4-4"),
+      el("h2", "sec-h", "신청했다고 바로 확정되는 것은 아니에요."),
+      el("p", "sec-p tight", [
+        document.createTextNode("입력한 내용은 담당 사회복지사가 확인한 뒤 최종 일정과 지원 내용을 확정합니다."),
+        el("br"),
+        document.createTextNode("확인이 필요한 부분이 있으면 보호자님께 먼저 연락드려요."),
+      ]),
       el("p", "sec-note", "AI는 신청 내용을 정리하는 역할을 하며, 의료적 판단이나 진단을 하지 않습니다."),
     ]),
   ]);
 }
 
+/** 선으로 그린 아이콘. 목업이 stroke 방식이라 그대로 맞춘다. */
+function svg(w, h, stroke, width, ...paths) {
+  const ns = "http://www.w3.org/2000/svg";
+  const n = document.createElementNS(ns, "svg");
+  n.setAttribute("width", w); n.setAttribute("height", h);
+  n.setAttribute("viewBox", "0 0 24 24");
+  n.setAttribute("fill", "none");
+  n.setAttribute("stroke", stroke);
+  n.setAttribute("stroke-width", width);
+  n.setAttribute("stroke-linecap", "round");
+  n.setAttribute("stroke-linejoin", "round");
+  n.setAttribute("aria-hidden", "true");
+  for (const d of paths) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    n.append(path);
+  }
+  return n;
+}
+
 function closingSection(startBtn) {
+  // 언덕은 CSS 그라데이션으로는 안 된다 — 목업은 곡선 두 겹이 겹쳐 깊이를
+  // 만든다. 그대로 SVG path 로 둔다(목업 좌표 그대로).
+  const ns = "http://www.w3.org/2000/svg";
+  const hills = document.createElementNS(ns, "svg");
+  hills.setAttribute("viewBox", "0 0 1440 170");
+  hills.setAttribute("preserveAspectRatio", "xMidYMax slice");
+  hills.setAttribute("aria-hidden", "true");
+  hills.classList.add("hills");
+  for (const [d, fill] of [
+    ["M0,90 Q360,20 720,70 T1440,60 L1440,170 0,170 Z", "#9BD07C"],
+    ["M0,130 Q420,70 900,120 T1440,110 L1440,170 0,170 Z", "#7CBF5E"],
+  ]) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", fill);
+    hills.append(path);
+  }
+  // 나무 두 그루 — 목업 좌표
+  for (const [tx, ty, rw, rh, cy, r, trunk, leaf] of [
+    [200, 68, 6, 14, 16, 14, "#8A6238", "#5FA84D"],
+    [1220, 90, 5, 12, 13, 11, "#8A6238", "#6CB558"],
+  ]) {
+    const g = document.createElementNS(ns, "g");
+    g.setAttribute("transform", `translate(${tx},${ty})`);
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", rw === 6 ? 9 : 8); rect.setAttribute("y", rw === 6 ? 26 : 20);
+    rect.setAttribute("width", rw); rect.setAttribute("height", rh);
+    rect.setAttribute("rx", rw / 2); rect.setAttribute("fill", trunk);
+    const c = document.createElementNS(ns, "circle");
+    c.setAttribute("cx", rw === 6 ? 12 : 10.5); c.setAttribute("cy", cy);
+    c.setAttribute("r", r); c.setAttribute("fill", leaf);
+    g.append(rect, c);
+    hills.append(g);
+  }
+
   return el("section", "closing", [
-    el("div", "hills"),
+    hills,
     el("div", "closing-in", [
       el("h2", null, "지금 바로 신청해 보세요"),
       el("p", null, "3분이면 충분해요. 나머지는 담당자가 함께합니다."),
       el("div", "cta", [
         startBtn(),
-        el("div", "callbtn", "📞 070-5275-3856"),
+        el("a", "callbtn", [
+          svg(18, 18, "#F94704", 2,
+              "M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 "
+              + "19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 2 .7 2.9a2 2 0 "
+              + "01-.5 2.1L8 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5c.9.3 1.9.6 2.9.7a2 "
+              + "2 0 011.7 2z"),
+          el("span", null, "070-5275-3856"),
+        ]),
       ]),
     ]),
   ]);

@@ -65,8 +65,20 @@ function renderReceipt(d) {
 
   frag.append(el("div", "quote", `남기신 내용: “${d.raw_utterance || ""}”`));
 
-  frag.append(el("p", "small",
-    "접수 번호 " + (d.intake_id ?? "—") + " · 확정은 담당 사회복지사가 합니다."));
+  // **신청번호를 보여줘야 한다.** 조회는 이 번호로만 되고, 서버가 접수 직후
+  // 이 응답에서 한 번만 알려준다. 예전에는 intake_id(내부 번호)만 띄워서,
+  // 이 화면으로 신청한 사람은 창을 닫으면 진행 상황을 볼 방법이 없었다.
+  if (d.access_code) {
+    const box = el("div", "notice");
+    box.style.cssText = "background:#fff8e6;color:#7a5f10;border:1px solid #f2e2b8";
+    box.append(el("div", null, "신청번호 " + d.access_code));
+    box.append(el("div", "small",
+      "진행 상황을 확인하실 때 필요합니다. 이 번호와 위에 적으신 연락처가 "
+      + "둘 다 있어야 열리니, 적어 두시거나 화면을 저장해 주세요."));
+    frag.append(box);
+  }
+
+  frag.append(el("p", "small", "확정은 담당 사회복지사가 합니다."));
   return frag;
 }
 

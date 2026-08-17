@@ -38,8 +38,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 16px/1.55 -apple-system, "Apple SD Gothic Neo", Pretendard,
-        "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font: 16px/1.55 "Pretendard Variable", Pretendard, -apple-system,
+        "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 

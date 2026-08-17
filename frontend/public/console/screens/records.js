@@ -147,7 +147,9 @@ function detailPane() {
     ta.rows = key === "treatment" || key === "guardian_msg" ? 3 : 2;
     ta.style.cssText = "width:100%;padding:9px 11px;border:1px solid var(--line);"
                      + "border-radius:8px;background:var(--white);resize:vertical";
-    ta.disabled = !!r.approved || !can("post.approve");
+    // 기록을 쓰는 사람은 동행매니저다(post.write). 승인만 사회복지사가 한다 —
+    // 예전에는 post.approve 로만 가려서 매니저가 자기 기록을 고칠 수 없었다.
+    ta.disabled = !!r.approved || !(can("post.write") || can("post.approve"));
     inputs[key] = ta;
     return el("div", "frow", [
       el("div", "lb", label),
@@ -164,7 +166,7 @@ function detailPane() {
     const t = el("input");
     t.type = "time";
     t.value = r[key] || "";
-    t.disabled = !!r.approved;
+    t.disabled = !!r.approved || !(can("post.write") || can("post.approve"));
     t.style.cssText = "padding:8px 11px;border:1px solid var(--line);"
                     + "border-radius:8px;background:var(--white)";
     extra[key] = t;
@@ -196,7 +198,8 @@ function detailPane() {
         const box = el("div", "chips");
         for (const o of OUTCOMES) {
           const b = el("button", "chip" + (r.outcome === o ? " on" : ""), o);
-          b.disabled = !!r.approved;
+          b.disabled = !!r.approved
+                    || !(can("post.write") || can("post.approve"));
           b.onclick = () => { r.outcome = r.outcome === o ? null : o; render(); };
           box.append(b);
         }
@@ -224,9 +227,11 @@ function footer(r, inputs, extra) {
       el("div", "grow"),
     ]);
   }
-  if (!can("post.approve")) {
+  const canWrite = can("post.write") || can("post.approve");
+  const canApprove = can("post.approve");
+  if (!canWrite && !canApprove) {
     return el("div", "footbar", [
-      el("div", "msg", "승인 권한이 없어요 — 사회복지사가 승인합니다."),
+      el("div", "msg", "이 기록을 볼 수만 있어요."),
       el("div", "grow"),
     ]);
   }
@@ -259,8 +264,10 @@ function footer(r, inputs, extra) {
     }
   });
 
+  // 쓰는 사람과 승인하는 사람이 다르다. 매니저는 적고 저장하고, 사회복지사가
+  // 승인한다 — 승인 버튼만 권한으로 가린다.
   return el("div", "footbar", [
-    el("div", "msg", ""),
+    el("div", "msg", canApprove ? "" : "저장하면 사회복지사가 확인하고 승인합니다."),
     el("div", "grow"),
     // 적다 말고 나중에 마저 쓰는 경우가 있다. 승인만 있으면 그럴 때 창을
     // 닫지 못하고 결국 대충 승인해 버린다.
@@ -268,10 +275,10 @@ function footer(r, inputs, extra) {
       try { await api.savePostRecord(r.id, collect()); await reload(); }
       catch (e) { update({ error: e }); }
     }),
-    button("반영하지 않음", "btn", async () => {
+    canApprove ? button("반영하지 않음", "btn", async () => {
       try { await api.approvePostRecord(r.id, false); await reload(); }
       catch (e) { update({ error: e }); }
-    }),
-    go,
+    }) : null,
+    canApprove ? go : null,
   ]);
 }
