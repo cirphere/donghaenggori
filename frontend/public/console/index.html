@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동행고리 AI — 사회복지사 콘솔</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+
+<!-- 로그인 전 -->
+<section id="view-login">
+  <div class="login-card">
+    <h2>동행고리 AI</h2>
+    <p>계정은 기관 운영자가 만듭니다.</p>
+    <div id="loginError" class="err hidden"></div>
+    <label for="loginId">아이디</label>
+    <input id="loginId" type="text" placeholder="U001" autocomplete="username">
+    <label for="loginPassword">비밀번호</label>
+    <input id="loginPassword" type="password" autocomplete="current-password">
+    <button id="btnLogin" class="btn primary">로그인</button>
+  </div>
+</section>
+
+<!-- 로그인 후 -->
+<div id="app" class="hidden">
+  <nav class="nav">
+    <div class="brand"><span class="dot"></span>동행고리 AI</div>
+    <button class="nav-item" data-screen="home">홈</button>
+    <button class="nav-item" data-screen="requests">요청<span class="n" id="navReqN"></span></button>
+    <button class="nav-item" data-screen="schedule">일정</button>
+    <button class="nav-item" data-screen="elders">어르신</button>
+    <button class="nav-item" data-screen="records">사후기록<span class="n" id="navRecN"></span></button>
+    <div class="nav-foot">
+      <button class="nav-item" data-screen="settings">설정</button>
+      <div class="who" id="whoami"></div>
+      <button id="btnLogout" class="btn ghost sm" style="padding-left:0">로그아웃</button>
+    </div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

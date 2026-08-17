@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS intakes (
   raw_utterance TEXT, intent TEXT,
   hospital TEXT, hospital_status TEXT, dept TEXT,
   date_value TEXT, date_label TEXT,
+  time_value TEXT,
   need_level TEXT,
   status TEXT DEFAULT '접수 대기',        -- 접수 대기 | 확정 | 임시 접수 | 긴급
   confirmed INTEGER DEFAULT 0,
@@ -344,6 +345,11 @@ _ADDED_COLUMNS = [
     # 센다(파일1 4-2 '사후기록 초안 수정률'). 원본을 안 남기면 고쳤는지조차
     # 알 수 없어, 사람이 와도 지표가 안 나온다.
     ("post_records", "draft_json", "TEXT"),
+    # 방문 시각. date_value 는 컬럼이 있는데 시각만 카드 안에 갇혀 있었다.
+    # 그래서 목록 화면이 시각을 못 읽었고(일정 화면이 전부 '시간 미정'),
+    # verify("time") 이 행에는 반영되지 않았다 — 상세는 오후 3시인데 목록은
+    # 여전히 비어 있는 상태가 된다.
+    ("intakes", "time_value", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -558,10 +564,11 @@ def save_intake(card, phone: str, channel: str = "전화", status: str = "접수
         cur = conn.execute(
             """INSERT INTO intakes
                (created_at,channel,phone,target,raw_utterance,intent,hospital,hospital_status,
-                dept,date_value,date_label,need_level,status,card_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                dept,date_value,date_label,time_value,need_level,status,card_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (_now(), channel, normalize_phone(phone), card.target, card.raw_utterance, card.intent,
              card.hospital, card.hospital_status, card.dept, card.date_value, card.date_label,
+             getattr(card, "time_value", None),
              card.need_level, status, _card_json(card)))
         conn.commit()
         iid = cur.lastrowid
@@ -596,7 +603,7 @@ _VERIFY_TARGETS = {
     "hospital": ("hospital", "hospital"),
     "dept":     ("dept", "dept"),
     "date":     ("date_value", "date_value"),
-    "time":     ("time_value", None),      # 시각은 컬럼이 없다 — 카드에만 있다
+    "time":     ("time_value", "time_value"),
 }
 
 
