@@ -38,8 +38,13 @@ def _recent_history(history: list[dict], today: datetime.date) -> list[dict]:
     return out
 
 
+# 보호자 포털에서 들어온 접수. pipeline.GUARDIAN_CHANNEL 과 같은 값이지만
+# 여기서 import 하면 순환이 된다.
+GUARDIAN_CHANNEL = "앱·웹(보호자)"
+
+
 def suggest(profile: dict | None, dept: str | None, today: datetime.date | None = None,
-            spoken: str | None = None) -> HospitalResult:
+            spoken: str | None = None, channel: str = "전화") -> HospitalResult:
     """병원 후보를 정한다. 발화에 이름이 나왔으면 그것이 최우선이다.
 
     독스트링에는 처음부터 "확인됨 : 발화에 직접 명시 또는 …" 이라고 적어 뒀는데
@@ -51,7 +56,14 @@ def suggest(profile: dict | None, dept: str | None, today: datetime.date | None 
         today = datetime.date.today()
 
     if spoken:
-        reasons = [f"원문에서 '{spoken}'{particle(spoken, '을')} 직접 언급"]
+        # **말한 것과 적은 것을 구분한다.** 보호자 포털은 폼에 타이핑한 값이라
+        # "직접 언급" 이라고 적으면 통화에서 들은 것처럼 읽힌다. 사고가 났을 때
+        # "누가 무엇을 말했나" 를 이 문장으로 답하게 되므로 사실대로 적는다.
+        reasons = [
+            f"보호자가 신청서에 '{spoken}'{particle(spoken, '을')} 직접 입력"
+            if channel == GUARDIAN_CHANNEL
+            else f"원문에서 '{spoken}'{particle(spoken, '을')} 직접 언급"
+        ]
         # 이력과 다르면 그 사실도 남긴다. 바꾸지는 않는다 — 어르신이 말한 것이
         # 우선이고, 다른 곳으로 옮겼을 수도 있다. 판단은 사회복지사가 한다.
         recent = _recent_history(profile.get("history") or [], today) if profile else []
