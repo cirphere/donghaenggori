@@ -202,6 +202,23 @@ def main() -> int:
     check("성함 발화는 CallId 로 넘긴다", voice._take_identity("CID2") is not None)
     check("한 번 꺼내면 지운다", voice._take_identity("CID2") is None)
 
+    # 성함 녹음은 그 자리에서 전사하지 않는다 — STT 가 도는 동안 통화가
+    # 무음이 되고, 무음·안내 멘트 중에 누른 키는 버려진다(finishOnKey 는
+    # 녹음이 시작된 뒤에만 듣는다). "첫 질문에선 키가 먹는데 다음 질문에선
+    # 안 먹는" 증상의 원인이었다. 전사는 통화 끝(/recording)으로 미룬다.
+    stt_calls: list[str] = []
+    prev_transcribe = voice._transcribe_url
+    voice._transcribe_url = lambda url: (stt_calls.append(url), "이영희요")[1]
+    ir2 = post(client, "/api/voice/identity-record?who=new",
+               {"CallId": "CID_DEFER", "From": PHONE_NEW, "To": "070",
+                "RecordingUrl": "https://rec/identity.wav",
+                "RecordingDuration": "3"})
+    check("성함 녹음을 그 자리에서 전사하지 않는다",
+          ir2.status_code == 200 and not stt_calls, str(stt_calls))
+    check("보관함에는 녹음 URL 이 담긴다",
+          voice._take_identity("CID_DEFER") == "https://rec/identity.wav")
+    voice._transcribe_url = prev_transcribe
+
     # 어르신이 통화에서 마지막으로 듣는 문장이다. 조사를 붙박이로 두면
     # ~내과·~치과처럼 받침 없이 끝나는 흔한 의원 이름이 "정형외과으로" 가 된다.
     class _C:
