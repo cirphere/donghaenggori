@@ -102,10 +102,25 @@ Copilot**이다. 어르신이 전화로 말한 짧고 모호한 요청을 받아
 
 ## 프론트엔드 — 저장소가 둘이다
 
-| | |
+```
+donghaenggori/          ← 그냥 폴더다. 저장소가 아니다
+├── backend/            ← 이 저장소 (cirphere/donghaenggori)
+└── frontend/           ← 팀원 저장소 (dlghskgmll/donghaengori-ai)
+```
+
+**팀원 앱을 여기 담지 않는다.** 형제 폴더에 clone 해서 쓰고,
+`docker-compose.next.yml` 이 `../frontend` 를 빌드한다. 배포 전에 clone 되어
+있지 않으면 빌드가 그 자리에서 죽는다.
+
+이름이 겹치는 것을 조심할 것 — 이 저장소의 `frontend/` 는 **레거시 정적
+화면(nginx)** 이고 팀원 Next 앱이 아니다. `.gitignore` 에 `frontend/` 를 넣었다가
+그 정적 화면 118개가 인덱스에서 통째로 빠진 적이 있다.
+
+| 주소 | 무엇이 뜨나 |
 |---|---|
-| `frontend/public/` (이 저장소) | 바닐라 JS. `/`(보호자 웹) `/portal`(보호자 포털) `/staff` `/console` |
-| `dlghskgmll/donghaengori-ai` | **팀원의 Next.js 관리자 콘솔 — 발표용 최종 UI** |
+| `/` | **보호자 웹** (Next) |
+| `/staff` | **사회복지사 콘솔** (Next) — 발표용 최종 UI |
+| `/portal` `/console` | 이 저장소의 바닐라 화면 — **대체 경로** |
 
 **팀원 저장소가 본선에 쓸 화면이다.** 그쪽 `FRONTEND-INTEGRATION-HANDOFF.md`가
 디자인 가드레일(고정 치수·브랜드 색 `#F94704`·금지 사항)을 명시하고 있으니 화면을
@@ -114,6 +129,17 @@ Copilot**이다. 어르신이 전화로 말한 짧고 모호한 요청을 받아
 이 저장소의 화면들은 **대체 경로**로 남겨 둔다. Next가 문제를 일으키면 그쪽으로 간다.
 
 브라우저는 우리 백엔드를 직접 부르지 않는다 — 팀원 앱의 `app/api/v1/*` proxy를 거친다.
+
+### nginx 라우팅에서 깨지기 쉬운 곳
+
+`^~` 가 붙은 location 은 장식이 아니다. nginx 는 **정규식 location 을 접두어보다
+먼저** 고르므로, `~* \.(js|css)$` 가 `/_next/static/**` 을 가로채고 그 블록에는
+`proxy_pass` 가 없어 `root` 에서 파일을 찾다 404 로 끝난다. `^~` 를 떼면 콘솔이
+통째로 안 뜬다. **Cloudflare 가 캐시하고 있으면 한동안 안 드러나서 더 위험하다.**
+
+`/api/guardian/applications`(next)와 `/api/guardian/intakes`(FastAPI)는 **다른
+API 다.** 앞의 것이 `^~` 로 먼저 잡히지 않으면 `/api/` 로 떨어져 FastAPI 가 404 를
+준다.
 
 ### 이 저장소 화면의 규칙
 
