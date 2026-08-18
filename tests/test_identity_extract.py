@@ -9,12 +9,14 @@
      "저는 지금 무릎이" 를 이름으로 잡으면 안 된다.
   3. 뽑은 값은 **어떤 경로로도 '확인됨' 이 되지 않는다.**
 """
+import datetime
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from donghaenggori.core import pipeline  # noqa: E402
+from donghaenggori.core.dateparse import parse_date, parse_time, spoken_datetime  # noqa: E402
 from donghaenggori.core.identity import detect_name, detect_region  # noqa: E402
 
 _fail = 0
@@ -133,7 +135,28 @@ check("원문에는 문의만 남는다",
       "이영희" not in r.card.raw_utterance and "용당동" not in r.card.raw_utterance,
       r.card.raw_utterance)
 
+# ── 보호자 포털 구조화 신청 → 발화 합성 ──────────────────────────────
+#
+# spoken_datetime 이 만든 표기를 **이 파일의 파서가 다시 읽을 수 있어야** 한다.
+# ISO(2026-08-20 / 14:30)를 그대로 문장에 넣던 시절엔 parse_date 도 parse_time
+# 도 못 읽어서, 보호자가 달력에서 고른 날짜가 통째로 버려졌다. date 가 None 이
+# 되면 방문일이 '확인 필요' 로 남고 그건 gate.BLOCKING 항목이라 확정이 409 로
+# 막힌다 — 보호자가 정확히 적어 보낸 일정을 사회복지사가 다시 전화로 확인해야
+# 했다. 한쪽만 고치면 조용히 돌아오는 종류라 왕복으로 잠근다.
+_TODAY = datetime.date(2026, 8, 18)
+for date, time, want_d, want_t in [
+    ("2026-08-20", "14:30", "2026-08-20", "14:30"),
+    ("2026-08-20", "09:00", "2026-08-20", "09:00"),   # 정각은 '9시' 로 줄인다
+    ("2026-08-20", None,    "2026-08-20", None),      # 시간 미정
+    ("2027-01-05", "10:05", "2027-01-05", "10:05"),   # 연말 경계
+]:
+    text = spoken_datetime(date, time)
+    got_d = (parse_date(text, today=_TODAY) or {}).get("date")
+    got_t = (parse_time(text) or {}).get("time")
+    check(f"폼 일정 왕복 — {date} {time}", (got_d, got_t) == (want_d, want_t),
+          f"'{text}' → {got_d} {got_t} (기대 {want_d} {want_t})")
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)

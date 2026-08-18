@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
-from ..core import db, gate, pipeline
+from ..core import dateparse, db, gate, pipeline
 from ..services import rag, stt, summarize
 from . import voice
 
@@ -208,10 +208,12 @@ def _synthesize_utterance(form: GuardianFormIn) -> str:
     if form.visit.dateUnknown:
         parts.append("날짜 미정")
     elif form.visit.date:
-        when = form.visit.date
-        if form.visit.time and not form.visit.timeUnknown:
-            when += f" {form.visit.time}"
-        parts.append(when)
+        when = dateparse.spoken_datetime(
+            form.visit.date,
+            form.visit.time if (form.visit.time and not form.visit.timeUnknown) else None,
+        )
+        if when:
+            parts.append(when)
     dept = None if form.visit.departmentUnknown else form.visit.department
     hospital = form.visit.hospital + (f" {dept}" if dept else "")
     parts.append(f"{hospital} 병원동행 신청")

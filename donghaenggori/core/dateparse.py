@@ -186,3 +186,30 @@ def parse_time(text: str) -> dict | None:
     return {"time": value, "label": label,
             "confident": confident and value is not None,
             "corrected": corrected, "ambiguous": why}
+
+
+def spoken_datetime(date: str | None, time: str | None) -> str:
+    """ISO(2026-08-20 / 14:30) → 한국어 표기(2026년 8월 20일 14시 30분).
+
+    parse_date·parse_time 의 역방향이다. 여기 두는 이유는 **이 파일의 파서가
+    읽을 수 있는 표기만 내보내야** 하기 때문이다 — 둘이 떨어져 있으면 한쪽만
+    고쳐서 어긋난다.
+
+    보호자 포털의 구조화 신청을 기존 파이프라인에 태울 때 쓴다. ISO 를 그대로
+    문장에 넣었더니 parse_date 도 parse_time 도 못 읽어서, 보호자가 달력에서
+    고른 날짜가 통째로 버려졌다. date 가 None 이 되면 방문일이 '확인 필요' 로
+    남는데 그건 gate.BLOCKING 항목이라 **확정이 409 로 막힌다** — 보호자가
+    정확히 적어 보낸 일정을 사회복지사가 전화로 다시 확인해야 했다.
+
+    연도를 붙이는 것은 연말 경계 때문이다. '1월 5일' 만으로도 파서가 내년으로
+    잡아주지만, 우리가 이미 아는 값을 추론에 맡길 이유가 없다.
+    """
+    out = ""
+    if date:
+        y, m, d = date.split("-")
+        out = f"{int(y)}년 {int(m)}월 {int(d)}일"
+    if time:
+        hh, mm = time.split(":")
+        # '14시 0분' 은 어색하다. 정각이면 분을 뺀다.
+        out += (" " if out else "") + f"{int(hh)}시" + (f" {int(mm)}분" if int(mm) else "")
+    return out
