@@ -18,8 +18,13 @@ __pycache__/
 .pytest_cache/
 
 # 런타임 생성물 (시드에서 재생성됨)
-donghaenggori/data/*.db
-donghaenggori/data/*.sqlite3
+#
+# **경로를 앞에 붙이지 않는다.** 예전에는 `donghaenggori/data/*.db` 로 적었는데
+# gitignore 에서 슬래시가 들어간 규칙은 저장소 루트에 묶인다. backend/ 아래로
+# 옮기는 순간 backend/donghaenggori/data/donghaenggori.db 가 무시 대상에서
+# 빠졌다 — 폴더 하나 옮겼다고 DB 와 425MB 모델이 커밋될 뻔했다.
+*.db
+*.sqlite3
 
 # macOS
 .DS_Store
@@ -31,5 +36,23 @@ donghaenggori/data/*.sqlite3
 *.hwp
 *.hwpx
 
-# 학습 산출물 — train_intent.py 로 재생성
-donghaenggori/data/models/
+# 학습 산출물 — train_intent.py 로 재생성 (425MB)
+**/donghaenggori/data/models/
+
+# 프론트엔드는 팀원 저장소(dlghskgmll/donghaengori-ai)를 clone 해서 쓴다.
+#
+# 여기에 담지 않는 이유는 본선까지 이틀이라서다. 서브모듈로 묶으면 clone 할 때
+# --recurse-submodules 를 빠뜨린 사람이 빈 폴더로 빌드하게 되고, 파일로 흡수하면
+# 팀원이 자기 저장소에 푸시할 때마다 손으로 동기화해야 한다. 둘 다 지금 감수할
+# 위험이 아니다. 배포는 backend/docker-compose.next.yml 이 ../frontend 를 빌드한다.
+#
+# **옛 정적 화면이 쓰던 frontend/ 와 이름이 같다.** 그쪽은 backend/frontend/ 로
+# 옮겼다. 여기 frontend/ 는 Next 앱이고, 안에 node_modules(558MB)·.next(111MB)
+# ·.env.local 이 들어 있어 실수로 담기면 되돌리기 어렵다.
+#
+# **앞의 슬래시가 핵심이다.** 슬래시 없이 `frontend/` 라고 쓰면 어느 깊이든
+# 걸려서 backend/frontend/(nginx 설정과 정적 화면 전부)까지 같이 사라진다.
+# 실제로 그렇게 써서 인덱스에서 118개가 빠졌다. 루트의 frontend/ 만 막는다.
+/frontend/
+node_modules/
+.next/
