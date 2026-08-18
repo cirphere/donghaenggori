@@ -528,30 +528,47 @@ def _ask_identity_first(request: Request, who: str, say: bool = True) -> str:
 async def identity_record(request: Request) -> Response:
     """성함·읍면동 녹음이 끝났다. 곧바로 문의 내용을 묻는다.
 
+    **여기서 전사하지 않는다.** 예전에는 이 자리에서 STT 를 돌렸는데, 그동안
+    통화가 무음이 되고 그다음 안내 멘트가 이어졌다. 무음·멘트 중에 누른 키는
+    전부 버려진다 — finishOnKey 는 삐 소리 후 녹음이 시작된 뒤에만 듣는다.
+    그래서 "첫 질문에선 키가 먹는데 다음 질문에선 안 먹는" 증상이 났다:
+    첫 질문은 즉시 삐가 나오지만, 두 번째는 STT 대기만큼 늦게 나왔다.
+
+    녹음 URL 만 보관하고 전사는 통화 맨 끝(/recording)으로 미룬다. 거기는
+    이미 문의 녹음 STT 를 기다리는 자리라, 짧은 성함 녹음 하나가 늘어도
+    접수 안내가 조금 늦어질 뿐이고 — 접수는 이미 그 안에서 저장되므로
+    잘려도 잃는 것이 없다.
+
     **여기서 실패해도 통화를 끊지 않는다.** 이름을 못 받는 것보다 문의를 통째로
-    놓치는 쪽이 훨씬 나쁘다. 전사가 안 되면 조용히 넘기고 문의만 받는다.
+    놓치는 쪽이 훨씬 나쁘다.
     """
     form = await _verify(request)
     who = (request.query_params.get("who") or "new").strip()
     call_id = (form.get("CallId") or "").strip()
 
-    text = ""
+    url = (form.get("RecordingUrl") or "").strip()
     try:
-        text = (_read_recording(form) or "").strip()
-    except Exception as e:                       # 전사 실패는 통화를 막지 않는다
-        _log.warning("성함 녹음 처리 실패 — %s: %s", type(e).__name__, e)
-    if text and call_id:
-        _remember_identity(call_id, text)
+        duration = float(form.get("RecordingDuration") or 0)
+    except ValueError:
+        duration = 0
+    if url and duration > 0 and call_id:
+        _remember_identity(call_id, url)
+    else:
+        _log.info("성함 녹음 없음 — duration=%s url=%s",
+                  form.get("RecordingDuration"), "있음" if url else "없음")
 
     action = _callback(request, "voice_recording") + f"?who={who}"
     return _xml(_say(SYMPTOM_PROMPT) + _record(action))
 
 
-# 통화 한 건 안에서만 쓰는 임시 보관 — CallId → 성함·주소 발화.
+# 통화 한 건 안에서만 쓰는 임시 보관 — CallId → 성함 녹음의 서명 URL.
 #
 # 신원 녹음과 문의 녹음이 **다른 웹훅**으로 들어와서, 앞 단계 결과를 뒤로 넘길
 # 자리가 필요하다. DB 에 넣지 않는 이유는 접수로 이어지지 못한 통화(중간에
-# 끊김)의 신상 발화가 남지 않게 하기 위해서다.
+# 끊김)의 신상 발화가 남지 않게 하기 위해서다. 전사를 통화 끝으로 미루면서
+# 텍스트 대신 URL 을 담게 됐다 — 신상 발화 원문이 메모리에 남지 않는 부수
+# 효과도 있다(테스트는 여전히 텍스트를 넣는데, 꺼내 쓰는 쪽이 값을 해석하지
+# 않으므로 상관없다).
 _IDENTITY_SAID: dict[str, tuple[float, str]] = {}
 _IDENTITY_TTL = 600      # 통화 하나가 이보다 길 이유가 없다
 
@@ -603,9 +620,16 @@ async def recording(request: Request) -> Response:
     # 그대로 두면 필요도(장기요양등급)와 병원 추천이 번호 주인 것으로 붙는데,
     # 카드에 '확인 필요' 가 떠도 내용 자체가 남의 정보라 복지사가 그 표시를
     # 놓치면 엉뚱한 기준으로 동행을 준비하게 된다.
-    # 앞 단계에서 받은 성함·읍면동 발화. 문의 원문과 **섞지 않는다** — 접수
-    # 카드의 원문은 문의 내용만 담아야 복지사가 찾아 읽지 않는다.
-    said_who = _take_identity((form.get("CallId") or "").strip())
+    # 앞 단계에서 받아 둔 성함 녹음을 이제야 전사한다(identity_record 주석
+    # 참고 — 통화 중간의 무음을 없애려고 미뤘다). 문의 원문과 **섞지 않는다**
+    # — 접수 카드의 원문은 문의 내용만 담아야 복지사가 찾아 읽지 않는다.
+    said_who = None
+    said_url = _take_identity((form.get("CallId") or "").strip())
+    if said_url:
+        try:
+            said_who = _transcribe_url(said_url).strip() or None
+        except Exception as e:               # 이름을 못 얻어도 접수는 진행한다
+            _log.warning("성함 녹음 처리 실패 — %s: %s", type(e).__name__, e)
 
     res = pipeline.run(phone, text, channel="전화",
                        identity_denied=(who == "other"), identity_utterance=said_who)
