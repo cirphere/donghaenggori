@@ -677,6 +677,11 @@ def verify_card_field(intake_id: int, field: str, value: str,
     view["value"] = value
     view["status"] = "확인됨"
     view["evidence"] = list(view.get("evidence") or []) + [f"통화로 확인함 — {actor}"]
+    # 누가 확인했는지를 **구조화된 키**로도 남긴다. 화면이 "전화번호가 일치해서
+    # 확인됨"과 "사람이 통화로 확인해서 확인됨"을 갈라야 하는데(발신번호로는
+    # 대상자를 확정하지 않는다 — 불변조건 3), 근거 문장을 문자열로 뒤지게 하면
+    # 문구를 다듬는 순간 조용히 깨진다.
+    view["verified_by"] = actor
     if field == "hospital":
         # 평면 상태 키를 따로 들고 있어서 같이 올려야 한다
         card["hospital_status"] = "확인됨"
