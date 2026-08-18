@@ -35,10 +35,26 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("STT_CONF_THRESHOLD", "-0.9"))
 MAX_SECONDS = float(os.environ.get("STT_MAX_SECONDS", "300"))
 
 # 도메인 힌트 — Whisper가 진료과·복지 용어를 더 잘 잡게 한다
+#
+# **길게 쓰지 않는다.** initial_prompt 는 224 토큰에서 잘리고, 길수록 프롬프트에
+# 있는 단어를 없는데도 받아적는 쪽으로 기운다. 진료과처럼 닫힌 목록만 넣는다.
 DOMAIN_PROMPT = (
     "병원동행 접수 통화입니다. 정형외과, 내과, 안과, 이비인후과, 치과, 재활의학과, "
     "신경과, 피부과, 보건의료원, 약국, 생활지원사, 사회복지사, 동행 매니저."
 )
+
+# VAD 파라미터 — 기본값은 어르신 발화에 안 맞는다.
+#
+# faster-whisper 기본 min_silence_duration_ms 는 2000ms 다. 어르신은 문장 중간에
+# 그보다 오래 뜸을 들이는 일이 흔해서, 기본값이면 한 문장이 여러 구간으로 잘리고
+# 잘린 조각마다 따로 디코딩돼 앞뒤 맥락을 잃는다. 늘려서 한 덩어리로 넘긴다.
+#
+# speech_pad_ms 는 구간 앞뒤로 남기는 여유다. 기본 400ms 에서는 첫 음절이
+# 깎여 "병원" 이 "원" 으로 들어오는 일이 있었다.
+VAD_PARAMETERS = {
+    "min_silence_duration_ms": 3000,
+    "speech_pad_ms": 600,
+}
 
 # STT가 자주 틀리는 표기 후보정
 _FIXUPS = [
@@ -147,7 +163,16 @@ def transcribe(audio_path: str, language: str = "ko",
         audio_path, language=language,
         initial_prompt=DOMAIN_PROMPT,
         vad_filter=True,                    # 무음 구간 제거 — 통화 녹음에 유효
+        vad_parameters=VAD_PARAMETERS,
         beam_size=5,
+        # **직전 문장을 조건으로 쓰지 않는다.** 기본값(True)은 앞 문장을 다음
+        # 구간의 프롬프트로 넣는데, 8kHz 전화 음질에서 한 번 잘못 뜨면 그 오인식이
+        # 다음 구간의 힌트가 되어 같은 말을 계속 반복하거나 통화에 없던 문장을
+        # 지어낸다. 접수 발화는 수십 초라 문맥으로 얻는 것보다 잃는 게 크다.
+        condition_on_previous_text=False,
+        # 무음을 말로 잡는 것을 줄인다. 어르신이 한참 뜸을 들이는 구간에서
+        # 헛말이 나오면 그 문장이 그대로 접수카드 근거로 올라간다.
+        no_speech_threshold=0.6,
     )
 
     segs, texts, logprobs = [], [], []

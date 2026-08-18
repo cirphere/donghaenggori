@@ -15,8 +15,16 @@ services:
       WHISPER_DEVICE: cuda
       WHISPER_COMPUTE_TYPE: float16
       # GPU면 큰 모델을 감당한다. medium은 VRAM 약 2.5GB, large-v3는 약 5GB.
-      # 4060 Ti(8/16GB) 어느 쪽이든 들어간다. 한국어 정확도가 눈에 띄게 오른다.
-      WHISPER_MODEL: medium
+      # 4060 Ti(8/16GB) 어느 쪽이든 들어간다.
+      #
+      # **large-v3 를 쓰는 이유는 입력이 8kHz 전화 음성이기 때문이다.** 4kHz 위가
+      # 통째로 없어서 마찰음·파찰음(ㅅ ㅆ ㅊ ㅎ)이 뭉개지고, 거기에 전남 사투리를
+      # 쓰는 고령자 발화가 겹친다. medium 은 이 조합에서 진료과 이름을 자주 놓친다.
+      # 전사 시간이 1.5~2배로 늘지만 접수 발화가 수십 초라 감당된다.
+      #
+      # 최초 기동 시 약 3GB 를 내려받는다. **발표 전에 미리 받아둘 것** —
+      # 시연장에서 처음 받으면 첫 통화가 몇 분씩 멈춘다.
+      WHISPER_MODEL: large-v3
       # GPU에서는 CPU 스레드 수가 의미 없다
       WHISPER_CPU_THREADS: "0"
     deploy:
