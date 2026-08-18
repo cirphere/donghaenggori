@@ -2,9 +2,16 @@
 
 핵심: 병원 후보의 1차 근거는 외부 병원 DB가 아니라 어르신의 과거 동행 이력.
 상태는 % 확신도가 아니라 누구나 검증 가능한 결정적 규칙으로 3단계를 부여한다.
-  - 확인됨 : 발화에 직접 명시 또는 최근 6개월 같은 병원/진료과 2회 이상
-  - 추정   : 이력·문맥으로 합리적 1순위(2순위와 분리)
+  - 확인됨 : **이번 통화에서 어르신이 병원 이름을 직접 말했을 때만**
+  - 추정   : 과거 이력 기반 후보 — 단골(2회 이상)도 여기에 들어간다
   - 확인 필요 : 후보 비등 / 발화-이력 모순 / 이력 없음(신규)
+
+'확인됨' 을 직접 명시로만 좁힌 이유. 이력만 보고 '확인됨' 을 주면 그 값이
+카드·DB 를 지나 전화 안내(voice._receipt)까지 그대로 흘러가, 어르신이
+말한 적 없는 병원을 "○○병원으로 접수했습니다" 라고 확정해서 들려준다.
+화면에는 '추정' 배지라도 보이지만 통화에는 그런 장치가 없다. 단골이라는
+사실은 후보를 고르는 좋은 근거이지 이번에 그곳에 간다는 증거가 아니다 —
+그 판단은 근거를 보고 사회복지사가 한다.
 """
 from __future__ import annotations
 
@@ -104,15 +111,17 @@ def suggest(profile: dict | None, dept: str | None, today: datetime.date | None 
     counts = _count_hospitals(matched)
     top = counts[0]
 
-    # 확인됨: 같은 병원 2회 이상
+    # 단골(2회 이상)도 '추정' 이다. 자주 간 곳이라는 사실은 후보를 고르는 근거일
+    # 뿐, 이번에 그곳에 간다고 어르신이 말한 것이 아니다. 확정은 사람이 한다.
     if top["count"] >= 2:
         return HospitalResult(
-            status="확인됨",
+            status="추정",
             hospital=top["hospital"],
             dept=dept or top["dept"],
-            reasons=[f"최근 6개월 내 {top['hospital']}({top['dept']}) {top['count']}회 방문 — 단골로 확인됨"],
+            reasons=[f"최근 6개월 내 {top['hospital']}({top['dept']}) {top['count']}회 방문 — "
+                     "과거 이력 기반 후보, 이번에 가실 병원은 확인 필요"],
             candidates=counts,
-            need_confirm=True,  # 확인됨이어도 최종 확정 통화는 사람이
+            need_confirm=True,
         )
 
     # 후보가 여럿이고 1·2순위가 동률 → 확인 필요

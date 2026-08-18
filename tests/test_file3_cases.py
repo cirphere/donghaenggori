@@ -24,14 +24,16 @@ def check(no: int, name: str, passed, detail: str) -> None:
     results.append((no, name, bool(passed), detail))
 
 
-# ── 1. 단골 → 확인됨 + 날짜 해석 + 확인 질문 ────────────────────
+# ── 1. 단골 → 추정 + 날짜 해석 + 확인 질문 ──────────────────────
+# 단골도 '추정' 이다. 어르신이 이번 통화에서 병원을 말한 적이 없기 때문이다
+# (hospital 모듈 설명 참조). 후보와 근거는 그대로 나오고, 확정만 사람이 한다.
 def case1() -> None:
     r = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데")
     c = r.card
     d = dateparse.parse_date("모레", today=BASE_DATE)
-    ok = (c.dept == "정형외과" and c.hospital_status == "확인됨"
+    ok = (c.dept == "정형외과" and c.hospital_status == "추정" and c.hospital is not None
           and d["date"] == "2026-07-09" and len(r.analysis.date or {}) > 0)
-    check(1, "단골 → 확인됨 + 날짜 해석", ok,
+    check(1, "단골 → 추정 + 날짜 해석", ok,
           f"{c.hospital}[{c.hospital_status}] / 모레→{d['date']} / 질문 {len(c.confirm_questions)}개")
 
 
@@ -97,8 +99,10 @@ def case7b() -> None:
     c = r.card
     샘 = (c.hospital is not None or c.need_level != "확인 필요")
     본인 = pipeline.run(PHONE_MAIN, "모레 정형외과 가야겄어. 저번에 무릎 봐준 데").card
+    # 본인 요청 쪽은 대조군이다 — 같은 번호라도 본인이 물으면 이력이 후보로 붙는다.
+    # 그 상태는 '확인됨' 이 아니라 '추정' 이다(직접 말한 병원이 아니므로).
     check(15, "대리 요청에 발신자 이력이 안 붙는다",
-          not 샘 and 본인.hospital_status == "확인됨",
+          not 샘 and 본인.hospital is not None and 본인.hospital_status == "추정",
           f"대리: 병원={c.hospital}/{c.need_level} · 본인: {본인.hospital}[{본인.hospital_status}]")
 
 
