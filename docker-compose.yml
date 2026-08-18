@@ -40,6 +40,11 @@ services:
       # 기동을 막지 않으므로(별도 스레드) 헬스체크는 그대로 통과한다.
       # 로컬 실행·테스트에서는 매번 모델을 받지 않도록 코드 기본값이 꺼져 있다.
       WARMUP_ON_START: "1"
+      # 컨테이너 기본은 UTC 다. 그대로 두면 접수 시각이 9시간 어긋나게 찍히고
+      # (저녁 8시 접수가 11시로 보였다), date.today() 를 쓰는 곳 — 신청번호의
+      # 날짜(DH-YYMMDD-), "내일" 계산 — 이 자정~오전 9시 사이에 하루 밀린다.
+      # 베이스 이미지(python:3.12-slim)에 tzdata 가 있어 이 한 줄로 끝난다.
+      TZ: Asia/Seoul
       HF_HOME: /models/hf
       DONGHAENGGORI_DB: /data/donghaenggori.db
     volumes:
