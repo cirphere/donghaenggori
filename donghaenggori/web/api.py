@@ -753,6 +753,14 @@ def confirm(intake_id: int, body: ConfirmIn, user: dict = Depends(current_user))
         db.log_audit(user["name"], user["role"], "미확인 확정", "intake", str(intake_id),
                      "확인 없이 확정: " + ", ".join(b["label"] for b in g["blockers"])
                      + f" — 사유: {body.acknowledge_reason or '미기재'}")
+    # 미등록 대상자를 확정했으면 이제 기관 기록이 된다 — 프로필로 등록해
+    # 어르신 목록에 나타나고 플라이휠(이력 → 다음 접수의 후보)이 시작된다.
+    # 확정 전에는 만들지 않는다: 폼 한 번으로 남의 이름이 등록되면 안 된다.
+    if res.get("changed"):
+        try:
+            db.register_profile_from_intake(intake_id, user["name"], user["role"])
+        except Exception:                     # 등록 실패가 확정을 되돌리진 않는다
+            pass
     out = db.get_intake(intake_id)
     out["gate"] = gate.check(out.get("card"))
     return {"ok": True, "intake": out, "acknowledged": g["acknowledged"]}

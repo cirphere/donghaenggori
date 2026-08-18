@@ -1237,3 +1237,81 @@ def reset_db() -> None:
         _inited = True
     finally:
         conn.close()
+
+
+def register_profile_from_intake(intake_id: int, actor: str, role: str) -> bool:
+    """확정된 접수의 미등록 대상자를 최소 프로필로 등록한다.
+
+    새 어르신이 케어 프로필에 들어가는 **유일한 런타임 경로**다 — 그동안은
+    시드가 전부라서, 신규 접수를 확정해도 어르신 목록에 나타나지 않고
+    플라이휠(이력 → 다음 접수의 후보)도 시작되지 못했다.
+
+    확정 **후에만** 부른다. 접수 시점에 만들면 아무나 폼 한 번으로 남의
+    이름을 프로필에 올릴 수 있다 — 사람이 확인·확정한 것만 기관 기록이 된다.
+
+    조심하는 것 둘:
+      · **이미 있는 프로필은 절대 덮지 않는다.** upsert 가 REPLACE 라
+        재확정 한 번에 시드/기존 프로필의 건강 정보가 통째로 사라질 수 있다.
+      · **자리표시 이름은 등록하지 않는다.** '신규 대상자(미등록 번호)' 가
+        이름으로 박히면 목록이 쓰레기로 찬다. 사람이 확인한 실명일 때만.
+
+    보호자 신청은 어르신 연락처를 받지 않아 **보호자 번호를 키로** 등록된다.
+    notes 에 그 사실을 남긴다 — 다음에 그 번호로 오는 연락은 보호자다.
+    """
+    row = get_intake(intake_id)
+    if not row:
+        return False
+    phone = (row.get("phone") or "").strip()
+    name = (row.get("target") or "").strip()
+    if not phone or not name:
+        return False
+    if any(k in name for k in ("미등록", "미확인", "신규 대상자", "후보")):
+        return False
+    if get_profile(phone):
+        return False
+
+    region = birth = relationship = None
+    guardian = None
+    raw = row.get("guardian_form_json")
+    if raw:
+        try:
+            form = json.loads(raw)
+            elder = form.get("elder") or {}
+            region = (elder.get("region") or "").strip() or None
+            birth = (elder.get("birthDate") or "").strip() or None
+            g = form.get("guardian") or {}
+            relationship = (g.get("relationship") or "").strip() or None
+            if g.get("phone"):
+                guardian = {"relation": relationship or "보호자",
+                            "phone": normalize_phone(str(g["phone"]))}
+        except (TypeError, ValueError):
+            pass
+
+    age = None
+    if birth:
+        try:
+            y = int(birth[:4])
+            age = max(0, datetime.date.today().year - y)
+        except ValueError:
+            pass
+
+    channel = row.get("channel") or ""
+    via_guardian = "보호자" in channel
+    notes = ("보호자 신청 확정 시 자동 등록 — 이 번호는 보호자 연락처다. "
+             "어르신 연락처는 미확인." if via_guardian
+             else "전화 접수 확정 시 자동 등록.")
+
+    init_db()
+    conn = get_conn()
+    try:
+        upsert_profile(conn, normalize_phone(phone), {
+            "id": f"N{intake_id:03d}",       # 시드(P001~)와 구분되는 신규 표식
+            "name": name, "age": age, "region": region,
+            "guardian": guardian, "notes": notes,
+        })
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, role, "프로필 등록", "profile", normalize_phone(phone),
+              f"접수 #{intake_id} 확정에서 자동 등록 — {name}")
+    return True

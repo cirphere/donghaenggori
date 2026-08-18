@@ -240,11 +240,66 @@ def test_api() -> None:
     check("권한 없는 역할은 403", r.status_code == 403, f"HTTP {r.status_code}")
 
 
+def test_profile_registration() -> None:
+    """확정이 미등록 대상자를 프로필로 등록한다 — 새 어르신이 DB 에 들어가는
+    유일한 런타임 경로다. 이게 없던 동안 신규를 확정해도 어르신 목록에
+    나타나지 않았고 플라이휠도 시작되지 못했다."""
+    from donghaenggori.web.api import app
+    client = TestClient(app)
+    r = client.post("/api/auth/login", json={"user_id": "T001", "password": TEST_PASSWORD})
+    AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    guardian_phone = "010-9090-1122"
+    form = {"elder": {"name": "정복순", "birthDate": "1941-05-02", "region": "전남 담양군"},
+            "guardian": {"relationship": "딸", "phone": guardian_phone},
+            "visit": {"date": "2026-08-21", "time": "10:00", "dateUnknown": False,
+                      "timeUnknown": False, "hospital": "담양제일병원",
+                      "department": "내과", "departmentUnknown": False},
+            "assistance": ["동행"], "note": ""}
+    r = client.post("/api/guardian/intakes", json={"form": form})
+    iid = r.json()["intake_id"]
+
+    # 확정 전에는 등록되지 않는다 — 폼 한 번으로 이름이 올라가면 안 된다.
+    check("확정 전에는 프로필이 없다", db.get_profile(guardian_phone) is None)
+
+    client.post(f"/api/intakes/{iid}/verify",
+                json={"field": "target", "value": "정복순"}, headers=AUTH)
+    r = client.post(f"/api/intakes/{iid}/confirm",
+                    json={"hospital": "담양제일병원", "date": "2026-08-21",
+                          "level": "동행 필요"}, headers=AUTH)
+    check("신규 대상자 확정", r.status_code == 200, r.text[:80])
+
+    prof = db.get_profile(guardian_phone)
+    check("확정하면 프로필이 생긴다", bool(prof and prof.get("name") == "정복순"),
+          str(prof and prof.get("name")))
+    check("보호자 연락처가 실린다",
+          bool(prof and (prof.get("guardian") or {}).get("phone")), str(prof and prof.get("guardian")))
+    check("자동 등록 사연이 notes 에 남는다",
+          bool(prof and "보호자" in (prof.get("notes") or "")), str(prof and prof.get("notes")))
+
+    # 재확정해도 기존 프로필을 덮지 않는다 — upsert 가 REPLACE 라 실수 한 번에
+    # 건강 정보가 사라질 수 있는 자리다. 등록된 번호(박순자)로 확인한다.
+    before = db.get_profile("010-1234-5678")
+    r = client.post("/api/intakes", json={"phone": "010-1234-5678",
+                    "utterance": "내일 정형외과 가야 해요"}, headers=AUTH)
+    iid2 = r.json().get("intake_id")
+    client.post(f"/api/intakes/{iid2}/verify",
+                json={"field": "target", "value": "박순자"}, headers=AUTH)
+    client.post(f"/api/intakes/{iid2}/confirm",
+                json={"hospital": "○○정형외과의원", "date": "2026-08-19",
+                      "level": "동행 필요"}, headers=AUTH)
+    after = db.get_profile("010-1234-5678")
+    check("기존 프로필은 덮지 않는다",
+          bool(after and after.get("ltci_grade") == (before or {}).get("ltci_grade")
+               and after.get("mobility") == (before or {}).get("mobility")))
+
+
 def main() -> int:
     db.init_db(force=True)
     test_rules()
     test_pipeline()
     test_api()
+    test_profile_registration()
 
     print("\n접수 확정 게이트 검증")
     print("=" * 78)
