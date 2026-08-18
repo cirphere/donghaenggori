@@ -360,6 +360,10 @@ _ADDED_COLUMNS = [
     # 따로 둔다.
     ("post_records", "reviewed", "INTEGER DEFAULT 0"),
     ("profiles", "address", "TEXT"),
+    # 보호자 포털(Next)이 보낸 구조화 신청 원문. AI가 발화에서 뽑은 값과
+    # 달리 보호자가 실제로 고른 값 그대로라, guardian_lookup 이 확정 전에도
+    # 정직하게 돌려줄 수 있다(§ web/api.py guardian_lookup).
+    ("intakes", "guardian_form_json", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -738,6 +742,17 @@ def set_access_code(intake_id: int, code: str) -> None:
     conn = get_conn()
     try:
         conn.execute("UPDATE intakes SET access_code=? WHERE id=?", (code, intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_guardian_form(intake_id: int, form_json: str) -> None:
+    """보호자가 보낸 구조화 신청 원문을 남긴다. access_code 발급 직후 한 번 호출한다."""
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE intakes SET guardian_form_json=? WHERE id=?", (form_json, intake_id))
         conn.commit()
     finally:
         conn.close()

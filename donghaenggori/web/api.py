@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -170,10 +171,67 @@ class IntakeIn(BaseModel):
     save: bool = Field(True, description="접수 기록으로 저장할지")
 
 
+class GuardianElderIn(BaseModel):
+    name: str
+    birthDate: str | None = None
+    region: str | None = None
+
+
+class GuardianContactIn(BaseModel):
+    relationship: str | None = None
+    phone: str
+
+
+class GuardianVisitIn(BaseModel):
+    date: str | None = None
+    time: str | None = None
+    dateUnknown: bool = False
+    timeUnknown: bool = False
+    hospital: str
+    department: str | None = None
+    departmentUnknown: bool = False
+
+
+class GuardianFormIn(BaseModel):
+    """Next 보호자 포털의 구조화 신청 폼 원문. 필드명은 프론트 도메인 타입과 그대로 맞춘다
+    (frontend/lib/guardian/domain/application.ts의 NewGuardianApplication)."""
+    elder: GuardianElderIn
+    guardian: GuardianContactIn
+    visit: GuardianVisitIn
+    assistance: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+def _synthesize_utterance(form: GuardianFormIn) -> str:
+    """구조화 폼 → 발화 문장. 기존 AI 파이프라인(긴급 판정·진료과 추출)을 그대로 태우기 위해서다."""
+    parts = [f"{form.elder.name} 어르신"]
+    if form.visit.dateUnknown:
+        parts.append("날짜 미정")
+    elif form.visit.date:
+        when = form.visit.date
+        if form.visit.time and not form.visit.timeUnknown:
+            when += f" {form.visit.time}"
+        parts.append(when)
+    dept = None if form.visit.departmentUnknown else form.visit.department
+    hospital = form.visit.hospital + (f" {dept}" if dept else "")
+    parts.append(f"{hospital} 병원동행 신청")
+    if form.assistance:
+        parts.append("필요 도움: " + ", ".join(form.assistance))
+    if form.note:
+        parts.append(form.note)
+    return ". ".join(parts)
+
+
 class GuardianIntakeIn(BaseModel):
-    """보호자 웹 전용 — channel·save는 클라이언트가 정하지 못한다(서버가 고정)."""
-    phone: str = Field(..., description="발신번호 — 보조 식별 단서일 뿐, 대상자 확정 아님")
-    utterance: str = Field(..., description="신청 내용")
+    """보호자 웹 전용 — channel·save는 클라이언트가 정하지 못한다(서버가 고정).
+
+    utterance 만 오면(전화 STT 계열) 그대로 분석하고, form 이 오면(Next 보호자 포털)
+    거기서 발화를 만들어 같은 파이프라인을 태우되, 원문은 guardian_form_json 에
+    그대로 남겨 조회 때 정확히 돌려준다.
+    """
+    phone: str | None = Field(None, description="발신번호. form이 있으면 생략 가능(form.guardian.phone 사용)")
+    utterance: str | None = Field(None, description="신청 내용 — form이 없을 때만 필요")
+    form: GuardianFormIn | None = Field(None, description="구조화 신청 폼(보호자 포털 전용)")
 
 
 class GuardianIntakeOut(BaseModel):
@@ -452,7 +510,14 @@ def guardian_create_intake(body: GuardianIntakeIn) -> dict:
     좁힌다** — 예전에는 직원용 응답을 그대로 돌려줘서, 토큰 없이 남의 번호만
     넣으면 그 어르신의 프로필과 진료 이력이 전부 나왔다.
     """
-    res = _run_intake(IntakeIn(phone=body.phone, utterance=body.utterance,
+    phone = body.phone or (body.form.guardian.phone if body.form else None)
+    if not phone:
+        raise HTTPException(400, "phone 또는 form.guardian.phone 이 필요합니다")
+    utterance = body.utterance or (_synthesize_utterance(body.form) if body.form else None)
+    if not utterance:
+        raise HTTPException(400, "utterance 또는 form 중 하나는 있어야 합니다")
+
+    res = _run_intake(IntakeIn(phone=phone, utterance=utterance,
                                channel="앱·웹(보호자)", save=True))
     # 조회용 신청번호를 발급한다. 보호자는 계정을 만들지 않으므로 이게 유일한
     # 열쇠다 — 연락처와 함께 있어야만 열린다(db.find_by_access_code).
@@ -460,6 +525,10 @@ def guardian_create_intake(body: GuardianIntakeIn) -> dict:
     if res.get("intake_id"):
         code = db.new_access_code()
         db.set_access_code(res["intake_id"], code)
+        if body.form is not None:
+            # 원문을 그대로 남긴다 — AI가 발화에서 다시 뽑은 값이 아니라
+            # 보호자가 실제로 고른 값을 조회 화면이 그대로 보여줄 수 있도록.
+            db.set_guardian_form(res["intake_id"], body.form.model_dump_json())
     # 화이트리스트로 옮겨 담는다. res 를 그대로 넘기고 response_model 로 거르는
     # 방식은 쓰지 않는다 — 모델에 필드가 하나 늘거나 extra 설정이 바뀌면 조용히
     # 다시 새기 때문이다. 여기서 명시적으로 고른 것만 나간다.
@@ -470,7 +539,7 @@ def guardian_create_intake(body: GuardianIntakeIn) -> dict:
         "urgent": res.get("urgent", False),
         "urgent_confident": res.get("urgent_confident", True),
         "urgent_message": res.get("urgent_message"),
-        "raw_utterance": body.utterance,
+        "raw_utterance": utterance,
         "dept": res.get("dept"),        # analysis 값 — 발신자가 적은 문장에서 나온다
         "date": res.get("date"),        # 〃
     }
@@ -493,6 +562,17 @@ def _guardian_step(row: dict) -> str:
     if row.get("status") in ("긴급", "긴급 처리됨"):
         return "확인 중"
     return "확인 중"
+
+
+# Next 보호자 포털(GuardianApplication.status)이 쓰는 5값 enum으로 옮긴다.
+# NEEDS_INFO·COMPLETED 를 만드는 백엔드 신호가 아직 없어 그 둘로는 안 보낸다 —
+# 없는 걸 있는 척하지 않는다.
+def _guardian_status_code(row: dict) -> str:
+    if row.get("status") == "확정":
+        return "CONFIRMED"
+    if row.get("status") in ("긴급", "긴급 처리됨"):
+        return "REVIEWING"
+    return "RECEIVED"
 
 
 @app.post("/api/guardian/lookup", tags=["보호자 웹"])
@@ -528,10 +608,21 @@ def guardian_lookup(body: GuardianLookupIn, request: Request) -> dict:
     # "박순자"가 떴다. 그건 우리가 **그 번호로 등록된 다른 어르신의 이름을
     # 알려 준 것**이다. 보호자는 자기가 적어 보낸 것만 본다.
     confirmed = row.get("status") == "확정"
+    # 보호자가 자기가 직접 고른 값이라 확정 여부와 무관하게 그대로 돌려준다 —
+    # AI 후보(§ 위 확정 전 병원·일정 비노출)와는 출처가 다르다.
+    form = None
+    raw_form = row.get("guardian_form_json")
+    if raw_form:
+        try:
+            form = json.loads(raw_form)
+        except (TypeError, ValueError):
+            form = None
     return {
         "ok": True,
         "code": row.get("access_code"),
         "requested": row.get("raw_utterance"),      # 보호자가 적어 보낸 것
+        "form": form,                                # 보호자 포털(Next)의 구조화 원문
+        "status_code": _guardian_status_code(row),   # GuardianApplication.status 5값
         "hospital": row.get("confirmed_hospital") if confirmed else None,
         "date": row.get("confirmed_date") if confirmed else None,
         "time": row.get("time_value") if confirmed else None,
