@@ -129,7 +129,7 @@ def run(phone: str, utterance: str, channel: str = "전화",
             urgent_message=msg, urgent_confident=confident,
             intent_source=source, intent_confidence=conf)
 
-    hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital)   # ⑥
+    hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital, channel=channel)   # ⑥
     nres = need_mod.assess(prof)
 
     facilities: list[dict] = []
@@ -317,13 +317,13 @@ def _build_card(phone, utterance, a, prof, hres, nres,
                          else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
     if not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
-        questions.append(_ambiguity_question(a.date or {}, "날짜"))
+        questions.append(_ambiguity_question(a.date or {}, "날짜", channel))
 
     # 시각은 없어도 접수를 막지 않는다. 다만 오전·오후를 알 수 없는 "3시"는
     # 우리가 골라주지 않고 되묻는다 — 잘못 고르면 반나절을 헛걸음한다.
     if a.time and not a.time.get("confident"):
         flags.append("확인 필요: 방문 시각")
-        questions.append(_ambiguity_question(a.time, "시각"))
+        questions.append(_ambiguity_question(a.time, "시각", channel))
     elif not a.time:
         questions.append("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.")
 
@@ -353,22 +353,24 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         target_candidates=candidates,
         spoken_name=spoken_name, spoken_region=spoken_region,
         field_status=_field_status(a, hres, target_status, dept),
-        field_evidence=_field_evidence(a, hres, target_evidence, dept))
+        field_evidence=_field_evidence(a, hres, target_evidence, dept, channel))
 
 
-def _ambiguity_question(slot: dict, kind: str) -> str:
+def _ambiguity_question(slot: dict, kind: str, channel: str = "전화") -> str:
     """왜 확정하지 못했는지에 맞는 질문을 만든다.
 
     "10시나 11시"에 대고 "오전인가요 오후인가요"를 물으면 어긋난다.
     어르신이 실제로 말한 표현을 그대로 인용해서 되묻는다.
     """
     label, why = slot.get("label") or "", slot.get("ambiguous")
+    # 보호자가 폼에 적은 것을 "말씀하신" 이라고 되물으면 어긋난다.
+    said = "적어 주신" if channel == GUARDIAN_CHANNEL else "말씀하신"
     if why == dateparse.AMBIGUOUS_MULTIPLE:
-        return f"말씀하신 {label} 중에 어느 쪽으로 잡을까요?"
+        return f"{said} {label} 중에 어느 쪽으로 잡을까요?"
     if why == dateparse.AMBIGUOUS_NEGATED:
         return f"{josa(label, '은')} 아니라고 하셨는데, 그러면 언제로 잡을까요?"
     if kind == "시각":
-        return f"말씀하신 {label}, 오전인가요 오후인가요?"
+        return f"{said} {label}, 오전인가요 오후인가요?"
     return "방문 날짜를 한 번 더 확인 부탁드립니다."
 
 
@@ -382,10 +384,13 @@ def _field_status(a, hres, target_status: str, dept) -> dict[str, str]:
     }
 
 
-def _field_evidence(a, hres, target_evidence: list[str], dept) -> dict[str, list[str]]:
+def _field_evidence(a, hres, target_evidence: list[str], dept,
+                    channel: str = "전화") -> dict[str, list[str]]:
     """항목마다 '왜 이 값인지'를 문장으로 남긴다. 확률은 쓰지 않는다."""
     if a.dept:
-        dept_ev = [f"원문에서 '{a.dept}'를 직접 언급"]
+        # 병원 근거와 같은 이유로 경로를 가른다(hospital.suggest 주석 참고).
+        dept_ev = [f"신청서에 '{a.dept}'를 직접 입력" if channel == GUARDIAN_CHANNEL
+                   else f"원문에서 '{a.dept}'를 직접 언급"]
         if a.symptom:
             dept_ev.append(f"증상 표현 '{a.symptom}' 확인")
     elif dept:
@@ -395,8 +400,15 @@ def _field_evidence(a, hres, target_evidence: list[str], dept) -> dict[str, list
 
     def when(slot: dict | None, kind: str) -> list[str]:
         if not slot:
-            return [f"원문에서 방문 {josa(kind, '을')} 확인할 수 없음"]
-        ev = [f"어르신이 '{slot['label']}'{particle(slot['label'], '이라고')} 직접 말함"]
+            return [f"{'신청서' if channel == GUARDIAN_CHANNEL else '원문'}에서"
+                    f" 방문 {josa(kind, '을')} 확인할 수 없음"]
+        if channel == GUARDIAN_CHANNEL:
+            # 보호자는 달력에서 고른다. 그 값을 "직접 말함" 으로 적으면
+            # 통화에서 들은 것이 된다.
+            ev = [f"보호자가 신청서에 '{slot['label']}'"
+                  f"{particle(slot['label'], '을')} 선택"]
+        else:
+            ev = [f"어르신이 '{slot['label']}'{particle(slot['label'], '이라고')} 직접 말함"]
         if slot.get("corrected"):
             ev.append("앞선 표현을 정정했으므로 마지막에 말한 것을 최종 의도로 봄")
         if not slot.get("confident"):
