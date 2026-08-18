@@ -18,8 +18,12 @@ __pycache__/
 .pytest_cache/
 
 # 런타임 생성물 (시드에서 재생성됨)
-donghaenggori/data/*.db
-donghaenggori/data/*.sqlite3
+#
+# **경로를 앞에 붙이지 않는다.** 예전에는 `donghaenggori/data/*.db` 로 적었는데
+# gitignore 에서 슬래시가 들어간 규칙은 저장소 루트에 묶인다. 폴더를 한 단계
+# 옮기는 것만으로 DB 와 425MB 모델이 무시 대상에서 빠졌다 — 실제로 겪었다.
+*.db
+*.sqlite3
 
 # macOS
 .DS_Store
@@ -31,5 +35,16 @@ donghaenggori/data/*.sqlite3
 *.hwp
 *.hwpx
 
-# 학습 산출물 — train_intent.py 로 재생성
-donghaenggori/data/models/
+# 학습 산출물 — train_intent.py 로 재생성 (425MB)
+**/donghaenggori/data/models/
+
+# 팀원의 Next 앱은 이 저장소에 담지 않는다.
+#
+# **이 저장소 밖 형제 폴더에 clone 한다** — 여기 frontend/ 는 레거시 정적
+# 화면(nginx)이라 이름이 겹친다. 예전에 `frontend/` 를 무시 규칙에 넣었다가
+# 그 정적 화면 118개가 인덱스에서 통째로 빠진 적이 있다. 규칙을 두지 않는 것이
+# 안전하다 — 저장소 밖에 있으면 git 이 애초에 보지 않는다.
+#
+# 배포는 docker-compose.next.yml 이 ../frontend 를 빌드한다.
+node_modules/
+.next/
