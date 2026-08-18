@@ -16,17 +16,25 @@ import datetime
 import json
 import os
 import random
+import secrets
 
 from ..core import db
 
 TODAY = datetime.date(2026, 8, 7)
 OUT_PATH = os.path.join(db.DATA_DIR, "care_profiles.json")
 
-# 시드 실행 때 함께 생성할 데모 로그인 계정.
+# 시드 실행 때 함께 생성할 데모 로그인 계정 — **비밀번호는 여기 적지 않는다.**
+#
+# 배포본이 인터넷에 열려 있어서, 소스에 적은 값은 곧 "주소만 알면 누구나 칠 수
+# 있는 값"이 된다. 실제로 여기 박아 둔 관리자 비밀번호로 공개 주소에서 로그인이
+# 됐다. 그 토큰이면 어르신 전원의 건강 상태·보호자 전화·독거 여부가 원격으로
+# 나온다. 값을 기억하기 쉽게 고르는 것도 같은 문제다 — 아예 두지 않는다.
+#
+# 비밀번호는 `SEED_PASSWORD_<아이디>` 환경변수로 받는다(.env.app).
 SEED_USERS = (
-    ("test1", "테스트 사회복지사", "사회복지사", "12341234"),
-    ("test2", "테스트 동행매니저", "동행매니저", "12341234"),
-    ("admin", "관리자", "관리자", "admin1234"),
+    ("test1", "테스트 사회복지사", "사회복지사"),
+    ("test2", "테스트 동행매니저", "동행매니저"),
+    ("admin", "관리자", "관리자"),
 )
 
 # 시나리오 고정 3명 — 파일2·3·4에서 참조되므로 값을 바꾸지 않는다
@@ -157,6 +165,23 @@ def json_copy(v: dict) -> dict:
     return json.loads(json.dumps(v, ensure_ascii=False))
 
 
+def _seed_password(user_id: str) -> tuple[str, bool] | None:
+    """(비밀번호, 난수로_만들었나) 또는 None(=이 계정은 건드리지 않는다).
+
+    `create_user` 는 upsert 라 부를 때마다 비밀번호가 덮인다. 그래서 환경변수가
+    없을 때 계정이 **이미 있으면 그냥 둔다** — 재시드가 운영자가 바꿔 둔
+    비밀번호를 말없이 갈아엎으면, 시연 직전에 로그인이 막히고 원인도 안 보인다.
+
+    없는 계정만 난수로 만든다. 기동은 되면서 추측할 수 있는 값은 안 남는다.
+    """
+    env = os.environ.get(f"SEED_PASSWORD_{user_id.upper()}", "").strip()
+    if env:
+        return env, False
+    if db.get_user_by_id(user_id):
+        return None
+    return secrets.token_urlsafe(9), True
+
+
 def write_and_load(seed: int = 20260807, verbose: bool = True) -> dict:
     """생성 → care_profiles.json 저장 → DB 재적재."""
     profiles = build(seed)
@@ -164,8 +189,17 @@ def write_and_load(seed: int = 20260807, verbose: bool = True) -> dict:
         json.dump(profiles, f, ensure_ascii=False, indent=2)
 
     db.reset_db()      # 시드 파일을 다시 읽어 적재
-    for user_id, name, role, password in SEED_USERS:
+    # 난수로 만든 것만 출력한다. 환경변수로 받은 값은 이미 운영자가 아는
+    # 값이고, 로그에 남길 이유가 없다.
+    generated: list[tuple[str, str]] = []
+    for user_id, name, role in SEED_USERS:
+        got = _seed_password(user_id)
+        if got is None:
+            continue
+        password, was_generated = got
         db.create_user(user_id, name, role, password)
+        if was_generated:
+            generated.append((user_id, password))
 
     conn = db.get_conn()
     n_p = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
@@ -179,6 +213,13 @@ def write_and_load(seed: int = 20260807, verbose: bool = True) -> dict:
     if verbose:
         print(f"  프로필 {n_p}건 / 이력 {n_h}건")
         print(f"  지역 분포: {stats['regions']}")
+    # verbose 와 무관하게 찍는다. DB 에는 해시만 남아 여기서 놓치면 그 계정으로
+    # 들어갈 방법이 없다 — 조용히 삼키면 로그인 불가 계정만 만들어 놓는 셈이다.
+    if generated:
+        print("\n  계정 비밀번호를 새로 만들었습니다 (이 출력에만 나옵니다):")
+        for user_id, password in generated:
+            print(f"    {user_id:<8} {password}")
+        print("  고정하려면 .env.app 에 SEED_PASSWORD_<아이디> 로 넣으세요.")
     return stats
 
 
