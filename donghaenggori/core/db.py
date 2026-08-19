@@ -726,6 +726,100 @@ def verify_card_field(intake_id: int, field: str, value: str,
     return get_intake(intake_id)
 
 
+def apply_followup(intake_id: int, field: str, question: str, answer: str,
+                   value: str | None = None, status: str = "확인 필요",
+                   evidence: list[str] | None = None,
+                   actor: str = "전화 시스템") -> dict | None:
+    """통화 중 후속질문 한 번을 접수에 반영한다.
+
+    **verify_card_field 와 일부러 갈라 뒀다.** 저쪽은 "사회복지사가 통화로
+    확인함"이고 감사 로그에도 그렇게 남는다(`항목확인` · verified_by). 여기는
+    **자동 전사 결과**다. 둘을 같은 함수로 처리하면, 사고가 났을 때 "사람이
+    확인한 값"과 "봇이 받아 적은 값"을 구분할 수 없게 된다 — 그 구분이 이
+    서비스에서 제일 중요한 기록이다.
+
+    값을 못 얻었어도(status='확인 필요') **묻고 답한 사실은 남긴다.** 무엇을
+    물었는지 모르면 복지사가 같은 질문을 또 하게 된다.
+    """
+    row = get_intake(intake_id)
+    if not row:
+        return None
+    card = row.get("card")
+    if not card:
+        return None
+
+    entry = {"field": field, "question": question, "answer": answer,
+             "result": None, "at": _now()}
+
+    if value and status in ("확인됨", "추정") and field in _VERIFY_TARGETS:
+        flat_key, column = _VERIFY_TARGETS[field]
+        was = card.get(flat_key)
+        card[flat_key] = value
+        fields = card.setdefault("fields", {})
+        view = fields.setdefault(field, {"label": field})
+        view["value"] = value
+        view["status"] = status
+        view["evidence"] = list(view.get("evidence") or []) + list(evidence or [])
+        # verified_by 는 넣지 않는다 — 사람이 확인했다는 뜻의 키다.
+        if field == "hospital":
+            card["hospital_status"] = status
+        entry["result"] = f"{value} [{status}]"
+    else:
+        fields = card.setdefault("fields", {})
+        view = fields.setdefault(field, {"label": field})
+        view["evidence"] = list(view.get("evidence") or []) + list(evidence or [])
+        was = None
+
+    card.setdefault("followups", []).append(entry)
+
+    init_db()
+    conn = get_conn()
+    try:
+        sets, args = ["card_json=?"], [json.dumps(card, ensure_ascii=False)]
+        if value and status in ("확인됨", "추정") and field in _VERIFY_TARGETS:
+            _, column = _VERIFY_TARGETS[field]
+            if column:
+                sets.append(f"{column}=?")
+                args.append(value)
+            if field == "hospital":
+                sets.append("hospital_status=?")
+                args.append(status)
+        args.append(intake_id)
+        conn.execute(f"UPDATE intakes SET {', '.join(sets)} WHERE id=?", args)
+        conn.commit()
+    finally:
+        conn.close()
+
+    detail = f"{field}: {question} / 답변: {answer or '(없음)'} → "
+    detail += (f"{was} → {value} [{status}]" if was and was != value
+               else f"{value} [{status}]" if value else "확인 필요 유지")
+    log_audit(actor, "시스템", "후속질문", "intake", str(intake_id), detail)
+    return get_intake(intake_id)
+
+
+def stop_followup(intake_id: int, reason: str, actor: str = "전화 시스템") -> dict | None:
+    """후속질문을 그만둔 이유를 카드에 남긴다(사람 연결 신호·상한 도달).
+
+    이유가 없으면 복지사는 "왜 안 물어봤나"를 알 수 없고, 어르신이 사람을
+    찾았다는 사실이 통째로 사라진다.
+    """
+    row = get_intake(intake_id)
+    if not row or not row.get("card"):
+        return None
+    card = row["card"]
+    card["followup_stopped"] = reason
+    init_db()
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE intakes SET card_json=? WHERE id=?",
+                     (json.dumps(card, ensure_ascii=False), intake_id))
+        conn.commit()
+    finally:
+        conn.close()
+    log_audit(actor, "시스템", "후속질문 중단", "intake", str(intake_id), reason)
+    return get_intake(intake_id)
+
+
 def _with_card(row: dict) -> dict:
     """card_json 을 파싱해 card 로 붙인다. 옛 접수는 None 이다."""
     raw = row.pop("card_json", None)

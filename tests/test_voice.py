@@ -312,6 +312,10 @@ def main() -> int:
     # ~내과·~치과처럼 받침 없이 끝나는 흔한 의원 이름이 "정형외과으로" 가 된다.
     class _C:
         def __init__(s, d, h, st): s.date_label, s.hospital, s.hospital_status = d, h, st
+        # _receipt 는 저장된 카드(dict)에서 읽는다 — 후속질문으로 값이 바뀌면
+        # Result 의 옛값이 아니라 반영된 값을 들려줘야 하기 때문이다.
+        def to_dict(s): return {"date_label": s.date_label, "hospital": s.hospital,
+                                "hospital_status": s.hospital_status}
     class _R:
         def __init__(s, c): s.card = c
     for hosp, want in (("송정병원", "송정병원으로"), ("행복정형외과", "행복정형외과로"),

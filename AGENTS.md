@@ -92,6 +92,30 @@ Copilot**이다. 어르신이 전화로 말한 짧고 모호한 요청을 받아
 
 ---
 
+## 통화 중 후속질문 (`donghaenggori/core/followup.py`)
+
+확인 필요로 남은 칸을 **어르신이 아직 통화 중일 때** 되묻는다. 병원·방문일·방문
+시각만, 한 번에 하나씩, 통화당 최대 2회다(`CLAWOPS_FOLLOWUP_MAX=0` 이면 꺼진다).
+
+- **질문을 새로 만들지 않는다.** `gate.blockers[].question` 을 그대로 쓴다 — 두 곳에서
+  각자 만들면 화면이 띄운 질문과 통화가 묻는 질문이 갈라진다
+- **사람 연결 신호를 재추출보다 먼저 본다.** "됐어요"·"사람 바꿔줘"가 나왔는데 답에서
+  병원 이름을 뽑고 있으면, 이 통화에서 제일 하면 안 되는 일(한 번 더 캐묻기)을 한다
+- **접수를 먼저 저장하고 되묻는다.** 되묻는 중에 끊겨도 접수가 사라지면 안 된다
+- **`target` 은 되묻지 않는다.** 통화로 받아 적은 이름은 어떤 경로로도 '확인됨'이
+  되지 않아서, 물어봐야 게이트가 안 열리고 통화만 길어진다
+- **신규 유형(requesttype.STAFF_HANDLED)에는 적용하지 않는다.** 되물어 풀리는 종류가
+  아니다
+- 답을 못 얻으면 그 칸은 '확인 필요' 그대로 둔다. **우리가 채우지 않는다**
+
+`db.apply_followup` 은 `verify_card_field` 와 **일부러 갈라 뒀다.** 저쪽은 사람이
+확인한 것(`항목확인` · `verified_by`)이고 이쪽은 자동 전사(`후속질문` · 행위자
+`전화 시스템`)다. 합치면 사고가 났을 때 누가 확인했는지 답할 수 없다.
+
+`tests/test_followup.py`(72건)가 이 경계를 지킨다.
+
+---
+
 ## 확정 게이트 (`donghaenggori/core/gate.py`)
 
 확인 필요가 남으면 confirm이 **409**로 막힌다. 422가 아니다 — 요청이 틀린 게 아니라
@@ -169,6 +193,7 @@ PYTHONPATH=. python tests/test_voice.py           # 71
 PYTHONPATH=. python tests/test_file3_cases.py     # 26  ← 제출 문서 케이스
 PYTHONPATH=. python tests/test_identity_extract.py # 39
 PYTHONPATH=. python tests/test_request_type.py    # 75  ← 새 요청 유형 경계
+PYTHONPATH=. python tests/test_followup.py       # 72  ← 통화 중 후속질문
 ruff check .
 ```
 
