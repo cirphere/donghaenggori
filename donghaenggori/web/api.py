@@ -566,6 +566,8 @@ _GUARDIAN_STEPS = ["접수됨", "확인 중", "일정 확정", "동행 완료"]
 
 
 def _guardian_step(row: dict) -> str:
+    if row.get("status") == "동행 완료":
+        return "동행 완료"
     if row.get("status") == "확정":
         return "일정 확정"
     if row.get("status") in ("긴급", "긴급 처리됨"):
@@ -574,9 +576,11 @@ def _guardian_step(row: dict) -> str:
 
 
 # Next 보호자 포털(GuardianApplication.status)이 쓰는 5값 enum으로 옮긴다.
-# NEEDS_INFO·COMPLETED 를 만드는 백엔드 신호가 아직 없어 그 둘로는 안 보낸다 —
-# 없는 걸 있는 척하지 않는다.
+# COMPLETED 는 '동행 완료' 상태에서 나온다. NEEDS_INFO 를 만드는 신호는 아직
+# 없어 그 값으로는 안 보낸다 — 없는 걸 있는 척하지 않는다.
 def _guardian_status_code(row: dict) -> str:
+    if row.get("status") == "동행 완료":
+        return "COMPLETED"
     if row.get("status") == "확정":
         return "CONFIRMED"
     if row.get("status") in ("긴급", "긴급 처리됨"):
@@ -786,6 +790,31 @@ def resolve_urgent(intake_id: int, body: ResolveIn, user: dict = Depends(current
     changed = db.resolve_urgent(intake_id, user["name"], user["role"], body.note)
     # changed=False 는 이미 처리됐거나 긴급이 아니라는 뜻 — 오류가 아니다
     return {"ok": True, "changed": changed, "intake": db.get_intake(intake_id)}
+
+
+@app.post("/api/intakes/{intake_id}/complete", tags=["일정"])
+def complete_accompaniment(intake_id: int, body: ResolveIn,
+                           user: dict = Depends(current_user)) -> dict:
+    """동행을 다녀왔다 — 확정 → 동행 완료. 이력이 자동으로 쌓인다.
+
+    확정은 "일정을 정했다" 이고 이것은 "실제로 다녀왔다" 다. 그동안 접수가
+    확정에서 멈춰서, 다녀온 건과 아직 안 간 건이 목록에서 구분되지 않았고
+    사후기록을 어느 건에 써야 하는지도 알 수 없었다.
+
+    이력 누적을 여기서 한다. /api/flywheel 을 따로 부르던 것이 실제 업무
+    행위(동행 완료)의 결과가 된다 — 누가 언제 부르는지 정의되지 않은 API 를
+    사람이 기억해서 호출하는 구조는 운영에서 지켜지지 않는다.
+    """
+    if not db.can(user["role"], "intake.confirm"):
+        raise HTTPException(403, f"'{user['role']}' 역할에는 동행 완료 권한이 없습니다")
+    if not db.get_intake(intake_id):
+        raise HTTPException(404, "접수를 찾을 수 없습니다")
+    res = db.complete_accompaniment(intake_id, user["name"], user["role"], body.note)
+    if not res["changed"]:
+        # 확정 전이거나 이미 완료 — 요청이 틀린 게 아니라 지금 상태에서 못 한다.
+        raise HTTPException(409, detail={"message": "동행 완료로 바꿀 수 없습니다",
+                                         "reason": res.get("reason")})
+    return {"ok": True, **res, "intake": db.get_intake(intake_id)}
 
 
 # ------------------------------------------- 화면 05 사후기록 --
