@@ -656,6 +656,25 @@ def _read_recording(form: dict) -> str | None:
         duration = float(form.get("RecordingDuration") or 0)
     except ValueError:
         duration = 0
+
+    # **키가 실제로 전달됐는지 여기서만 알 수 있다.**
+    #
+    # "다 말하고 아무 버튼 눌러도 안 끊긴다" 는 보고가 들어왔는데, 원인이
+    # 두 가지라 로그 없이는 못 가른다.
+    #
+    #   ① DTMF 가 회선에서 안 온다 → 녹음이 maxLength 까지 간다
+    #   ② 키는 먹었는데 그 뒤 전사 대기가 길다 → 누른 사람은 똑같이 느낀다
+    #
+    # Digits 에 누른 키가 담겨 오고(문서), 상한까지 갔는지는 duration 으로
+    # 안다. 둘을 같이 찍으면 다음 통화 한 번으로 판명된다. ①이면 상한을
+    # 낮추는 것 말고 할 수 있는 게 없고(무음 종료 미지원), ②면 안내 문구로
+    # 푼다 — 처방이 아예 다르다.
+    digits = (form.get("Digits") or "").strip()
+    _log.info("녹음 종료 — 누른 키 %s · 길이 %.1f초 / 상한 %d초%s",
+              repr(digits) if digits else "없음", duration, MAX_RECORD_SECONDS,
+              " (상한까지 감 — 키가 안 먹었을 수 있다)"
+              if duration >= MAX_RECORD_SECONDS - 1 else "")
+
     if not url or duration <= 0:
         _log.warning("녹음 없음 — RecordingDuration=%s · URL %s",
                      form.get("RecordingDuration"), "있음" if url else "없음")
