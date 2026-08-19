@@ -283,8 +283,19 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         candidates = db.find_by_guardian_phone(phone)
         rel = f"{a.proxy_relation} " if a.proxy_relation else ""
         if len(candidates) == 1:
-            target = f"{candidates[0]['name']} (보호자 대리 요청 — 확인 필요)"
-            target_status = "추정"
+            # **추정이 아니라 확인 필요다.** 다른 항목의 추정은 "근거를 대고 고른
+            # 값"이라 틀려도 헛걸음으로 끝나지만, 여기서 고르는 것은 **누구의
+            # 접수인가**다. 근거라고는 "이 번호로 등록된 사람이 한 명"뿐인데,
+            # 그 한 명은 보호자가 앞서 신청해 등록된 어르신일 뿐이다. 그래서
+            # 같은 보호자가 다른 부모를 신청하면 두 번째 접수가 첫 어르신
+            # 이름으로 조용히 확정된다 — 실제로 재현했다(딸이 어머니 신청·확정
+            # 뒤 아버지를 신청하니 target 이 어머니 이름으로 붙고 게이트는 통과).
+            #
+            # 값 문자열에 '확인 필요'라고 적어 두는 것으로는 아무것도 막지 못한다.
+            # gate.blockers 는 status 만 본다. 물어볼 질문은 아래에서 이미 만든다
+            # ("○○이신 △△ 님 맞으실까요?").
+            target = f"{candidates[0]['name']} (보호자 대리 요청)"
+            target_status = "확인 필요"
             target_evidence = [f"보호자 연락처로 등록된 대상자 1명 — {candidates[0]['name']}"]
         elif len(candidates) > 1:
             target = f"대상자 후보 {len(candidates)}명 — 확인 필요"
