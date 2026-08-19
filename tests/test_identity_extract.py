@@ -248,7 +248,7 @@ check("증상에서 고른 진료과는 dict",
 # "확인했고 문제없음" 과 "확인하지 않음" 이 똑같이 보이는데, 동행을 내보내는
 # 복지사에게는 그 둘이 다르다. 판단은 여전히 하지 않는다 — 수치만 적는다.
 from donghaenggori.services.airquality import _cautions as _air  # noqa: E402
-from donghaenggori.services.weather import _cautions as _wx      # noqa: E402
+from donghaenggori.services.weather import _cautions as _wx  # noqa: E402
 
 good = _air([14, 12], [5, 4], [])
 check("대기질 좋아도 한 줄 남는다", len(good) == 1 and "특이사항 없음" in good[0], str(good))
