@@ -359,6 +359,13 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         need_level=nres.level, need_reasons=nres.reasons,
         need_basis=nres.basis, need_official=nres.official,
         guardian_contact=nres.guardian_contact,
+        # 기관이 이미 아는 값 — 확신도를 붙이지 않고 그대로 싣는다.
+        # 대상자가 확정되지 않았으면(미등록·대리) 프로필이 없거나 남의
+        # 것일 수 있으므로 아무것도 싣지 않는다.
+        pickup=(prof.get("address") or prof.get("region")) if prof else None,
+        mobility=prof.get("mobility") if prof else None,
+        guardian=prof.get("guardian") if prof else None,
+        caregiver=prof.get("caregiver") if prof else None,
         manager_notes=mnotes, flags=flags,
         requester=requester, proxy_relation=a.proxy_relation,
         target_candidates=candidates,
