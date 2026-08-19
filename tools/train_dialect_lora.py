@@ -141,7 +141,24 @@ def main() -> int:
     model.config.suppress_tokens = []
     # 재계산으로 활성값 메모리를 줄인다. 30초 입력이라 이게 없으면 배치를 못 키운다.
     model.config.use_cache = False
-    model.gradient_checkpointing_enable()
+
+    # **use_reentrant=False 가 반드시 필요하다.**
+    #
+    # 기본값(reentrant)은 checkpoint 구간의 **입력**이 requires_grad 가 아니면
+    # 그 구간의 역전파를 통째로 건너뛴다. 안에 있는 LoRA 파라미터도 같이
+    # 건너뛴다. Whisper 인코더는 mel(requires_grad=False)을 conv 로 받으므로
+    # 정확히 그 조건에 걸린다 — enable_input_require_grads() 는
+    # get_input_embeddings(), 즉 **디코더** 임베딩에만 훅을 걸어서 인코더에는
+    # 닿지 않는다.
+    #
+    # 그러면 디코더만 학습되고 인코더 LoRA 는 0 인 채로 끝난다. 방언 적응은
+    # 발음을 배우는 일이라 인코더가 핵심인데, 정작 그쪽이 안 배운다.
+    #
+    # 증상으로 드러난다: 로그에 "None of the inputs have requires_grad=True.
+    # Gradients will be None" 이 뜨고, 스텝이 비정상적으로 빨라진다(A6000 에서
+    # 1.19s/it — 인코더 역전파가 없어야 나오는 속도다).
+    model.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
 
     # q·v 만 건드리는 것이 Whisper 적응의 표준 구성이다. 넓힐수록 망각 위험이 는다.
@@ -149,6 +166,30 @@ def main() -> int:
         r=args.rank, lora_alpha=args.alpha, lora_dropout=0.05, bias="none",
         target_modules=["q_proj", "v_proj"]))
     model.print_trainable_parameters()
+
+    def assert_encoder_learns(collator: Collator, sample: list[dict]) -> None:
+        """인코더에 기울기가 실제로 흐르는지 **학습 전에** 한 배치로 확인한다.
+
+        조용히 안 배우고 끝나는 것이 이 설정에서 가장 비싼 실패다. 학습은
+        정상으로 보이고 loss 도 내려가지만(디코더가 배운다) 정작 원하던
+        방언 발음 적응은 일어나지 않는다. 몇 시간 뒤 CER 이 그대로인 것을
+        보고서야 알게 되는데, 그때는 원인을 좁히기 어렵다.
+
+        배치 하나분(2~3초)으로 끝나므로 매번 켜 둘 값어치가 있다.
+        """
+        batch = collator(sample)
+        batch = {k: v.to(model.device) for k, v in batch.items()}
+        model.train()
+        model(**batch).loss.backward()
+        enc = [p for n, p in model.named_parameters()
+               if p.requires_grad and ".encoder." in n]
+        got = sum(1 for p in enc if p.grad is not None and p.grad.abs().sum() > 0)
+        model.zero_grad(set_to_none=True)
+        print(f"[검증] 인코더 LoRA {len(enc)}개 중 기울기 있는 것 {got}개", flush=True)
+        if enc and got == 0:
+            raise RuntimeError(
+                "인코더 LoRA 에 기울기가 흐르지 않는다. gradient checkpointing 의 "
+                "use_reentrant 를 확인하라 — 이대로면 디코더만 학습된다.")
 
     trainer = Seq2SeqTrainer(
         model=model,
@@ -180,6 +221,10 @@ def main() -> int:
         eval_dataset=split["test"],
         data_collator=Collator(processor, model.config.decoder_start_token_id),
     )
+
+    model.to(trainer.args.device)
+    assert_encoder_learns(trainer.data_collator,
+                          [split["train"][0], split["train"][1]])
 
     resume = bool(args.out and os.path.isdir(args.out)
                   and any(d.startswith("checkpoint-") for d in os.listdir(args.out)))
