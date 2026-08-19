@@ -60,7 +60,6 @@ class Collator:
     decoder_start_token_id: int
 
     def __call__(self, features: list[dict]) -> dict:
-        import torch
         batch = self.processor.feature_extractor.pad(
             [{"input_features": f["input_features"]} for f in features],
             return_tensors="pt")
@@ -92,10 +91,14 @@ def main() -> int:
     args = ap.parse_args()
 
     import torch
-    from datasets import Dataset, Audio
+    from datasets import Audio, Dataset
     from peft import LoraConfig, get_peft_model
-    from transformers import (Seq2SeqTrainer, Seq2SeqTrainingArguments,
-                              WhisperForConditionalGeneration, WhisperProcessor)
+    from transformers import (
+        Seq2SeqTrainer,
+        Seq2SeqTrainingArguments,
+        WhisperForConditionalGeneration,
+        WhisperProcessor,
+    )
 
     rows = load_manifest(args.manifest)
     print(f"학습 조각 {len(rows)}개 · {sum(r['duration'] for r in rows)/3600:.2f} 시간")
