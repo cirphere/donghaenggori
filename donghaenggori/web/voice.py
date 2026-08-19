@@ -37,6 +37,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from ..core import db, pipeline
+from ..core import requesttype as rt_mod
 from ..core.korean import josa
 
 # uvicorn 로거를 빌려 쓴다. 자체 이름으로 만들면 루트로 propagate 되는데
@@ -810,6 +811,13 @@ def _receipt(res) -> str:
     c = res.card
     if c is None:
         return "접수했습니다."
+    # 기존 흐름이 다루지 않는 요청(새 병원 탐색·진료과 탐색·인력 요청)은 날짜를
+    # 확정해서 들려주지 않는다. 화면에는 '확인 필요' 배지가 뜨지만 **통화에는
+    # 그런 장치가 없어서**, "말씀하신 날짜로 접수했습니다" 가 어르신에게는 일정이
+    # 잡혔다는 말로 들린다. 실제로는 사람이 다시 걸어야 하는 건이다.
+    if getattr(c, "request_type", None) in rt_mod.STAFF_HANDLED:
+        return ("말씀하신 내용을 접수했습니다. "
+                "담당 사회복지사가 확인한 뒤 다시 연락드리겠습니다.")
     when = c.date_label or "말씀하신 날짜"
     if c.hospital and c.hospital_status == "확인됨":
         # 조사를 붙박이로 두면 "행복정형외과으로" 가 된다. ~내과·~치과·~안과 처럼

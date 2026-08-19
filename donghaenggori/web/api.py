@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
 from ..core import dateparse, db, gate, pipeline
+from ..core import requesttype as rt_mod
 from ..services import rag, stt, summarize
 from . import voice
 
@@ -262,6 +263,10 @@ class GuardianIntakeOut(BaseModel):
     raw_utterance: str = ""                          # 본인이 적어 보낸 문장
     dept: str | None = None                          # 그 문장에서 뽑은 진료과
     date: dict | None = None                         # 그 문장에서 뽑은 날짜
+    # 요청 유형(core/requesttype.py) — 화면이 "사회복지사가 확인 후 연락드립니다"
+    # 안내를 띄우는 데 쓴다. 값은 유형 이름 다섯 중 하나뿐이고, 저장된 기록이
+    # 아니라 **보호자가 적어 보낸 문장**에서 나온다.
+    request_type: str | None = None
     policy: Policy = Policy()
 
 
@@ -549,8 +554,16 @@ def guardian_create_intake(body: GuardianIntakeIn) -> dict:
         "urgent_confident": res.get("urgent_confident", True),
         "urgent_message": res.get("urgent_message"),
         "raw_utterance": utterance,
-        "dept": res.get("dept"),        # analysis 값 — 발신자가 적은 문장에서 나온다
-        "date": res.get("date"),        # 〃
+        # analysis 값 — 발신자가 적은 문장에서 나온다.
+        #
+        # 다만 **새 유형 요청에서는 진료과를 돌려주지 않는다.** 그 값은 증상에서
+        # 우리가 추정한 것이라("다리가 불편" → 정형외과), 보호자가 적지도 않은
+        # 과목이 신청 완료 화면에 뜬다. 카드에서 뺀 것과 같은 이유다.
+        "dept": None if res.get("request_type") in rt_mod.STAFF_HANDLED else res.get("dept"),
+        "date": res.get("date"),
+        # 새로운 유형이면 화면이 "사회복지사가 확인 후 연락드립니다"로 안내한다.
+        # 값 자체는 유형 이름뿐이라 대상자 정보가 실리지 않는다.
+        "request_type": res.get("request_type"),
     }
 
 

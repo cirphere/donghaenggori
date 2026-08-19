@@ -21,6 +21,7 @@ from . import hospital as hospital_mod
 from . import identity as identity_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
+from . import requesttype as rt_mod
 from .korean import josa, particle
 
 CHANNELS = ("전화", "앱·웹(보호자)", "직접(기관)")
@@ -48,12 +49,18 @@ class Result:
     intent_source: str = "규칙"          # 학습모델 | 규칙 | 규칙+LLM
     intent_confidence: float | None = None
     facilities: list[dict] = field(default_factory=list)   # ⑦ RAG 보강 결과
+    # 요청 유형(⑤-1). 의도와 **다른 축**이다 — 의도가 '병원동행'인 접수를 다시
+    # 다섯으로 가른다. 긴급·약국·보호자연락에서는 None 이다.
+    request: rt_mod.RequestType | None = None
 
     def to_dict(self) -> dict:
         return {
             "urgent": self.urgent,
             "channel": self.channel,
             "intent": self.analysis.intent,
+            # 유형을 평면 키로도 낸다 — 목록·Inbox 가 카드를 열지 않고 배지를 그린다.
+            "request_type": self.request.type if self.request else None,
+            "request": self.request.to_dict() if self.request else None,
             "intent_source": self.intent_source,
             "intent_confidence": self.intent_confidence,
             "dept": self.analysis.dept,
@@ -129,7 +136,20 @@ def run(phone: str, utterance: str, channel: str = "전화",
             urgent_message=msg, urgent_confident=confident,
             intent_source=source, intent_confidence=conf)
 
-    hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital, channel=channel)   # ⑥
+    # ⑤-1 요청 유형. **긴급 판정 뒤에 온다** — 안전 동작을 새 유형이 가리면 안 된다.
+    #
+    # 의도가 '병원동행'인 접수만 다시 가른다. 약국·보호자연락은 이미 자기 흐름이
+    # 있고(card.INTENT_FIELDS), 거기에 '신규 병원 탐색' 같은 유형을 얹으면 의미
+    # 없는 조합이 생긴다.
+    req = rt_mod.classify(utterance, a) if a.intent == "병원동행" else None
+    new_type = req is not None and req.staff_handled
+
+    if new_type:
+        # **병원 후보를 만들지 않는다.** 어디로 갈지 몰라서 전화한 사람에게
+        # 과거 단골을 '추정'으로 내미는 것이 이 유형에서 제일 흔한 사고다.
+        hres = _no_hospital_guess(a, req)
+    else:
+        hres = hospital_mod.suggest(prof, a.dept, spoken=a.hospital, channel=channel)   # ⑥
     nres = need_mod.assess(prof)
 
     facilities: list[dict] = []
@@ -140,14 +160,75 @@ def run(phone: str, utterance: str, channel: str = "전화",
         except Exception:
             facilities = []
 
+    # 검증된 목록에서만 후보를 찾는다. 조회가 안 되면 후보를 만들지 않고 사유를
+    # 문장으로 받아 병원 칸 근거에 싣는다 — '모른다'가 화면에 남아야 한다.
+    lookup_candidates: list[dict] = []
+    lookup_note = ""
+    if req is not None and req.type in rt_mod.LOOKUP_TYPES:
+        lookup_candidates, lookup_note = _lookup_hospitals(prof, req)
+
     c = _build_card(phone, utterance, a, prof, hres, nres, channel,
                     denied_owner=owner if identity_denied else None,
-                    identity_utterance=identity_utterance)  # ⑧
+                    identity_utterance=identity_utterance,
+                    req=req, lookup_note=lookup_note)  # ⑧
+    c.lookup_candidates = lookup_candidates
     c.outing_checklist = _outing_checklist(prof, a, c.spoken_region)
-    if hres.status == "확인 필요" and not (prof or {}).get("history"):
+    if not new_type and hres.status == "확인 필요" and not (prof or {}).get("history"):
         c.reference_candidates = _reference_candidates(prof, a)
     return Result(urgent=False, card=c, analysis=a, profile=prof, channel=channel,
-                  intent_source=source, intent_confidence=conf, facilities=facilities)
+                  intent_source=source, intent_confidence=conf, facilities=facilities,
+                  request=req)
+
+
+def _no_hospital_guess(a, req) -> hospital_mod.HospitalResult:
+    """새 유형에서 쓰는 병원 결과 — **후보 없음**을 근거와 함께 명시한다.
+
+    이력이 있는 어르신이라도 여기서는 단골을 꺼내지 않는다. "새로 생긴 병원",
+    "어떤 병원이 있는지 모르겠어"는 지난번 그 병원이 아니라는 말에 가깝다.
+    진료과도 **직접 말했을 때만** 남긴다 — 증상에서 우리가 추정한 값으로 병원을
+    고르기 시작하면, 우리 추정이 조회 조건이 되어 사실처럼 굳는다.
+    """
+    reasons = [f"'{req.type}' 요청 — 과거 이력의 단골을 이번 방문지 후보로 쓰지 않음"]
+    if req.evidence:
+        reasons.append("판단 근거: " + " / ".join(req.evidence))
+    reasons.append("병원은 사회복지사가 어르신과 통화해 확인 — AI가 후보를 지어내지 않음")
+    return hospital_mod.HospitalResult(
+        status="확인 필요",
+        hospital=None,
+        dept=a.dept if getattr(a, "dept_source", None) == "spoken" else None,
+        reasons=reasons,
+        need_confirm=True)
+
+
+def _lookup_hospitals(prof: dict | None, req) -> tuple[list[dict], str]:
+    """검증된 병원 목록(심평원)에서만 후보를 찾는다.
+
+    좌표는 케어 프로필의 지역에서 얻는다. 대상자가 확정되지 않은 접수(미등록
+    번호·대리)는 어디서 찾을지 모르므로 **조회하지 않고 그 사실을 남긴다.**
+    "우리 집 주변"이라는 말은 들었지만 그 집이 어디인지는 모르기 때문이다.
+    """
+    label = req.conditions.get("위치조건")
+    try:
+        from ..services import hospital_lookup
+    except Exception as e:                       # 모듈이 없어도 접수는 계속된다
+        return [], (f"병원 목록 조회를 하지 못했습니다({type(e).__name__}) — "
+                    "사회복지사가 직접 확인해 주세요")
+
+    latlon = None
+    if prof and prof.get("region"):
+        from . import geo
+        latlon = geo.coords_of(prof["region"])
+    try:
+        res = hospital_lookup.lookup(
+            dept=req.conditions.get("원하는진료과"),
+            lat=latlon[0] if latlon else None,
+            lon=latlon[1] if latlon else None,
+            radius_m=REFERENCE_RADIUS_M, rows=REFERENCE_ROWS,
+            location_label=label)
+    except Exception as e:
+        return [], (f"병원 목록 조회에 실패했습니다({type(e).__name__}) — "
+                    "사회복지사가 직접 확인해 주세요")
+    return res.candidates, res.note
 
 
 def _reference_candidates(prof: dict | None, a) -> list[dict]:
@@ -248,7 +329,8 @@ GUARDIAN_CHANNEL = "앱·웹(보호자)"
 
 def _build_card(phone, utterance, a, prof, hres, nres,
                 channel: str = "전화", denied_owner: dict | None = None,
-                identity_utterance: str | None = None) -> card_mod.Card:
+                identity_utterance: str | None = None,
+                req=None, lookup_note: str = "") -> card_mod.Card:
     # 보호자 웹으로 들어온 요청은 채널 자체가 '대리'라는 사실이다. 발화에서
     # 관계 호칭을 못 찾아도 마찬가지다 — 예전에는 "무릎이 아파서 정형외과
     # 가야 해요"처럼 호칭 없이 쓰면 본인 접수로 처리돼, 딸의 번호를 대상자
@@ -327,12 +409,31 @@ def _build_card(phone, utterance, a, prof, hres, nres,
             target_status = "확인 필요"
             target_evidence = [f"{rel or ''}대리 요청이지만 이 번호로 등록된 대상자가 없음".strip()]
 
-    parts = [x for x in (a.dept,
-                         a.date.get("label") if a.date else None,
-                         f"{a.symptom} 관련" if a.symptom else None) if x]
-    summary = f"{a.intent} 접수 — " + (", ".join(parts) if parts else "추가 정보 확인 필요")
+    # 새 유형이면 카드에 세울 칸이 달라진다(card.REQUEST_TYPE_FIELDS). 화면·게이트가
+    # 각자 판단하지 않도록 여기서 한 번만 물어보고, 질문·플래그도 그 목록을 따른다.
+    rtype = req.type if req is not None else None
+    new_type = req is not None and req.staff_handled
+    shown = card_mod.fields_for(a.intent, rtype) or tuple(card_mod.FIELD_VALUE_ATTRS)
+
+    if new_type:
+        # 목록에서 한 줄로 읽히는 것이 이 요약의 목적이다. 무엇을 요청했는지와
+        # **사람이 응대해야 한다**는 사실이 둘 다 보여야 한다.
+        summary = f"신규 유형 요청 — {req.summary()} · 사회복지사 직접 응대 필요"
+    else:
+        parts = [x for x in (a.dept,
+                             a.date.get("label") if a.date else None,
+                             f"{a.symptom} 관련" if a.symptom else None) if x]
+        summary = f"{a.intent} 접수 — " + (", ".join(parts) if parts else "추가 정보 확인 필요")
 
     flags, questions = [], []
+    if new_type:
+        # Inbox 배지가 읽는 문구. 접수 목록에서 이 한 줄로 새 유형이 갈린다.
+        flags.append("새로운 유형의 요청입니다 — 사회복지사 직접 응대")
+        # 게이트가 이 질문을 blockers 에 실어 화면에 띄운다(gate._QUESTION_HINTS).
+        # '병원'이라는 말을 넣지 않는다 — 어디로 갈지 몰라 전화한 어르신에게
+        # 물을 말이 아니고, 병원 칸의 질문으로 잘못 골라지기도 한다.
+        questions.append("새로운 유형의 요청입니다 — 어떤 도움이 필요하신지 "
+                         "사회복지사가 직접 확인해 주세요.")
     if requester == "대리":
         flags.append("대리 요청: 대상자 확인 필요")
         rel = a.proxy_relation or "어르신"
@@ -342,22 +443,26 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         else:
             questions.append(f"{rel} 성함과 거주 읍면동을 알려주시면 대상자를 확인하겠습니다.")
 
-    if hres.status in ("추정", "확인 필요"):
+    # 카드에 세우지 않은 칸은 묻지 않는다. 새 유형에서 "지난번 가셨던 ○○병원
+    # 맞으실까요?"를 띄우면, 어디로 갈지 몰라 전화한 어르신에게 우리가 고른 병원을
+    # 되묻는 셈이 된다. 병원은 위 요청 질문 하나로 함께 확인한다.
+    if "hospital" in shown and not new_type and hres.status in ("추정", "확인 필요"):
         flags.append("확인 필요: 병원명")
         hosp = hres.hospital or (hres.candidates[0]["hospital"] if hres.candidates else None)
         questions.append(f"어르신, 지난번 가셨던 {hosp} 맞으실까요?" if hosp
                          else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
-    if not (a.date and a.date.get("confident")):
+    if "date" in shown and not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
         questions.append(_ambiguity_question(a.date or {}, "날짜", channel))
 
     # 시각은 없어도 접수를 막지 않는다. 다만 오전·오후를 알 수 없는 "3시"는
     # 우리가 골라주지 않고 되묻는다 — 잘못 고르면 반나절을 헛걸음한다.
-    if a.time and not a.time.get("confident"):
-        flags.append("확인 필요: 방문 시각")
-        questions.append(_ambiguity_question(a.time, "시각", channel))
-    elif not a.time:
-        questions.append("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.")
+    if "time" in shown:
+        if a.time and not a.time.get("confident"):
+            flags.append("확인 필요: 방문 시각")
+            questions.append(_ambiguity_question(a.time, "시각", channel))
+        elif not a.time:
+            questions.append("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.")
 
     mnotes = []
     if prof:
@@ -366,7 +471,13 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         if prof.get("preferred_time"):
             mnotes.append(f"{prof['preferred_time']} 방문 선호")
 
-    dept = hres.dept or a.dept
+    if new_type:
+        # 증상에서 우리가 추정한 진료과는 카드에 싣지 않는다. "다리가 불편" 을
+        # 정형외과로 옮기는 것은 우리 판단인데, 그 값이 카드에 앉으면 병원 조회
+        # 조건이 되고 배차 기준이 되어 사실처럼 굳는다. 직접 말한 것만 남긴다.
+        dept = a.dept if getattr(a, "dept_source", None) == "spoken" else None
+    else:
+        dept = hres.dept or a.dept
     return card_mod.Card(
         target=target, phone_masked=card_mod.mask_phone(phone),
         raw_utterance=utterance, summary=summary, intent=a.intent,
@@ -391,8 +502,13 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         requester=requester, proxy_relation=a.proxy_relation,
         target_candidates=candidates,
         spoken_name=spoken_name, spoken_region=spoken_region,
-        field_status=_field_status(a, hres, target_status, dept),
-        field_evidence=_field_evidence(a, hres, target_evidence, dept, channel))
+        request_type=rtype,
+        request_summary=req.summary() if new_type else None,
+        request_evidence=list(req.evidence) if new_type else [],
+        request_conditions=dict(req.conditions) if new_type else {},
+        field_status=_field_status(a, hres, target_status, dept, req),
+        field_evidence=_field_evidence(a, hres, target_evidence, dept, channel,
+                                       req, lookup_note))
 
 
 def _ambiguity_question(slot: dict, kind: str, channel: str = "전화") -> str:
@@ -413,7 +529,19 @@ def _ambiguity_question(slot: dict, kind: str, channel: str = "전화") -> str:
     return "방문 날짜를 한 번 더 확인 부탁드립니다."
 
 
-def _field_status(a, hres, target_status: str, dept) -> dict[str, str]:
+def _field_status(a, hres, target_status: str, dept, req=None) -> dict[str, str]:
+    if req is not None and req.staff_handled:
+        # 새 유형은 우리가 채운 값이 없다. **'추정'조차 주지 않는다** — 추정은
+        # "근거를 대고 고른 값"인데 여기서는 고른 것이 없다. 진료과만 어르신이
+        # 직접 말했으면 확인됨이다.
+        return {
+            "target": target_status,
+            "request": "확인 필요",
+            "hospital": "확인 필요",
+            "dept": "확인됨" if getattr(a, "dept_source", None) == "spoken" else "확인 필요",
+            "date": ("확인됨" if (a.date and a.date.get("confident")) else "확인 필요"),
+            "time": ("확인됨" if (a.time and a.time.get("confident")) else "확인 필요"),
+        }
     return {
         "target": target_status,
         "hospital": hres.status,
@@ -430,8 +558,14 @@ def _field_status(a, hres, target_status: str, dept) -> dict[str, str]:
 
 
 def _field_evidence(a, hres, target_evidence: list[str], dept,
-                    channel: str = "전화") -> dict[str, list[str]]:
-    """항목마다 '왜 이 값인지'를 문장으로 남긴다. 확률은 쓰지 않는다."""
+                    channel: str = "전화", req=None,
+                    lookup_note: str = "") -> dict[str, list[str]]:
+    """항목마다 '왜 이 값인지'를 문장으로 남긴다. 확률은 쓰지 않는다.
+
+    새 유형에서는 **왜 값이 없는지**가 더 중요하다. 빈 칸만 있으면 복지사는
+    "AI가 못 찾았나 안 찾았나"를 알 수 없고, 조회가 미연동이라 비어 있는 것을
+    "이 지역에 병원이 없다"로 읽을 수도 있다.
+    """
     if a.dept:
         # 병원 근거와 같은 이유로 경로를 가른다(hospital.suggest 주석 참고).
         dept_ev = [f"신청서에 '{a.dept}'를 직접 입력" if channel == GUARDIAN_CHANNEL
@@ -460,10 +594,24 @@ def _field_evidence(a, hres, target_evidence: list[str], dept,
             ev.append("오전·오후를 말하지 않아 확정할 수 없음")
         return ev
 
-    return {
+    out = {
         "target": target_evidence,
         "hospital": hres.reasons,
         "dept": dept_ev,
         "date": when(a.date, "날짜"),
         "time": when(a.time, "시각"),
     }
+    if req is not None and req.staff_handled:
+        out["request"] = list(req.evidence) + [
+            f"기존 접수 흐름이 다루지 않는 요청 유형 — {rt_mod.STAFF_STATUS}",
+            "AI는 이 요청의 병원·진료과·인력 정보를 만들지 않습니다",
+        ]
+        if lookup_note:
+            out["hospital"] = list(hres.reasons) + [lookup_note]
+        if getattr(a, "dept_source", None) != "spoken":
+            # 사전·임베딩으로 고른 진료과가 있어도 카드에는 안 싣는다. 다만 무엇을
+            # 보고 그렇게 생각했는지는 남긴다 — 복지사가 통화할 때 단서가 된다.
+            out["dept"] = ([f"증상 표현 '{a.symptom}' 확인 — 진료과는 어르신이 "
+                            "말하지 않아 카드에 싣지 않음"] if a.symptom
+                           else ["어르신이 진료과를 말하지 않음 — 사회복지사가 확인"])
+    return out

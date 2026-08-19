@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS intakes (
   identity_answer TEXT,   -- 전화에서 '맞으실까요' 에 답한 내용 (원문 그대로)
   identity_status TEXT,   -- 확인됨 | 추정 | 확인 필요 — 확정은 사람이 한다
   card_json TEXT,         -- 접수 당시 생성된 카드 전문(근거·확인질문 포함)
+  request_type TEXT,      -- 요청 유형(core/requesttype.py). 기존재방문 | 신규병원탐색
+                          -- | 진료과기반탐색 | 돌봄인력요청 | 기타불분명 | NULL(긴급 등)
   transfer_status TEXT,   -- 긴급 전환 결과 (연결됨 | 통화중 | 응답없음 | 실패)
   manager TEXT            -- 동행 담당자(동행매니저 이름). 없으면 '배정 필요'
 );
@@ -364,6 +366,10 @@ _ADDED_COLUMNS = [
     # 달리 보호자가 실제로 고른 값 그대로라, guardian_lookup 이 확정 전에도
     # 정직하게 돌려줄 수 있다(§ web/api.py guardian_lookup).
     ("intakes", "guardian_form_json", "TEXT"),
+    # 요청 유형. 목록·Inbox 가 카드를 열지 않고 '새로운 유형의 요청' 배지를
+    # 그리려면 행에 있어야 한다. status 를 건드리지 않은 것은 의도적이다 —
+    # status 값 하나를 늘리면 정렬·통계·프론트 라벨(5종 계약)이 함께 딸려온다.
+    ("intakes", "request_type", "TEXT"),
 ]
 
 # 반대로 **없애는** 컬럼. 이미 만들어진 DB(데스크탑·배포본)에서도 지워야 해서
@@ -581,12 +587,14 @@ def save_intake(card, phone: str, channel: str = "전화", status: str = "접수
         cur = conn.execute(
             """INSERT INTO intakes
                (created_at,channel,phone,target,raw_utterance,intent,hospital,hospital_status,
-                dept,date_value,date_label,time_value,need_level,status,card_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                dept,date_value,date_label,time_value,need_level,status,card_json,request_type)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (_now(), channel, normalize_phone(phone), card.target, card.raw_utterance, card.intent,
              card.hospital, card.hospital_status, card.dept, card.date_value, card.date_label,
              getattr(card, "time_value", None),
-             card.need_level, status, _card_json(card)))
+             card.need_level, status, _card_json(card),
+             # 긴급 접수는 카드가 없어 스텁이 들어온다 — 없으면 NULL 이다.
+             getattr(card, "request_type", None)))
         conn.commit()
         iid = cur.lastrowid
         return iid
