@@ -292,9 +292,16 @@ class ResolveIn(BaseModel):
 
 
 class PostRecordIn(BaseModel):
+    """사후기록 생성 입력.
+
+    **phone·target·dept 는 접수에서 가져온다.** 화면이 넘길 값이 아니다 —
+    직원 화면은 연락처를 마스킹해서 보여주므로(phone_masked) 원본을 들고
+    있지 않고, 들게 만들 이유도 없다. 그것 때문에 화면에서 사후기록을
+    만들 수가 없었다. 넘겨 오면 그 값을 쓰고, 없으면 접수에서 채운다.
+    """
     intake_id: int
-    phone: str
     memo: str = Field(..., description="동행 매니저 음성 메모(텍스트)")
+    phone: str | None = None
     dept: str | None = None
     target: str | None = None
 
@@ -792,8 +799,16 @@ def create_post_record(body: PostRecordIn, user: dict = Depends(current_user)) -
     """
     if not (db.can(user["role"], "post.write") or db.can(user["role"], "post.approve")):
         raise HTTPException(403, f"'{user['role']}' 역할에는 기록 작성 권한이 없습니다")
-    draft = summarize.summarize(body.memo, target=body.target, dept=body.dept)
-    rid = db.save_post_record(body.intake_id, body.phone, body.memo, draft.as_dict())
+    row = db.get_intake(body.intake_id)
+    if not row:
+        raise HTTPException(404, "접수를 찾을 수 없습니다")
+    phone = body.phone or row.get("phone")
+    if not phone:
+        raise HTTPException(400, "연락처를 찾을 수 없습니다")
+    draft = summarize.summarize(body.memo,
+                                target=body.target or row.get("target"),
+                                dept=body.dept or row.get("dept"))
+    rid = db.save_post_record(body.intake_id, phone, body.memo, draft.as_dict())
     return {
         "record_id": rid,
         "draft": draft.as_dict(),
