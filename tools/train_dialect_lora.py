@@ -177,8 +177,13 @@ def main() -> int:
 
         배치 하나분(2~3초)으로 끝나므로 매번 켜 둘 값어치가 있다.
         """
+        # mel 은 float32 로 나오는데 모델은 bf16 이다. 학습 중에는 Trainer 가
+        # 맞춰 주지만 여기서는 직접 부르므로 우리가 맞춰야 한다 — 라벨은
+        # 정수라 건드리지 않는다.
         batch = collator(sample)
-        batch = {k: v.to(model.device) for k, v in batch.items()}
+        batch = {k: (v.to(model.device, model.dtype) if v.is_floating_point()
+                     else v.to(model.device))
+                 for k, v in batch.items()}
         model.train()
         model(**batch).loss.backward()
         enc = [p for n, p in model.named_parameters()
