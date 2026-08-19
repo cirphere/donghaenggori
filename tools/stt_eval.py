@@ -44,6 +44,40 @@ AUDIO_EXT = (".wav", ".flac", ".mp3", ".m4a", ".pcm")
 
 # ------------------------------------------------------------- 데이터 찾기 --
 
+def _stitched_transcript(data: object) -> str | None:
+    """전사문이 조각으로 쪼개져 있는 스키마를 이어 붙인다.
+
+    AI Hub 중·노년층 방언 데이터(139-2)가 이렇다. 전사문을 담은 **문자열
+    필드가 아예 없고**, transcription.sentences[] / segments[] 안에
+    어절·문장 단위로 흩어져 있다.
+
+        transcription.segments[] = [{"dialect": "하믄", "standard": "하면"}, ...]
+
+    **폴백(가장 긴 문자열)에 맡기면 안 된다.** 이 파일에서 제일 긴 문자열은
+    script.value — 조사자가 읽어 준 **질문**이다. 그대로 두면 어르신이 한 말
+    대신 질문지를 정답으로 삼아 채점한다(실측으로 확인했다).
+
+    sentences 를 먼저 쓴다(문장 단위라 이어 붙일 때 자연스럽다). 없으면
+    segments 로 내려간다. **dialect 를 쓴다** — 표준형이 아니라 실제로 말한
+    쪽을 재는 것이 이 스크립트의 목적이다(위 KEYS 주석과 같은 이유).
+    """
+    if not isinstance(data, dict):
+        return None
+    tr = data.get("transcription")
+    if not isinstance(tr, dict):
+        return None
+    for key in ("sentences", "segments"):
+        rows = tr.get(key)
+        if not isinstance(rows, list):
+            continue
+        parts = [r["dialect"].strip() for r in rows
+                 if isinstance(r, dict) and isinstance(r.get("dialect"), str)
+                 and r["dialect"].strip()]
+        if parts:
+            return " ".join(parts)
+    return None
+
+
 def _load_transcript(path: str) -> str | None:
     """라벨 파일에서 전사문을 꺼낸다.
 
@@ -64,6 +98,11 @@ def _load_transcript(path: str) -> str | None:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return None
+
+    # 조각으로 들어 있는 스키마를 먼저 본다 — 폴백에 맡기면 틀린 것을 집는다.
+    stitched = _stitched_transcript(data)
+    if stitched:
+        return stitched
 
     KEYS = ("transcription", "standard_form", "text", "sentence",
             "orgtext", "dialect_form", "form", "script")
