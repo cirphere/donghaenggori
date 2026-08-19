@@ -24,6 +24,7 @@ LLM 이 도구를 불러줄 때만 안전장치가 도는 구조가 된다. 어�
 from __future__ import annotations
 
 import base64
+import datetime
 import hashlib
 import hmac
 import logging
@@ -704,9 +705,52 @@ def _transcribe_url(url: str) -> str:
         text = stt.transcribe(tmp.name).text
         _log.info("내려받기 %.1f초 · 전사 %.1f초 (%d바이트)",
                   dl, time.monotonic() - t1, len(audio))
+        _keep_sample(audio, text)
         return text
     finally:
         os.unlink(tmp.name)
+
+
+# ─────────────────────────────────────────── 학습 표본 보관 --
+
+# 통화 녹음을 남길지. **기본은 끔.**
+#
+# 남기지 않는 것이 원래 설계다 — 접수로 이어지지 못한 통화의 신상 발화가
+# 디스크에 쌓이지 않게 하려는 것이었다. 그 판단은 지금도 옳다.
+#
+# 그런데 그 때문에 **STT 를 개선할 방법이 없다.** 무엇을 틀리는지 재려면
+# (음성, 정답 텍스트) 쌍이 필요한데, 전사 직후 지우면 하루를 써도 한 건도
+# 안 남는다. 모델을 바꿔도 좋아졌는지 잴 수가 없다.
+#
+# 그래서 **켤 수 있게** 두되 기본은 끈 채로 둔다. 켜는 것은 운영 판단이고,
+# 켤 때는 안내 멘트에 녹음 보관을 알리는 것이 전제다.
+KEEP_SAMPLES = (os.environ.get("VOICE_KEEP_SAMPLES") or "").strip().lower() in (
+    "1", "true", "yes")
+SAMPLE_DIR = os.environ.get("VOICE_SAMPLE_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "voice_samples")
+
+
+def _keep_sample(audio: bytes, text: str) -> None:
+    """음성과 전사를 짝지어 남긴다 — 나중에 사람이 전사를 고치면 그것이 정답이다.
+
+    **STT 출력을 정답으로 쓰지 않는다.** 여기 남는 .txt 는 초안이고, 사람이
+    들으면서 고쳐야 학습에 쓸 수 있는 라벨이 된다. 그 구분을 파일 이름이 아니라
+    같은 폴더의 README 로 남긴다.
+
+    실패해도 통화를 막지 않는다. 보관은 부가 기능이고 접수가 본체다.
+    """
+    if not KEEP_SAMPLES:
+        return
+    try:
+        os.makedirs(SAMPLE_DIR, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        with open(os.path.join(SAMPLE_DIR, f"{stamp}.wav"), "wb") as f:
+            f.write(audio)
+        with open(os.path.join(SAMPLE_DIR, f"{stamp}.txt"), "w", encoding="utf-8") as f:
+            f.write(text)
+        _log.info("학습 표본 보관 — %s (%d바이트)", stamp, len(audio))
+    except Exception as e:                   # 디스크가 차도 통화는 계속된다
+        _log.warning("표본 보관 실패 — %s: %s", type(e).__name__, e)
 
 
 def _receipt(res) -> str:
