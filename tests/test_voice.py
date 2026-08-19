@@ -230,7 +230,21 @@ def main() -> int:
     hw = _stt.hotwords()
     check("hotwords 에 이동 어휘가 있다", "배편" in hw and "선착장" in hw, hw[-40:])
     check("hotwords 가 비어 있지 않다", len(hw.split()) >= 10, f"{len(hw.split())}개")
-    check("hotwords 는 캐시된다", _stt.hotwords() is hw)
+
+    # **고유명사를 넣지 않는다.** 관내 시설명·지역명을 넣었더니 어르신이 하지
+    # 않은 말이 접수 원문으로 들어왔다 — "광주광역시 남구종합사회복지관
+    # 상암동구장 전주광역시 장로경합사회복지관". 힌트로 준 목록을 디코더가
+    # 신호 약한 구간에서 그대로 받아적은 것이다. 길고 특이한 낱말일수록
+    # 한 번 새면 문장 전체를 채운다.
+    긴것 = [w for w in hw.split() if len(w) >= 7]
+    check("hotwords 에 긴 고유명사가 없다", not 긴것, str(긴것))
+    check("hotwords 에 지역명이 없다",
+          not any(x in hw for x in ("광역시", "광주", "전남", "전주")), hw[:60])
+    # 시연 중에 또 헛말이 보이면 재배포 없이 끌 수 있어야 한다.
+    import os as _os
+    _os.environ["STT_HOTWORDS"] = "off"
+    check("STT_HOTWORDS=off 로 끌 수 있다", _stt.hotwords() == "", repr(_stt.hotwords()))
+    _os.environ.pop("STT_HOTWORDS")
 
     # 앞 단계에서 받은 성함은 접수 원문에 섞이지 않는다.
     voice._remember_identity("CID2", "이영희요 목포시 용당동 삽니다")

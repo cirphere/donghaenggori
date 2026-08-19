@@ -43,57 +43,43 @@ DOMAIN_PROMPT = (
     "신경과, 피부과, 보건의료원, 약국, 생활지원사, 사회복지사, 동행 매니저."
 )
 
-# hotwords — **고유명사와 헷갈리기 쉬운 도메인 어휘**를 디코더에 알려준다.
+# hotwords — "이 단어들이 나올 수 있다" 는 어휘 힌트. initial_prompt 와 다른 인자다.
 #
-# initial_prompt 와 다른 인자다. 프롬프트가 "이런 통화다" 라는 문맥이라면
-# hotwords 는 "이 단어들이 나올 수 있다" 는 어휘 힌트다. 8kHz 에서 제일 많이
-# 틀리는 것이 고유명사인데 지금까지 진료과만 알려주고 병원명·지역명은 하나도
-# 안 알려주고 있었다.
+# **관내 시설명·지역명을 넣었다가 뺐다.** 실통화에서 이런 것이 접수 내용으로
+# 들어왔다:
 #
-# 실제로 겪은 오인식: "배" 를 "비" 로 들었다. 4kHz 위가 잘리면 ㅐ 와 ㅣ 의
-# 포먼트 구분이 무너져 생기는 전형적인 모음 혼동이고, 도메인 어휘를 알려주면
-# 디코더가 그 쪽으로 기운다.
+#     "광주광역시 남구종합사회복지관 상암동구장 전주광역시 장로경합사회복지관"
 #
-# **개인 이력은 넣지 않는다.** 특정 어르신이 다닌 병원을 넣으면 그분이 말하지
-# 않은 이름이 전사에 뜬다 — 프롬프트에 있는 단어는 없는데도 받아적히는 쪽으로
-# 기운다. 지역 단위 어휘만 쓴다.
+# 어르신이 한 말이 아니다. hotwords 로 넣은 목록("빛고을종합사회복지관
+# 광주광역시 동구 무진종합사회복지관 …")을 디코더가 그대로 받아적은 것이다.
+# 신호가 약한 구간에서 Whisper 는 힌트로 준 어휘를 없는데도 뱉는 쪽으로 기운다
+# — 바로 위 DOMAIN_PROMPT 주석에 적어 둔 위험이 그대로 일어났다. 고유명사는
+# 길고 특이해서 한 번 새면 문장 전체가 그것으로 채워진다.
+#
+# 그것이 **접수 원문(raw_utterance)** 에 남는다. 복지사가 읽는 화면이고
+# 파이프라인이 병원·날짜를 뽑는 입력이다. 잘못된 접수가 만들어지는 자리다.
+#
+# 이득은 잰 적이 없고 손해는 눈으로 봤다. 그래서 뺀다. 다시 넣으려면
+# tools/stt_eval.py 로 넣기 전후 CER 을 재고 나서 한다.
+#
+# 남긴 것은 짧은 일반 명사뿐이다. 고유명사가 아니라서 통째로 새어 나올
+# 모양이 아니고, 8kHz 에서 실제로 자주 뭉개지는 어휘다.
 _MOBILITY_TERMS = (
     "배편 여객선 선착장 보건지소 보건진료소 요양병원 한방병원 치과의원 "
     "의원 보건소 복지관 경로당 주간보호센터 방문요양 휠체어 보행기 지팡이"
 )
 
-# 너무 길면 잘린다(구현이 max_length//2 에서 자른다). 시설명은 길어서 수를
-# 제한한다 — 관내 몇 곳이 훨씬 자주 불린다.
-_MAX_FACILITY_HOTWORDS = 40
-_hotwords_cache: str | None = None
-
 
 def hotwords() -> str:
-    """관내 고유명사 + 이동 어휘. 한 번 만들어 캐시한다.
+    """디코더에 줄 어휘 힌트.
 
-    DB 를 못 읽어도 전사는 계속돼야 하므로 실패하면 이동 어휘만 돌려준다.
+    STT_HOTWORDS=off 로 통째로 끌 수 있다. 시연 중에 또 헛말이 보이면
+    재배포 없이 환경변수만 바꾸고 재시작하면 된다 — 이 자리에서 무엇을
+    더 진단할 시간은 없다.
     """
-    global _hotwords_cache
-    if _hotwords_cache is not None:
-        return _hotwords_cache
-    words: list[str] = []
-    try:
-        from ..core import db
-        rows = db.search_facilities(limit=200)
-        for r in rows[:_MAX_FACILITY_HOTWORDS]:
-            for key in ("name", "region"):
-                v = (r.get(key) or "").strip()
-                if v:
-                    words.append(v)
-    except Exception:                       # DB 없이 돌리는 경로(테스트 등)
-        pass
-    seen, uniq = set(), []
-    for w in words:
-        if w not in seen:
-            seen.add(w)
-            uniq.append(w)
-    _hotwords_cache = " ".join([*uniq, _MOBILITY_TERMS])
-    return _hotwords_cache
+    if (os.environ.get("STT_HOTWORDS") or "").strip().lower() == "off":
+        return ""
+    return _MOBILITY_TERMS
 
 
 # VAD 파라미터 — 기본값은 어르신 발화에 안 맞는다.
