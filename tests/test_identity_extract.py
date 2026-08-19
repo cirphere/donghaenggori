@@ -156,7 +156,31 @@ for date, time, want_d, want_t in [
     check(f"폼 일정 왕복 — {date} {time}", (got_d, got_t) == (want_d, want_t),
           f"'{text}' → {got_d} {got_t} (기대 {want_d} {want_t})")
 
+# ── 주소 → 좌표 (보호자 포털의 주소 검색 대응) ──────────────────────
+#
+# 프로필에는 '전남 화순군 ○○면' 처럼 줄임 표기가 들어 있는데, 주소 검색은
+# 법정 표기('전라남도 화순군 …')를 준다. startswith 로만 맞추던 시절엔 전남
+# 지역이 통째로 좌표를 못 찾아 신규 대상자의 '거리 기준 참고 후보'가 조용히
+# 사라졌다. 반대 방향 실수도 있었다 — 부분 문자열로 맞췄더니 '강남구' 안의
+# '남구' 가 걸려 서울 주소가 광주 좌표를 받았다.
+from donghaenggori.core import geo  # noqa: E402
+
+_HWASUN = (35.0645, 126.9866)
+for text, want in [
+    ("전남 화순군 ○○면", _HWASUN),              # 기존 프로필 표기
+    ("전라남도 화순군 자연드림로 12", _HWASUN),    # 주소 검색 표기
+    ("화순군 ○○면", _HWASUN),                   # 시도 생략
+    ("광주 북구 용봉동", (35.1740, 126.9120)),   # 시도 줄임
+    ("서울특별시 강남구 테헤란로 1", None),        # 관외 — '남구' 오탐 금지
+    ("경기도 성남시 분당구 판교로 1", None),
+]:
+    got = geo.coords_of(text)
+    check(f"좌표 조회 — {text[:20] or '(빈값)'}", got == want, f"{got} (기대 {want})")
+
+check("시도만 있으면 폴백이고 precise 아님",
+      geo.coords_of("전라남도") is not None and not geo.is_precise("전라남도"))
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)
