@@ -132,6 +132,28 @@ _PM_WORDS = ("오후", "저녁", "밤", "낮")
 _AM_WORDS = ("오전", "아침", "새벽")
 
 
+# 시(時)를 세는 한국어 고유수사. 어르신 발화에서 "세시" 가 "3시" 만큼 흔한데
+# 숫자 정규식만 보던 시절엔 통째로 놓쳐 '확인 필요' 로 떨어졌다 — 안전하긴 해도
+# 물어보지 않아도 될 것을 물어보게 만든다.
+#
+# **'한시'는 넣지 않는다.** '한시간', '한시라도' 처럼 시각이 아닌 쓰임이 흔해
+# 오탐이 크다. 못 읽으면 확인 질문이 나갈 뿐이지만, 잘못 읽으면 어르신이
+# 엉뚱한 시각에 병원 앞에 선다.
+_HOUR_WORDS = {
+    "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6,
+    "일곱": 7, "여덟": 8, "아홉": 9, "열": 10,
+    "열한": 11, "열두": 12,
+}
+# 긴 것부터 바꿔야 '열'이 '열한'을 먼저 먹지 않는다.
+_HOUR_WORD_RE = re.compile(
+    "(" + "|".join(sorted(_HOUR_WORDS, key=len, reverse=True)) + r")시")
+
+
+def _digitize_hours(t: str) -> str:
+    """'세시반' → '3시반'. 시각 표기만 바꾸고 나머지 문장은 건드리지 않는다."""
+    return _HOUR_WORD_RE.sub(lambda m: f"{_HOUR_WORDS[m.group(1)]}시", t)
+
+
 def parse_time(text: str) -> dict | None:
     """발화에서 방문 시각을 찾는다. 날짜와 같은 규칙으로 마지막 표현을 채택한다.
 
@@ -142,7 +164,7 @@ def parse_time(text: str) -> dict | None:
     단정하면 그건 우리가 지어낸 정보다. time=None + confident=False 로 두고
     접수카드가 "오전인가요 오후인가요"를 묻게 한다.
     """
-    t = text.replace(" ", "")
+    t = _digitize_hours(text.replace(" ", ""))
     cands: list[tuple[int, str | None, str]] = []
     ends: list[int] = []
 

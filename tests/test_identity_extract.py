@@ -180,7 +180,25 @@ for text, want in [
 check("시도만 있으면 폴백이고 precise 아님",
       geo.coords_of("전라남도") is not None and not geo.is_precise("전라남도"))
 
+# ── 한글 수사 시각 ────────────────────────────────────────────────
+#
+# 어르신은 "세시" 라고 말한다. 숫자 정규식만 보던 시절엔 통째로 놓쳐 시각이
+# '확인 필요' 로 떨어졌다 — 안전하지만 물어보지 않아도 될 것을 물어보게 된다.
+# '한시'는 일부러 뺐다("한시간", "한시라도" 오탐이 크다).
+for text, want_time, want_label in [
+    ("오후 세시", "15:00", "오후 3시"),
+    ("오전 열한시", "11:00", "오전 11시"),
+    ("열두시 반", "12:30", "12시 반"),
+    ("세시쯤 가야 쓰겄는디", None, "3시"),      # 읽되 오전·오후는 되묻는다
+    ("한시간 걸려요", None, None),              # 시각이 아니다
+    ("한시라도 빨리", None, None),
+]:
+    got = parse_time(text) or {}
+    ok = got.get("time") == want_time and got.get("label") == want_label
+    check(f"한글 수사 — {text[:14]}", ok,
+          f"{got.get('time')} / {got.get('label')} (기대 {want_time} / {want_label})")
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)
