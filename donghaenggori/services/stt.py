@@ -43,6 +43,59 @@ DOMAIN_PROMPT = (
     "신경과, 피부과, 보건의료원, 약국, 생활지원사, 사회복지사, 동행 매니저."
 )
 
+# hotwords — **고유명사와 헷갈리기 쉬운 도메인 어휘**를 디코더에 알려준다.
+#
+# initial_prompt 와 다른 인자다. 프롬프트가 "이런 통화다" 라는 문맥이라면
+# hotwords 는 "이 단어들이 나올 수 있다" 는 어휘 힌트다. 8kHz 에서 제일 많이
+# 틀리는 것이 고유명사인데 지금까지 진료과만 알려주고 병원명·지역명은 하나도
+# 안 알려주고 있었다.
+#
+# 실제로 겪은 오인식: "배" 를 "비" 로 들었다. 4kHz 위가 잘리면 ㅐ 와 ㅣ 의
+# 포먼트 구분이 무너져 생기는 전형적인 모음 혼동이고, 도메인 어휘를 알려주면
+# 디코더가 그 쪽으로 기운다.
+#
+# **개인 이력은 넣지 않는다.** 특정 어르신이 다닌 병원을 넣으면 그분이 말하지
+# 않은 이름이 전사에 뜬다 — 프롬프트에 있는 단어는 없는데도 받아적히는 쪽으로
+# 기운다. 지역 단위 어휘만 쓴다.
+_MOBILITY_TERMS = (
+    "배편 여객선 선착장 보건지소 보건진료소 요양병원 한방병원 치과의원 "
+    "의원 보건소 복지관 경로당 주간보호센터 방문요양 휠체어 보행기 지팡이"
+)
+
+# 너무 길면 잘린다(구현이 max_length//2 에서 자른다). 시설명은 길어서 수를
+# 제한한다 — 관내 몇 곳이 훨씬 자주 불린다.
+_MAX_FACILITY_HOTWORDS = 40
+_hotwords_cache: str | None = None
+
+
+def hotwords() -> str:
+    """관내 고유명사 + 이동 어휘. 한 번 만들어 캐시한다.
+
+    DB 를 못 읽어도 전사는 계속돼야 하므로 실패하면 이동 어휘만 돌려준다.
+    """
+    global _hotwords_cache
+    if _hotwords_cache is not None:
+        return _hotwords_cache
+    words: list[str] = []
+    try:
+        from ..core import db
+        rows = db.search_facilities(limit=200)
+        for r in rows[:_MAX_FACILITY_HOTWORDS]:
+            for key in ("name", "region"):
+                v = (r.get(key) or "").strip()
+                if v:
+                    words.append(v)
+    except Exception:                       # DB 없이 돌리는 경로(테스트 등)
+        pass
+    seen, uniq = set(), []
+    for w in words:
+        if w not in seen:
+            seen.add(w)
+            uniq.append(w)
+    _hotwords_cache = " ".join([*uniq, _MOBILITY_TERMS])
+    return _hotwords_cache
+
+
 # VAD 파라미터 — 기본값은 어르신 발화에 안 맞는다.
 #
 # faster-whisper 기본 min_silence_duration_ms 는 2000ms 다. 어르신은 문장 중간에
@@ -162,6 +215,7 @@ def transcribe(audio_path: str, language: str = "ko",
     segments, info = model.transcribe(
         audio_path, language=language,
         initial_prompt=DOMAIN_PROMPT,
+        hotwords=hotwords(),
         vad_filter=True,                    # 무음 구간 제거 — 통화 녹음에 유효
         vad_parameters=VAD_PARAMETERS,
         beam_size=5,
@@ -173,6 +227,9 @@ def transcribe(audio_path: str, language: str = "ko",
         # 무음을 말로 잡는 것을 줄인다. 어르신이 한참 뜸을 들이는 구간에서
         # 헛말이 나오면 그 문장이 그대로 접수카드 근거로 올라간다.
         no_speech_threshold=0.6,
+        # 무음에 대고 문장을 지어내면 그 구간을 버린다. 기본값은 꺼짐(None)인데,
+        # 어르신이 한참 뜸을 들이는 통화라 켜 둘 값어치가 있다. 초 단위다.
+        hallucination_silence_threshold=2.0,
     )
 
     segs, texts, logprobs = [], [], []
