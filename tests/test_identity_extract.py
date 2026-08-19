@@ -198,7 +198,26 @@ for text, want_time, want_label in [
     check(f"한글 수사 — {text[:14]}", ok,
           f"{got.get('time')} / {got.get('label')} (기대 {want_time} / {want_label})")
 
+# ── '다음주 X요일' 은 기준 요일에 흔들리면 안 된다 ──────────────────
+#
+# (wd - today.weekday()) % 7 은 이미 다가오는 요일로 굴러간다. 거기에 +7 을
+# 더하면 그 요일이 이번 주에 지났을 때 **두 주 뒤**가 된다. 기준일이 화요일일
+# 때만 우연히 맞아서 오래 안 드러났다 — 어르신이 일주일 늦게 병원에 간다.
+_TUE = "2026-08-25"
+for off in range(7):                       # 월~일 어느 날 접수해도 같은 화요일
+    base = datetime.date(2026, 8, 17) + datetime.timedelta(days=off)
+    got = (parse_date("다음주 화요일에 병원 가야", today=base) or {}).get("date")
+    check(f"다음주 화요일 — {'월화수목금토일'[base.weekday()]}요일 접수",
+          got == _TUE, f"{got} (기대 {_TUE})")
+
+_BASE = datetime.date(2026, 8, 19)         # 수요일
+for text, want in [("이번주 금요일에 병원", "2026-08-21"),
+                   ("금요일에 병원", "2026-08-21"),
+                   ("담주 월요일에 병원", "2026-08-24")]:
+    got = (parse_date(text, today=_BASE) or {}).get("date")
+    check(f"주 표현 — {text[:10]}", got == want, f"{got} (기대 {want})")
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)

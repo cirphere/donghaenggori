@@ -91,12 +91,19 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
     # 2) (이번주/다음주/담주) + 요일
     for m in re.finditer(r"(이번주|다음주|담주)?([월화수목금토일])요일", t):
         base_week, wd = m.group(1), _WEEKDAYS[m.group(2)]
-        days_ahead = (wd - today.weekday()) % 7
         if base_week in ("다음주", "담주"):
-            days_ahead += 7
-        elif days_ahead == 0:  # 요일만 말했고 오늘이면 다음 주기로
-            days_ahead = 7
-        d = today + datetime.timedelta(days=days_ahead)
+            # **다음 주(월요일 시작)의 그 요일**이다. 다가오는 요일에 7 을 더하면
+            # 안 된다 — 그 요일이 이번 주에 이미 지났으면 두 주 뒤가 된다.
+            #   수요일에 "다음주 화요일" → (화-수)%7=6, +7=13일 뒤 → 두 주 뒤
+            # 기준일이 화요일일 때만 우연히 맞아서 오래 안 드러났다. 어르신이
+            # 일주일 늦게 병원 앞에 서는 종류의 오류다.
+            next_monday = today + datetime.timedelta(days=7 - today.weekday())
+            d = next_monday + datetime.timedelta(days=wd)
+        else:
+            days_ahead = (wd - today.weekday()) % 7
+            if days_ahead == 0:  # 요일만 말했고 오늘이면 다음 주기로
+                days_ahead = 7
+            d = today + datetime.timedelta(days=days_ahead)
         label = (f"{base_week} " if base_week else "") + f"{m.group(2)}요일"
         cands.append((m.start(), d.isoformat(), label))
         ends.append(m.end())
