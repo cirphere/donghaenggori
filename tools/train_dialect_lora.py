@@ -52,19 +52,40 @@ def load_manifest(path: str) -> list[dict]:
 
 @dataclass
 class Collator:
-    """input_features 는 항상 3000 프레임이라 붙이기만 하면 되고, 라벨만 패딩한다.
+    """오디오를 **배치마다 그 자리에서** mel 로 바꾼다.
 
-    패딩 자리를 -100 으로 둔다. 안 그러면 모델이 패딩 토큰을 예측하도록 배운다.
+    미리 만들어 두지 않는 이유가 있다. mel 은 샘플당 128×3000 float32 = 1.5MB
+    라, 5,498 조각이면 8.4GB 다. datasets.map 으로 만들면 워커별 결과를 합치는
+    마지막 단계에서 그 전부가 메모리에 올라와 OOM 으로 죽는다 — 클러스터에서
+    실제로 겪었다(32GB 한도, 전처리 100% 직후 oom-kill).
+
+    여기서 계산하면 배치 하나분(8×1.5MB)만 들고 있으면 된다. 디스크에 캐시를
+    쓰지 않아 8.4GB 도 아낀다. 대신 에폭마다 다시 계산하는데, DataLoader
+    워커가 GPU 계산과 겹쳐 돌려 주므로 실질 손해가 거의 없다.
+
+    라벨의 패딩 자리는 -100 이다. 안 그러면 모델이 패딩 토큰을 예측하도록 배운다.
     """
     processor: Any
     decoder_start_token_id: int
 
     def __call__(self, features: list[dict]) -> dict:
-        batch = self.processor.feature_extractor.pad(
-            [{"input_features": f["input_features"]} for f in features],
-            return_tensors="pt")
-        labels_batch = self.processor.tokenizer.pad(
-            [{"input_ids": f["labels"]} for f in features], return_tensors="pt")
+        import soundfile as sf
+
+        wavs = []
+        for f in features:
+            wav, sr = sf.read(f["path"], dtype="float32", always_2d=False)
+            if wav.ndim > 1:                   # 혹시 스테레오가 섞이면 모노로
+                wav = wav.mean(axis=1)
+            if sr != 16000:
+                # 리샘플링은 하지 않는다 — 학습셋을 만들 때 맞췄어야 하는 것이고,
+                # 여기서 조용히 고치면 채널이 어긋난 채로 학습이 돈다.
+                raise ValueError(f"16kHz 가 아니다: {sr}Hz — {f['path']}")
+            wavs.append(wav)
+
+        batch = self.processor.feature_extractor(
+            wavs, sampling_rate=16000, return_tensors="pt")
+        labels_batch = self.processor.tokenizer(
+            [f["text"] for f in features], padding=True, return_tensors="pt")
         labels = labels_batch["input_ids"].masked_fill(
             labels_batch.attention_mask.ne(1), -100)
         # 토크나이저가 앞에 붙인 BOS 는 학습 때 디코더가 스스로 넣는다.
@@ -105,28 +126,13 @@ def main() -> int:
 
     processor = WhisperProcessor.from_pretrained(args.model, language=LANG, task=TASK)
 
-    # **datasets 의 Audio 기능을 쓰지 않는다.** 그건 디코딩에 librosa 를
-    # 요구하는데(datasets 2.x), librosa 는 numba·llvmlite 를 끌고 와서 파이썬
-    # 버전이 조금만 어긋나도 소스 빌드로 넘어가 깨진다 — 클러스터에서 실제로
-    # 겪었다. prep_dialect_finetune 이 이미 **16kHz 모노**로 맞춰 두었으므로
-    # 리샘플링이 필요 없고, soundfile 로 바로 읽으면 그만이다.
+    # **경로와 텍스트만 담는다.** 오디오 디코딩과 mel 변환은 Collator 가
+    # 배치마다 한다(위 주석 참조 — 미리 만들면 8.4GB 가 메모리에 올라와 죽는다).
+    #
+    # datasets 의 Audio 기능도 쓰지 않는다. 그건 디코딩에 librosa 를 요구하는데,
+    # librosa 는 numba·llvmlite 를 끌고 와서 파이썬 버전이 조금만 어긋나도
+    # 소스 빌드로 넘어가 깨진다 — 계산 노드가 3.8 인 이 클러스터에서 그랬다.
     ds = Dataset.from_list([{"path": r["audio"], "text": r["text"]} for r in rows])
-
-    def prepare(batch: dict) -> dict:
-        import soundfile as sf
-        wav, sr = sf.read(batch["path"], dtype="float32", always_2d=False)
-        if wav.ndim > 1:                       # 혹시 스테레오가 섞이면 모노로
-            wav = wav.mean(axis=1)
-        if sr != 16000:
-            # 리샘플링은 하지 않는다 — 학습셋을 만들 때 맞췄어야 하는 것이고,
-            # 여기서 조용히 고치면 채널이 어긋난 채로 학습이 돈다.
-            raise ValueError(f"16kHz 가 아니다: {sr}Hz — {batch['path']}")
-        batch["input_features"] = processor.feature_extractor(
-            wav, sampling_rate=sr).input_features[0]
-        batch["labels"] = processor.tokenizer(batch["text"]).input_ids
-        return batch
-
-    ds = ds.map(prepare, remove_columns=ds.column_names, num_proc=4)
     split = ds.train_test_split(test_size=args.eval_ratio, seed=7)
 
     model = WhisperForConditionalGeneration.from_pretrained(
@@ -163,8 +169,12 @@ def main() -> int:
             # 이것이 없으면 끊긴 학습을 처음부터 다시 해야 한다.
             save_total_limit=3,
             report_to=[],
+            # Collator 가 원본 컬럼(path·text)을 읽으므로 지우면 안 된다.
             remove_unused_columns=False,
             label_names=["labels"],
+            # mel 변환을 GPU 계산과 겹쳐 돌린다. 2 로 둔 것은 CPU 한도가
+            # 4개뿐이라서다 — 더 올리면 메인 프로세스가 굶는다.
+            dataloader_num_workers=2,
         ),
         train_dataset=split["train"],
         eval_dataset=split["test"],
