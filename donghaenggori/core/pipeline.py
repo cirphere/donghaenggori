@@ -143,7 +143,7 @@ def run(phone: str, utterance: str, channel: str = "전화",
     c = _build_card(phone, utterance, a, prof, hres, nres, channel,
                     denied_owner=owner if identity_denied else None,
                     identity_utterance=identity_utterance)  # ⑧
-    c.outing_checklist = _outing_checklist(prof, a)
+    c.outing_checklist = _outing_checklist(prof, a, c.spoken_region)
     if hres.status == "확인 필요" and not (prof or {}).get("history"):
         c.reference_candidates = _reference_candidates(prof, a)
     return Result(urgent=False, card=c, analysis=a, profile=prof, channel=channel,
@@ -187,7 +187,7 @@ def _reference_candidates(prof: dict | None, a) -> list[dict]:
     return out
 
 
-def _outing_checklist(prof: dict | None, a) -> list[str]:
+def _outing_checklist(prof: dict | None, a, spoken_region: str | None = None) -> list[str]:
     """외출 전 체크리스트 — 기상·대기 참고 정보.
 
     외부 API가 느리거나 미연동이면 조용히 건너뛴다. 접수 흐름을 막지 않는다.
@@ -196,11 +196,27 @@ def _outing_checklist(prof: dict | None, a) -> list[str]:
     좌표는 병원 후보와 같은 geo.coords_of 를 쓴다. 예전에는 여기만 시도 대표
     좌표를 따로 들고 있었는데, 전남은 그 한 점이 목포 근처라 곡성 91km ·
     고흥 78km 떨어진 날씨를 보여줬다. 산간과 해안의 예보가 뒤바뀌는 거리다.
+
+    **어디 기준인가.** 등록된 거주지를 먼저 쓰고, 없으면 통화에서 들은
+    읍면동을 쓴다. 모든 어르신이 주소가 등록돼 있지는 않다 — 미등록 번호는
+    프로필 자체가 없고, 등록돼 있어도 region 이 빈 경우가 있다. 그때 예전에는
+    체크리스트가 통째로 사라졌다. 정작 그런 통화에서는 성함·읍면동을 따로
+    물어 받아 두고도 쓰지 않고 있었다.
+
+    **가는 병원이 아니라 출발지 기준이다.** 카드를 만드는 시점에 병원은
+    아직 '추정'이거나 비어 있다. 확정되지 않은 병원 좌표로 날씨를 뽑으면
+    틀린 곳의 날씨를 확신 있게 보여주게 된다. 우산·방한 준비는 집에서
+    나설 때 정하는 것이기도 하다.
+
+    어느 지역을 봤는지 마지막 줄에 **항상** 남긴다. 예전에는 시도 대표
+    좌표일 때만 붙여서, 정밀할수록 기준이 화면에서 사라졌다 — 읽는 사람은
+    그게 집 기준인지 병원 기준인지 알 수 없었다.
     """
-    if not prof:
-        return []
     from . import geo
-    region = prof.get("region") or ""
+    region = (prof or {}).get("region") or (spoken_region or "")
+    region = region.strip()
+    if not region:
+        return []
     latlon = geo.coords_of(region)
     if latlon is None:
         return []
@@ -210,8 +226,6 @@ def _outing_checklist(prof: dict | None, a) -> list[str]:
     try:
         from ..services import weather
         out += weather.checklist(latlon[0], latlon[1], target_date)
-        if out and not geo.is_precise(region):
-            out.append("※ 날씨는 시도 대표 좌표 기준입니다 — 실제 방문지와 다를 수 있습니다.")
     except Exception:
         pass
     try:
@@ -219,6 +233,13 @@ def _outing_checklist(prof: dict | None, a) -> list[str]:
         out += airquality.checklist(region)
     except Exception:
         pass
+
+    if not out:
+        return []
+
+    기준 = "등록된 거주지" if (prof or {}).get("region") else "통화에서 들은 주소"
+    꼬리 = "" if geo.is_precise(region) else " · 시도 대표 좌표라 실제 방문지와 다를 수 있습니다"
+    out.append(f"※ {기준}({region}) 기준입니다{꼬리}.")
     return out
 
 

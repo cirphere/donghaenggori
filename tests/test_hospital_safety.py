@@ -180,9 +180,56 @@ def case08() -> None:
         check(f"08 {말[:14]} 는 추정", a.dept_source == "dict", str(a.dept_source))
 
 
+def case09() -> None:
+    """외출 참고는 **출발지** 기준이고, 주소가 없어도 들은 주소로 낸다.
+
+    모든 어르신이 주소가 등록돼 있지는 않다. 미등록 번호는 프로필이 없고,
+    등록돼 있어도 region 이 빈 경우가 있다. 예전에는 그때 체크리스트가
+    통째로 사라졌다 — 정작 그런 통화에서는 성함·읍면동을 따로 물어 받아
+    두고도 쓰지 않고 있었다.
+
+    가는 병원 기준이 아니다. 카드를 만드는 시점에 병원은 아직 '추정'이거나
+    비어 있어서, 확정되지 않은 병원 좌표로 날씨를 뽑으면 틀린 곳의 날씨를
+    확신 있게 보여주게 된다.
+    """
+    from donghaenggori.core import geo
+
+    # 전남 시 지역이 통째로 빠져 있었다 — 목포·여수·순천·나주·광양.
+    for 지역 in ("목포시 용당동", "전남 목포시", "여수시", "순천시 조례동",
+                 "나주시", "광양시", "전남 고흥군 ○○면"):
+        check(f"09 좌표 — {지역}", geo.coords_of(지역) is not None, "못 찾음")
+
+    # 다른 시도 주소를 우리 지역으로 끌어오면 안 된다.
+    check("09 서울 주소는 안 잡는다", geo.coords_of("강남구 역삼동") is None,
+          str(geo.coords_of("강남구 역삼동")))
+
+    # 폴백 사슬 — 등록 거주지 → 통화에서 들은 주소 → 없으면 안 낸다.
+    from donghaenggori.core import pipeline
+    from donghaenggori.services import airquality, weather
+    원래w, 원래a = weather.checklist, airquality.checklist
+    weather.checklist = lambda lat, lon, d=None: ["강수확률 70% → 우산·미끄럼 주의"]
+    airquality.checklist = lambda region: []
+    try:
+        등록 = pipeline.run("010-1234-5678", "낼 병원 가야 해",
+                            channel="전화").card.to_dict()["outing_checklist"]
+        check("09 등록 거주지 기준", any("등록된 거주지" in x for x in 등록), str(등록))
+
+        들은 = pipeline.run("010-7777-0000", "무릎이 아파서 낼 병원 좀", channel="전화",
+                            identity_utterance="이영희요 목포시 용당동 삽니다"
+                            ).card.to_dict()["outing_checklist"]
+        check("09 들은 주소로도 낸다", any("들은 주소" in x for x in 들은), str(들은))
+
+        없음 = pipeline.run("010-7777-0001", "무릎이 아파서 낼 병원 좀",
+                            channel="전화").card.to_dict()["outing_checklist"]
+        check("09 위치를 모르면 안 낸다", 없음 == [], str(없음))
+    finally:
+        weather.checklist, airquality.checklist = 원래w, 원래a
+
+
 def main() -> int:
     db.init_db()
-    for fn in (case01, case02, case03, case04, case05, case06, case07, case08):
+    for fn in (case01, case02, case03, case04, case05, case06, case07, case08,
+               case09):
         try:
             fn()
         except Exception as e:
