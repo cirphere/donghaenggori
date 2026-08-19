@@ -38,19 +38,58 @@ SIDO_COORDS: dict[str, tuple[float, float]] = {
 }
 
 
-def coords_of(region: str | None) -> tuple[float, float] | None:
-    """'광주광역시 서구 ○○동' → 서구 좌표. 못 찾으면 시도 폴백, 그래도 없으면 None."""
-    if not region:
-        return None
-    for key, latlon in REGION_COORDS.items():
-        if region.startswith(key):
+# 시도 표기 흔들림. 보호자 포털의 주소 검색은 법정 표기('전라남도')를 주는데
+# 위 표에는 줄임말('전남')로 적혀 있다. startswith 로만 맞추면 전남 지역이
+# 통째로 좌표를 못 찾아, 신규 대상자의 '거리 기준 참고 후보'가 조용히 사라진다.
+_SIDO_ALIASES = {
+    "전라남도": "전남", "전남": "전남",
+    "광주광역시": "광주광역시", "광주": "광주광역시",
+}
+
+
+def _normalize(region: str) -> str:
+    """앞머리의 시도 표기를 표 안의 표기로 맞춘다.
+
+    주소 뒷부분(읍면동·도로명·번지)은 건드리지 않는다 — 뒤에 뭐가 붙든
+    시군구까지만 맞으면 되기 때문이다.
+    """
+    text = " ".join(region.split())          # 연속 공백·줄바꿈 정리
+    head, sep, rest = text.partition(" ")
+    alias = _SIDO_ALIASES.get(head)
+    return f"{alias}{sep}{rest}" if alias else text
+
+
+def _match(region: str, table: dict[str, tuple[float, float]]) -> tuple[float, float] | None:
+    """시군구 키가 주소 **어디에** 있어도 잡는다.
+
+    startswith 를 고집하지 않는 이유는 실제로 들어오는 문자열이 제각각이기
+    때문이다 — '전남 화순군 ○○면'(프로필), '전라남도 화순군 ○○로 12'(주소
+    검색), '화순군 ○○면'(시도 생략). 시군구 이름은 전국에서 거의 유일하므로
+    포함 여부로 봐도 오탐이 실질적으로 없다.
+    """
+    text = _normalize(region)
+    for key, latlon in table.items():
+        if text.startswith(key):
             return latlon
-    for key, latlon in SIDO_COORDS.items():
-        if region.startswith(key):
+    # 시도가 빠졌거나 표기가 달라 앞머리로는 못 맞춘 경우 — 시군구만 본다.
+    #
+    # **부분 문자열이 아니라 어절로 맞춘다.** `in` 으로 보면 '강남구' 안의
+    # '남구' 가 걸려 서울 주소가 광주 남구 좌표를 받는다(실제로 그렇게 짰다가
+    # 잡았다). 신규 대상자에게 엉뚱한 동네 복지관을 참고 후보로 띄우는 셈이다.
+    words = set(text.split(" "))
+    for key, latlon in table.items():
+        if key.split(" ")[-1] in words:
             return latlon
     return None
 
 
+def coords_of(region: str | None) -> tuple[float, float] | None:
+    """'광주광역시 서구 ○○동' → 서구 좌표. 못 찾으면 시도 폴백, 그래도 없으면 None."""
+    if not region:
+        return None
+    return _match(region, REGION_COORDS) or _match(region, SIDO_COORDS)
+
+
 def is_precise(region: str | None) -> bool:
     """시군구 단위로 매칭됐는지(True) 시도 폴백인지(False)."""
-    return bool(region) and any(region.startswith(k) for k in REGION_COORDS)
+    return bool(region) and _match(region, REGION_COORDS) is not None
