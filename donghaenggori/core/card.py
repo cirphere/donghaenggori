@@ -156,6 +156,13 @@ class Card:
     request_summary: str | None = None            # '요청 내용' 칸의 값
     request_evidence: list[str] = field(default_factory=list)   # 판단에 쓴 원문 문구
     request_conditions: dict = field(default_factory=dict)      # 구조화된 조건
+    # 통화 중 후속질문과 그 답변. **사회복지사가 통화 과정을 그대로 검토할 수
+    # 있어야 한다** — 값만 바뀌어 있으면 그 값이 어디서 왔는지 알 수 없고,
+    # 어르신이 실제로 뭐라고 답했는지는 원문에도 없다(후속답변은 별도 녹음이다).
+    # {field,question,answer,result,at} 의 목록이다.
+    followups: list[dict] = field(default_factory=list)
+    # 후속질문을 중단한 이유. 사람 연결 신호를 받았거나 상한에 걸렸을 때 채운다.
+    followup_stopped: str | None = None
     # 검증된 목록에서 조회한 병원 후보(services/hospital_lookup.py).
     # 항상 '추정 후보 — 사회복지사 확인 필요' 다. 조회가 안 되면 빈 목록이고,
     # 그 사유는 병원 칸 근거에 문장으로 남는다.
@@ -249,6 +256,9 @@ class Card:
             "request_evidence": self.request_evidence,
             "request_conditions": self.request_conditions,
             "lookup_candidates": self.lookup_candidates,
+            # 통화 중 후속질문 전문. 화면이 통화 과정을 그대로 펼쳐 보여준다.
+            "followups": self.followups,
+            "followup_stopped": self.followup_stopped,
         }
 
     def to_text(self) -> str:
@@ -282,6 +292,14 @@ class Card:
                      f"   진료과: {self.dept or '—'}")
             if self.reasons:
                 L.append(f"│ 근거     : {' / '.join(self.reasons)}")
+        if self.followups:
+            L.append("│ 통화 중 후속질문:")
+            for f in self.followups:
+                L.append(f"│    Q {f.get('question')}")
+                L.append(f"│    A {f.get('answer') or '(답변 없음)'}"
+                         f"  → {f.get('result') or '확인 필요 유지'}")
+        if self.followup_stopped:
+            L.append(f"│    ※ {self.followup_stopped}")
         if self.confirm_questions:
             L.append("│ 확인 질문(콜백):")
             for q in self.confirm_questions:

@@ -37,6 +37,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from ..core import db, pipeline
+from ..core import followup as fu_mod
 from ..core import requesttype as rt_mod
 from ..core.korean import josa
 
@@ -77,6 +78,16 @@ def _int_env(name: str, default: int) -> int:
 
 
 MAX_RECORD_SECONDS = _int_env("CLAWOPS_MAX_RECORD_SECONDS", 60)
+
+# 통화 중 후속질문 — 확인 필요로 남은 칸을 어르신이 아직 통화 중일 때 되묻는다.
+#
+# **0 이면 꺼진다.** 시연장에서 응답이 늦거나 질문이 안 들리면 이 한 줄로 끄고
+# 재시작한다 — 후속질문이 없어도 접수는 지금까지처럼 그대로 만들어진다.
+FOLLOWUP_MAX = fu_mod.max_questions(os.environ.get("CLAWOPS_FOLLOWUP_MAX"))
+
+# 후속답변 녹음 상한. 요청 내용(60초)과 달리 짧게 둔다 — 되묻는 말의 답은
+# "오후요" 한 마디이고, 키를 못 누르는 어르신에게는 이 값이 곧 침묵의 길이다.
+FOLLOWUP_SECONDS = _int_env("CLAWOPS_FOLLOWUP_SECONDS", 15)
 
 
 # 안내 음성. **비우면 무료 기본 음성**이고, 채우면 글자수 요금이 붙는다
@@ -643,7 +654,151 @@ async def recording(request: Request) -> Response:
         except Exception:
             pass
 
+    # 확인 필요로 남은 칸이 있으면 **끊기 전에** 한 번 더 묻는다. 어르신은 아직
+    # 전화기를 들고 있고, 나중에 복지사가 되거는 것보다 지금 묻는 편이 낫다.
+    ask = _start_followup(request, form, res, intake_id, text)
+    if ask is not None:
+        return ask
     return _hangup(f"{_receipt(res)} {BYE}")
+
+
+# ────────────────────────────────────────────── 통화 중 후속질문 --
+
+# CallId → (만료시각, 상태). **DB 에 넣지 않는다** — _IDENTITY_SAID 와 같은
+# 이유다. 접수로 이어지지 못한 통화의 발화를 남기지 않는다. 접수는 이미
+# 저장돼 있고(아래 참조), 답을 받을 때마다 그 접수에 반영한다.
+_FOLLOWUP: dict[str, tuple[float, dict]] = {}
+_FOLLOWUP_TTL = 600
+
+
+def _put_followup(call_id: str, data: dict) -> None:
+    now = time.time()
+    for k, (exp, _) in list(_FOLLOWUP.items()):
+        if exp < now:
+            _FOLLOWUP.pop(k, None)
+    if call_id:
+        _FOLLOWUP[call_id] = (now + _FOLLOWUP_TTL, data)
+
+
+def _get_followup(call_id: str) -> dict | None:
+    exp_data = _FOLLOWUP.get(call_id or "")
+    if not exp_data:
+        return None
+    exp, data = exp_data
+    if exp < time.time():
+        _FOLLOWUP.pop(call_id, None)
+        return None
+    return data
+
+
+def _ask(request: Request, q, n: int) -> Response:
+    """질문 하나를 읽어주고 답을 녹음한다. **한 번에 한 칸만 묻는다.**"""
+    action = _callback(request, "voice_followup") + f"?n={n}"
+    return _xml(_say(_with_done_hint(q.question))
+                + _record(action, FOLLOWUP_SECONDS))
+
+
+def _start_followup(request: Request, form: dict, res, intake_id: int | None,
+                    text: str) -> Response | None:
+    """되물 것이 있으면 첫 질문을 돌려준다. 없으면 None(지금까지대로 종료).
+
+    **접수는 이미 저장된 뒤에 묻는다.** 되묻는 도중에 어르신이 끊어도 접수가
+    사라지면 안 된다 — 통화가 끊기는 것은 흔한 일이고, 그때 잃는 것이 접수
+    전체여서는 곤란하다.
+    """
+    if FOLLOWUP_MAX <= 0 or not intake_id or res.card is None:
+        return None
+    card = res.card.to_dict()
+    q = fu_mod.next_question(card)
+    if q is None:
+        return None
+    call_id = (form.get("CallId") or "").strip()
+    if not call_id:
+        # 통화를 이어붙일 열쇠가 없다. 되묻지 않고 지금까지대로 끝낸다.
+        _log.info("CallId 가 없어 후속질문을 건너뛴다")
+        return None
+    _put_followup(call_id, {
+        "intake_id": intake_id, "original": text, "state": fu_mod.CallState(),
+        "pending": q, "asked": 0,
+    })
+    _log.info("후속질문 1/%d — %s: %s", FOLLOWUP_MAX, q.field, q.question)
+    return _ask(request, q, 1)
+
+
+@router.post("/followup", name="voice_followup")
+async def followup(request: Request) -> Response:
+    """후속질문의 답이 녹음됐다. 어르신은 아직 통화 중이다.
+
+    순서가 정해져 있다 — **사람 연결 신호를 먼저 본다.** "됐어요", "사람
+    바꿔줘"가 나왔는데 답변에서 병원 이름을 뽑고 있으면, 이 통화에서 제일 하면
+    안 되는 일(한 번 더 캐묻기)을 하게 된다.
+    """
+    t0 = time.monotonic()
+    form = await _verify(request)
+    call_id = (form.get("CallId") or "").strip()
+    data = _get_followup(call_id)
+    if not data:
+        # 서버가 재시작됐거나 통화가 너무 길었다. 접수는 이미 저장돼 있으므로
+        # 잃는 것은 이번 답변뿐이다 — 캐묻지 않고 마무리한다.
+        _log.warning("후속질문 상태 없음 — CallId %s", call_id or "(없음)")
+        return _hangup(f"접수했습니다. {BYE}")
+
+    intake_id = data["intake_id"]
+    q = data["pending"]
+    state: fu_mod.CallState = data["state"]
+    answer = _read_recording(form) or ""
+    _log.info("후속답변 처리 %.1f초 — %s: %r", time.monotonic() - t0, q.field, answer)
+
+    # ① 사람 연결 신호가 먼저다.
+    h = fu_mod.detect_handoff_signal(answer, state)
+    if h.needed:
+        _FOLLOWUP.pop(call_id, None)
+        reason = f"통화 중 사람 연결 신호 — {h.reason}"
+        try:
+            db.apply_followup(intake_id, q.field, q.question, answer,
+                              evidence=[f"후속질문에 '{answer}'라고 답함 — {h.reason}"])
+            db.stop_followup(intake_id, reason + " · 남은 항목은 사회복지사 확인 필요")
+        except Exception:
+            _log.warning("사람 연결 신호 기록 실패", exc_info=True)
+        if h.explicit:
+            # 사람을 **직접 요청**했다. 담당자에게 돌린다.
+            return _transfer(request, "네, 알겠습니다.", intake_id)
+        # 혼란·거부다. 캐묻지 않고 끝낸다 — 담당자 폰을 울릴 일은 아니다.
+        return _hangup("네, 알겠습니다. 담당자가 확인 후 연락드리겠습니다. " + BYE)
+
+    # ② 그 칸 하나만 다시 뽑는다.
+    row = db.get_intake(intake_id) or {}
+    card = row.get("card") or {}
+    r = fu_mod.reextract_field(q.field, data["original"], answer, card, q.question)
+    state.record(q.field, answer, clear=r.resolved)
+    try:
+        db.apply_followup(intake_id, q.field, q.question, answer,
+                          value=r.value, status=r.status, evidence=r.evidence)
+    except Exception:
+        _log.warning("후속답변 반영 실패", exc_info=True)
+    data["asked"] += 1
+
+    # ③ 상한까지 남았으면 다음 칸을 묻는다. 갱신된 카드로 다시 본다.
+    row = db.get_intake(intake_id) or {}
+    card = row.get("card") or {}
+    if data["asked"] < FOLLOWUP_MAX:
+        nxt = fu_mod.next_question(card, tuple(state.asked))
+        if nxt is not None:
+            data["pending"] = nxt
+            _put_followup(call_id, data)
+            _log.info("후속질문 %d/%d — %s", data["asked"] + 1, FOLLOWUP_MAX, nxt.field)
+            return _ask(request, nxt, data["asked"] + 1)
+
+    _FOLLOWUP.pop(call_id, None)
+    left = fu_mod.pending_fields(card, tuple(state.asked))
+    if left:
+        # 남은 것은 그대로 '확인 필요'로 둔다. 우리가 채우지 않는다.
+        try:
+            db.stop_followup(intake_id, f"후속질문 {data['asked']}회로 마침 — "
+                             f"남은 항목({', '.join(left)})은 사회복지사 콜백 필요")
+        except Exception:
+            _log.warning("후속질문 마무리 기록 실패", exc_info=True)
+    return _hangup(f"{_receipt_card(card)} {BYE}")
 
 
 # ──────────────────────────────────────────────────── 2턴 확인 --
@@ -808,22 +963,35 @@ def _keep_sample(audio: bytes, text: str) -> None:
 
 
 def _receipt(res) -> str:
-    c = res.card
-    if c is None:
+    return _receipt_card(res.card.to_dict() if res.card else None)
+
+
+def _receipt_card(card: dict | None) -> str:
+    """통화 마지막에 들려주는 한 문장. **카드에 있는 것만 말한다.**
+
+    후속질문을 거치면 값이 바뀌므로 Result 가 아니라 저장된 카드에서 읽는다 —
+    "오후 세 시"로 확인해 놓고 접수 안내는 옛값으로 나가면 안 된다.
+    """
+    if not card:
         return "접수했습니다."
     # 기존 흐름이 다루지 않는 요청(새 병원 탐색·진료과 탐색·인력 요청)은 날짜를
     # 확정해서 들려주지 않는다. 화면에는 '확인 필요' 배지가 뜨지만 **통화에는
     # 그런 장치가 없어서**, "말씀하신 날짜로 접수했습니다" 가 어르신에게는 일정이
     # 잡혔다는 말로 들린다. 실제로는 사람이 다시 걸어야 하는 건이다.
-    if getattr(c, "request_type", None) in rt_mod.STAFF_HANDLED:
+    if (card.get("request_type") or "") in rt_mod.STAFF_HANDLED:
         return ("말씀하신 내용을 접수했습니다. "
                 "담당 사회복지사가 확인한 뒤 다시 연락드리겠습니다.")
-    when = c.date_label or "말씀하신 날짜"
-    if c.hospital and c.hospital_status == "확인됨":
+    when = card.get("date_label") or "말씀하신 날짜"
+    hospital = card.get("hospital")
+    if hospital and card.get("hospital_status") == "확인됨":
         # 조사를 붙박이로 두면 "행복정형외과으로" 가 된다. ~내과·~치과·~안과 처럼
         # 받침 없이 끝나는 의원 이름이 흔한데, 이게 어르신이 통화에서 마지막으로
         # 듣는 문장이다. korean.josa 가 받침을 보고 '으로/로' 를 고른다.
-        return f"{when} {josa(c.hospital, '로')} 접수했습니다."
+        #
+        # **'추정'은 말하지 않는다.** 후속질문에 "맞아요"로 답한 병원이 여기 오는데,
+        # 그건 자동 전사라 확정이 아니다. 통화에는 배지가 없어서 이름을 부르는
+        # 순간 확정으로 들린다.
+        return f"{when} {josa(hospital, '로')} 접수했습니다."
     return f"{josa(when, '로')} 접수했습니다."
 
 
