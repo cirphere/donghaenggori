@@ -396,7 +396,13 @@ def _field_status(a, hres, target_status: str, dept) -> dict[str, str]:
     return {
         "target": target_status,
         "hospital": hres.status,
-        "dept": ("확인됨" if a.dept else "추정" if dept else "확인 필요"),
+        # 진료과를 어떻게 얻었는지로 가른다. 어르신이 "정형외과" 라고 직접
+        # 말했으면 확인됨이지만, 증상 사전이나 임베딩으로 우리가 고른 것은
+        # 추정이다 — "손발이 저려" 를 신경과로 잇는 것은 우리 판단이지
+        # 어르신이 말한 것이 아니다. 예전에는 둘을 구분하지 않아, 유사도
+        # 0.67 로 고른 값이 카드에 '확인됨' 으로 떴다.
+        "dept": ("확인됨" if getattr(a, "dept_source", None) == "spoken"
+                 else "추정" if (a.dept or dept) else "확인 필요"),
         "date": ("확인됨" if (a.date and a.date.get("confident")) else "확인 필요"),
         "time": ("확인됨" if (a.time and a.time.get("confident")) else "확인 필요"),
     }

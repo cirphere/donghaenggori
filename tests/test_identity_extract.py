@@ -217,7 +217,32 @@ for text, want in [("이번주 금요일에 병원", "2026-08-21"),
     got = (parse_date(text, today=_BASE) or {}).get("date")
     check(f"주 표현 — {text[:10]}", got == want, f"{got} (기대 {want})")
 
+# ── 증상 → 진료과 사전: 한 글자 키 오탐 ──────────────────────────
+#
+# '이' → 치과 가 있었다. 한국어에서 '이' 는 조사라 거의 모든 문장에 들어간다.
+# "우리 딸이 데려다 준대" 가 치과로 분류됐고, 그 진료과가 이력 필터를 바꿔
+# 엉뚱한 병원 후보를 냈다. 한 글자 키를 전부 없앴다.
+from donghaenggori.core import nlu  # noqa: E402
+
+for text in ["우리 딸이 데려다 준대", "몸이 안 좋아서", "낼 병원 좀 가야겄어",
+             "약 좀 타야 하는디", "다음주에 갈라고 허요"]:
+    got = nlu._rule_based(text).dept
+    check(f"증상 없는 문장에 진료과를 붙이지 않는다 — {text[:12]}",
+          got is None, f"{got}")
+
+for text, want in [("이가 아파서", "치과"), ("잇몸이 부었어", "치과"),
+                   ("소변이 자주 마려워", "내과"), ("가슴이 두근거려", "내과"),
+                   ("눈앞이 뿌예", "안과"), ("귀에서 소리가 나", "이비인후과")]:
+    got = nlu._rule_based(text).dept
+    check(f"증상 사전 — {text[:12]}", got == want, f"{got} (기대 {want})")
+
+# 진료과를 **직접 말했을 때만** 확인됨이다. 증상에서 우리가 고른 것은 추정이다.
+check("직접 말한 진료과는 spoken",
+      nlu._rule_based("정형외과 가야겄어").dept_source == "spoken")
+check("증상에서 고른 진료과는 dict",
+      nlu._rule_based("무릎이 아파서").dept_source == "dict")
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10 + 13
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)

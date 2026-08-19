@@ -36,6 +36,9 @@ class Analysis:
     source: str = "규칙"             # "규칙" 또는 "규칙+LLM"
     raw: str = ""
     notes: list[str] = field(default_factory=list)
+    # 진료과를 어디서 얻었나 — 'spoken'(직접 말함) | 'dict'(증상 사전)
+    # | 'embedding'(의미 추정) | None. 카드가 상태를 가를 때 쓴다.
+    dept_source: str | None = None
     # 대리 접수 — 보호자·기관이 어르신 대신 전화한 경우
     requester: str = "본인"          # 본인 | 대리
     proxy_relation: str | None = None  # 어머니 | 아버지 | 조부모 | 배우자 | 기타
@@ -211,6 +214,7 @@ def _rule_based(text: str) -> Analysis:
     for dept in TERMS["dept_keywords"]:
         if dept in text:
             a.dept = dept
+            a.dept_source = "spoken"
             break
     # 증상 → 진료과 (직접 언급이 없을 때)
     for sym, dept in TERMS["symptom_to_dept"].items():
@@ -218,7 +222,29 @@ def _rule_based(text: str) -> Analysis:
             a.symptom = sym
             if a.dept is None:
                 a.dept = dept
+                a.dept_source = "dict"
             break
+
+    # 사전이 못 잡으면 문장 임베딩으로 한 번 더 본다.
+    #
+    # **사전이 1차다.** 규칙이 걸리면 여기까지 오지 않는다 — 결정론이 우선이고
+    # 임베딩은 사전을 무한히 키우지 않기 위한 보완이다. 어르신은 "손발이 저려",
+    # "속이 울렁거려" 처럼 말하는데 그걸 전부 적어 두려다 한 글자 키가 늘고,
+    # 그러다 '이'(치과)가 조사와 겹쳐 "우리 딸이 데려다 준대" 를 치과로 보냈다.
+    #
+    # 확신이 낮으면 비운다(deptmatch.THRESHOLD). 진료과는 게이트를 막지 않아
+    # 비어도 접수는 진행되지만, 틀린 값이 들어가면 이력 필터를 바꿔 엉뚱한
+    # 병원 후보가 나온다.
+    if a.dept is None:
+        try:
+            from ..services import deptmatch
+            got = deptmatch.guess(text)
+        except Exception:                     # 모델이 없어도 접수는 계속된다
+            got = None
+        if got:
+            a.dept, score = got
+            a.dept_source = "embedding"
+            a.notes.append(f"진료과는 발화 의미로 추정 — 유사도 {score:.2f}")
 
     # 의도: 약국 / 보호자연락 키워드
     for intent, kws in TERMS["intent_keywords"].items():
