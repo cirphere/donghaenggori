@@ -31,6 +31,26 @@ FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
                 "spoken_region": "말한 주소", "hospital": "병원",
                 "dept": "진료과", "date": "방문일", "time": "방문 시각"}
 
+# 요청 유형별로 **의미가 있는 칸만** 낸다.
+#
+# 분류기를 4분류로 학습해 놓고 카드는 늘 병원동행 칸을 냈다. "우리 딸한테
+# 연락 좀 해줘" 를 '보호자연락' 으로 맞게 분류하고도 병원·진료과 칸이 붙었고,
+# 병원은 gate.BLOCKING 항목이라 **있지도 않은 병원을 확인해야 확정이 됐다.**
+# 복지사는 그 칸을 왜 채워야 하는지 알 수 없다.
+#
+# 여기 없는 칸은 fields 에서 빠지고, 게이트는 없는 칸을 건너뛰므로(gate.blockers)
+# 차단도 함께 풀린다. 값을 지우는 게 아니라 **보여주지 않는** 것이라, 평면 키
+# (card.hospital 등)는 그대로 남아 나중에 유형이 바뀌어도 잃는 정보가 없다.
+INTENT_FIELDS = {
+    "병원동행": ("target", "spoken_name", "spoken_region", "hospital", "dept", "date", "time"),
+    # 약을 대신 타 오는 요청. 어느 약국인지는 처방전을 봐야 알고 통화에서
+    # 정할 수 있는 것이 아니라, 병원 칸을 세우지 않는다.
+    "약국":     ("target", "spoken_name", "spoken_region", "date", "time"),
+    # 보호자에게 연락해 달라는 요청. 병원도 일정도 없다.
+    "보호자연락": ("target", "spoken_name", "spoken_region"),
+    "기타":     ("target", "spoken_name", "spoken_region", "date", "time"),
+}
+
 
 @dataclass
 class Card:
@@ -81,8 +101,13 @@ class Card:
 
         확률(%)은 넣지 않는다 — 상태 3단계와 근거 문장으로만 말한다(화면 규칙 1).
         """
+        # 유형에 없는 칸은 아예 내지 않는다. 모르는 유형(분류기가 새 라벨을
+        # 내는 경우)은 전부 보여준다 — 빠뜨리는 것보다 낫다.
+        allowed = INTENT_FIELDS.get(self.intent)
         out = {}
         for name, attr in FIELD_VALUE_ATTRS.items():
+            if allowed is not None and name not in allowed:
+                continue
             value = getattr(self, attr)
             out[name] = {
                 "label": FIELD_LABELS[name],
@@ -91,9 +116,12 @@ class Card:
                 "status": self.field_status.get(name) or ("확인됨" if value else "확인 필요"),
                 "evidence": self.field_evidence.get(name, []),
             }
-        # 날짜·시각은 어르신이 말한 표현을 함께 보여줘야 확인 전화가 쉬워진다
-        out["date"]["spoken"] = self.date_label
-        out["time"]["spoken"] = self.time_label
+        # 날짜·시각은 어르신이 말한 표현을 함께 보여줘야 확인 전화가 쉬워진다.
+        # 유형에 따라 그 칸이 없을 수 있으므로 있을 때만 붙인다.
+        if "date" in out:
+            out["date"]["spoken"] = self.date_label
+        if "time" in out:
+            out["time"]["spoken"] = self.time_label
 
         # 말한 성함·주소는 **어떤 경로로도 '확인됨' 이 되지 않는다.**
         # 위 기본 로직은 값이 있으면 확인됨으로 올리는데, 이 둘은 8kHz 전화
@@ -101,6 +129,8 @@ class Card:
         # 확정으로 뜨면 복지사가 어르신을 그대로 잘못 부른다.
         # 값이 없으면 아예 빈 항목으로 두어 화면에서 사라지게 한다.
         for k in ("spoken_name", "spoken_region"):
+            if k not in out:
+                continue
             if out[k]["value"]:
                 out[k]["status"] = "확인 필요"
             else:

@@ -180,7 +180,44 @@ for text, want in [
 check("시도만 있으면 폴백이고 precise 아님",
       geo.coords_of("전라남도") is not None and not geo.is_precise("전라남도"))
 
+# ── 한글 수사 시각 ────────────────────────────────────────────────
+#
+# 어르신은 "세시" 라고 말한다. 숫자 정규식만 보던 시절엔 통째로 놓쳐 시각이
+# '확인 필요' 로 떨어졌다 — 안전하지만 물어보지 않아도 될 것을 물어보게 된다.
+# '한시'는 일부러 뺐다("한시간", "한시라도" 오탐이 크다).
+for text, want_time, want_label in [
+    ("오후 세시", "15:00", "오후 3시"),
+    ("오전 열한시", "11:00", "오전 11시"),
+    ("열두시 반", "12:30", "12시 반"),
+    ("세시쯤 가야 쓰겄는디", None, "3시"),      # 읽되 오전·오후는 되묻는다
+    ("한시간 걸려요", None, None),              # 시각이 아니다
+    ("한시라도 빨리", None, None),
+]:
+    got = parse_time(text) or {}
+    ok = got.get("time") == want_time and got.get("label") == want_label
+    check(f"한글 수사 — {text[:14]}", ok,
+          f"{got.get('time')} / {got.get('label')} (기대 {want_time} / {want_label})")
+
+# ── '다음주 X요일' 은 기준 요일에 흔들리면 안 된다 ──────────────────
+#
+# (wd - today.weekday()) % 7 은 이미 다가오는 요일로 굴러간다. 거기에 +7 을
+# 더하면 그 요일이 이번 주에 지났을 때 **두 주 뒤**가 된다. 기준일이 화요일일
+# 때만 우연히 맞아서 오래 안 드러났다 — 어르신이 일주일 늦게 병원에 간다.
+_TUE = "2026-08-25"
+for off in range(7):                       # 월~일 어느 날 접수해도 같은 화요일
+    base = datetime.date(2026, 8, 17) + datetime.timedelta(days=off)
+    got = (parse_date("다음주 화요일에 병원 가야", today=base) or {}).get("date")
+    check(f"다음주 화요일 — {'월화수목금토일'[base.weekday()]}요일 접수",
+          got == _TUE, f"{got} (기대 {_TUE})")
+
+_BASE = datetime.date(2026, 8, 19)         # 수요일
+for text, want in [("이번주 금요일에 병원", "2026-08-21"),
+                   ("금요일에 병원", "2026-08-21"),
+                   ("담주 월요일에 병원", "2026-08-24")]:
+    got = (parse_date(text, today=_BASE) or {}).get("date")
+    check(f"주 표현 — {text[:10]}", got == want, f"{got} (기대 {want})")
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)

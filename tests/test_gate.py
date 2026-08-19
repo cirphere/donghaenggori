@@ -294,8 +294,36 @@ def test_profile_registration() -> None:
                and after.get("mobility") == (before or {}).get("mobility")))
 
 
+def test_intent_fields() -> None:
+    """요청 유형에 없는 칸은 카드에 내지 않고, 게이트도 그 칸으로 막지 않는다.
+
+    분류기를 4분류로 학습해 놓고 카드는 늘 병원동행 칸을 냈다. '보호자연락'
+    접수에도 병원 칸이 붙었고, 병원은 BLOCKING 이라 **있지도 않은 병원을
+    확인해야 확정이 됐다.**
+    """
+    from donghaenggori.core import pipeline
+    r = pipeline.run("010-1234-5678", "우리 딸한테 연락 좀 해줘",
+                     channel="전화", use_llm=False, with_rag=False)
+    c = r.card.to_dict()
+    check("보호자연락으로 분류", c["intent"] == "보호자연락", c["intent"])
+    check("병원·진료과 칸을 내지 않는다",
+          "hospital" not in c["fields"] and "dept" not in c["fields"],
+          str(list(c["fields"])))
+    g = gate.check(c)
+    check("없는 칸으로 확정을 막지 않는다", g["allowed"],
+          str([b["field"] for b in g["blockers"]]))
+
+    # 병원동행은 그대로다 — 칸을 줄이는 변경이 정상 경로를 건드리면 안 된다.
+    r2 = pipeline.run("010-1234-5678", "내일 정형외과 가야 해",
+                      channel="전화", use_llm=False, with_rag=False)
+    f2 = r2.card.to_dict()["fields"]
+    check("병원동행은 병원·일정 칸을 그대로 낸다",
+          all(k in f2 for k in ("hospital", "dept", "date", "time")), str(list(f2)))
+
+
 def main() -> int:
     db.init_db(force=True)
+    test_intent_fields()
     test_rules()
     test_pipeline()
     test_api()
