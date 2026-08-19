@@ -918,6 +918,57 @@ def resolve_urgent(intake_id: int, actor: str, role: str, note: str = "") -> boo
     return changed
 
 
+def complete_accompaniment(intake_id: int, actor: str, role: str,
+                           note: str = "") -> dict:
+    """확정된 접수를 '동행 완료' 로 내리고, 그 사실을 이력에 누적한다.
+
+    **이 함수가 데이터 순환을 닫는다.** 그동안 접수는 '확정' 에서 멈췄다.
+    동행을 다녀왔다는 사실이 어디에도 안 남아서 세 가지가 어긋났다.
+
+      · 목록에서 "아직 안 간 것" 과 "다녀온 것" 이 섞였다 — 매니저가 어느
+        건에 사후기록을 써야 하는지 화면이 알려주지 못했다
+      · 보호자 타임라인이 '동행 완료' 칸을 그려 놓고 영영 도달하지 못했다
+      · 이력 누적이 /api/flywheel 을 따로 부르는 수동 작업이었다. 실제 업무에서
+        누가 언제 부르는지 정의가 없어, 리허설에서만 손으로 호출했다
+
+    이력은 **확정된 값**으로 쌓는다. 카드의 추정값이 아니라 사람이 확정한
+    병원·날짜다 — 추정으로 쌓으면 다음 접수의 근거가 추측 위에 서게 된다.
+
+    같은 건을 두 번 눌러도 이력이 두 번 쌓이지 않는다. 조건부 상태 전이
+    (status='확정' 일 때만)로 막는다.
+    """
+    init_db()
+    row = get_intake(intake_id)
+    if not row:
+        return {"changed": False, "reason": "없는 접수"}
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE intakes SET status='동행 완료' WHERE id=? AND status='확정'",
+            (intake_id,))
+        conn.commit()
+        changed = cur.rowcount == 1
+    finally:
+        conn.close()
+    if not changed:
+        # 확정 전이거나 이미 완료다. 오류가 아니라 상태다.
+        return {"changed": False, "reason": f"확정 상태가 아님({row.get('status')})"}
+
+    hospital = row.get("confirmed_hospital") or row.get("hospital")
+    date = row.get("confirmed_date") or row.get("date_value")
+    dept = row.get("dept")
+    added = False
+    if hospital and date:
+        add_history(row.get("phone"), date, hospital, dept, source="동행")
+        added = True
+    log_audit(actor, role, "동행완료", "intake", str(intake_id),
+              (f"{date} {hospital}" + (f"({dept})" if dept else "")
+               if added else "이력 누적 없음 — 확정 병원·날짜 미상")
+              + (f" · {note}" if note else ""))
+    return {"changed": True, "history_added": added}
+
+
 def intake_counts() -> dict:
     """홈 대시보드 카운트 — 오늘 접수 / 접수 대기 / 확정 / 긴급."""
     init_db()

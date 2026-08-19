@@ -425,6 +425,63 @@ def test_label_trail() -> None:
           bool(dept and dept[-1]["input"]), str(dept[-1].get("input") if dept else None))
 
 
+def test_accompaniment_complete() -> None:
+    """확정 → 동행 완료 → 이력 누적. 데이터 순환의 마지막 고리다.
+
+    그동안 접수가 '확정' 에서 멈췄다. 다녀왔다는 사실이 어디에도 안 남아
+    목록에서 구분이 안 됐고, 보호자 타임라인은 '동행 완료' 칸을 그려 놓고
+    영영 도달하지 못했으며, 이력 누적은 /api/flywheel 을 사람이 기억해서
+    부르는 수동 작업이었다.
+    """
+    from donghaenggori.web.api import app
+    client = TestClient(app)
+    r = client.post("/api/auth/login", json={"user_id": "T001", "password": TEST_PASSWORD})
+    AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    phone = "010-3333-9911"
+    form = {"elder": {"name": "정복순", "region": "전남 화순군"},
+            "guardian": {"relationship": "딸", "phone": phone},
+            "visit": {"date": "2026-08-25", "time": "10:00", "dateUnknown": False,
+                      "timeUnknown": False, "hospital": "화순전남대병원",
+                      "department": "내과", "departmentUnknown": False},
+            "assistance": ["동행"], "note": ""}
+    g = client.post("/api/guardian/intakes", json={"form": form}).json()
+    iid, code = g["intake_id"], g["access_code"]
+
+    def guardian_status() -> str:
+        return client.post("/api/guardian/lookup",
+                           json={"code": code, "phone": phone}).json().get("status_code")
+
+    r = client.post(f"/api/intakes/{iid}/complete", json={"note": ""}, headers=AUTH)
+    check("확정 전에는 동행 완료로 못 간다", r.status_code == 409, f"HTTP {r.status_code}")
+
+    client.post(f"/api/intakes/{iid}/verify",
+                json={"field": "target", "value": "정복순"}, headers=AUTH)
+    client.post(f"/api/intakes/{iid}/confirm",
+                json={"hospital": "화순전남대병원", "date": "2026-08-25",
+                      "level": "동행 필요"}, headers=AUTH)
+    check("확정하면 보호자에게 CONFIRMED", guardian_status() == "CONFIRMED", guardian_status())
+
+    before = len((db.get_profile(phone) or {}).get("history") or [])
+    r = client.post(f"/api/intakes/{iid}/complete", json={"note": "정상 완료"}, headers=AUTH)
+    check("동행 완료 처리", r.status_code == 200, f"HTTP {r.status_code} {r.text[:80]}")
+    check("이력이 자동으로 쌓인다", r.json().get("history_added") is True, r.text[:80])
+    after = len((db.get_profile(phone) or {}).get("history") or [])
+    check("이력 1건 증가", after == before + 1, f"{before} → {after}")
+    check("보호자 타임라인이 끝까지 간다", guardian_status() == "COMPLETED", guardian_status())
+
+    # **두 번 눌러도 이력이 두 번 쌓이면 안 된다.** 다음 접수의 근거가 부풀려진다.
+    r = client.post(f"/api/intakes/{iid}/complete", json={"note": ""}, headers=AUTH)
+    check("두 번 누르면 막힌다", r.status_code == 409, f"HTTP {r.status_code}")
+    check("이력이 중복되지 않는다",
+          len((db.get_profile(phone) or {}).get("history") or []) == after, str(after))
+
+    # 이력은 **확정된 값**으로 쌓인다 — 카드의 추정값이 아니다.
+    hist = (db.get_profile(phone) or {}).get("history") or []
+    check("확정 병원으로 이력이 쌓인다",
+          any(h.get("hospital") == "화순전남대병원" for h in hist), str(hist[-1:]))
+
+
 def main() -> int:
     db.init_db(force=True)
     test_label_trail()
@@ -434,6 +491,7 @@ def main() -> int:
     test_pipeline()
     test_api()
     test_profile_registration()
+    test_accompaniment_complete()
     test_post_record_from_intake()
 
     print("\n접수 확정 게이트 검증")
