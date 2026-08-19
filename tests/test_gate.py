@@ -382,9 +382,52 @@ def test_post_record_from_intake() -> None:
                     headers=AUTH)
     check("없는 접수는 404", r.status_code == 404, f"HTTP {r.status_code}")
 
+def test_label_trail() -> None:
+    """확인·승인이 학습 라벨로 남는가 — 고친 것과 확인만 한 것을 구분해서.
+
+    AI 가 맞혔는데 확인만 한 것과 틀린 것을 고친 것은 완전히 다른 사건이다.
+    감사 로그가 결과값만 남기면 나중에 그 둘을 구분할 수 없고, 무엇을 얼마나
+    고쳤는지가 곧 개선의 재료다.
+    """
+    from donghaenggori.core import pipeline
+    r = pipeline.run("010-1234-5678", "낼 그 눈 보는 데 가야겄어",
+                     channel="전화", use_llm=False, with_rag=False)
+    iid = db.save_intake(r.card, "010-1234-5678", "전화")
+    ai_dept = r.card.to_dict()["fields"]["dept"]["value"]
+
+    db.verify_card_field(iid, "dept", "안과", "김복지", "사회복지사")
+    db.verify_card_field(iid, "hospital", r.card.hospital or "○○병원", "김복지", "사회복지사")
+
+    conn = db.get_conn()
+    try:
+        rows = [dict(x) for x in conn.execute(
+            "SELECT detail FROM audit_log WHERE action='항목확인' ORDER BY id DESC LIMIT 2")]
+    finally:
+        conn.close()
+    details = " | ".join(x["detail"] for x in rows)
+    check("고친 것은 이전 값이 남는다",
+          any("→" in x["detail"] and ai_dept in x["detail"] for x in rows), details)
+    check("확인만 한 것은 화살표가 없다",
+          any("→" not in x["detail"] for x in rows), details)
+
+    from tools import export_labels
+    conn = db.get_conn()
+    try:
+        labels = export_labels._intake_labels(conn)
+    finally:
+        conn.close()
+    dept = [x for x in labels if x["field"] == "dept"]
+    check("라벨로 뽑힌다", bool(dept), f"{len(labels)}건")
+    check("고친 라벨은 AI 답과 정답을 함께 갖는다",
+          bool(dept and dept[-1]["changed"] and dept[-1]["ai"] and dept[-1]["label"] == "안과"),
+          str(dept[-1] if dept else None))
+    check("입력(발화 원문)이 함께 남는다",
+          bool(dept and dept[-1]["input"]), str(dept[-1].get("input") if dept else None))
+
 
 def main() -> int:
     db.init_db(force=True)
+    test_label_trail()
     test_dispatch_fields()
     test_intent_fields()
     test_rules()
