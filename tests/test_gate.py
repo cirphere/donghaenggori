@@ -350,6 +350,39 @@ def test_dispatch_fields() -> None:
               f"pickup={c2.get('pickup')} guardian={c2.get('guardian')}")
 
 
+def test_post_record_from_intake() -> None:
+    """사후기록은 intake_id + 메모만으로 만들어진다.
+
+    예전에는 phone 을 필수로 받았다. 직원 화면은 연락처를 마스킹해서
+    보여주므로(phone_masked) 원본이 없고, 그래서 **확정한 접수에서 사후기록을
+    쓸 방법이 화면에 없었다.** 백엔드가 접수에서 채운다.
+    """
+    from donghaenggori.web.api import app
+    client = TestClient(app)
+    r = client.post("/api/auth/login", json={"user_id": "T001", "password": TEST_PASSWORD})
+    AUTH = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    r = client.post("/api/intakes", json={"phone": "010-1234-5678",
+                    "utterance": "낼 정형외과 가야겄어"}, headers=AUTH)
+    iid = r.json()["intake_id"]
+
+    r = client.post("/api/post-records",
+                    json={"intake_id": iid, "memo": "무릎 물리치료 받고 2주 뒤 다시 오라 하셨어요"},
+                    headers=AUTH)
+    check("phone 없이 사후기록 생성", r.status_code == 200, f"HTTP {r.status_code} {r.text[:80]}")
+    body = r.json()
+    check("초안이 나온다", bool(body.get("draft")), str(body)[:80])
+
+    rid = body.get("record_id")
+    rec = db.get_post_record(rid) if hasattr(db, "get_post_record") else None
+    if rec:
+        check("접수의 연락처가 채워진다", bool(rec.get("phone")), str(rec.get("phone")))
+
+    r = client.post("/api/post-records", json={"intake_id": 999999, "memo": "메모"},
+                    headers=AUTH)
+    check("없는 접수는 404", r.status_code == 404, f"HTTP {r.status_code}")
+
+
 def main() -> int:
     db.init_db(force=True)
     test_dispatch_fields()
@@ -358,6 +391,7 @@ def main() -> int:
     test_pipeline()
     test_api()
     test_profile_registration()
+    test_post_record_from_intake()
 
     print("\n접수 확정 게이트 검증")
     print("=" * 78)
