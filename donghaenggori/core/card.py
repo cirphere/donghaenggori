@@ -70,6 +70,21 @@ class Card:
     need_reasons: list[str]
     guardian_contact: bool
     manager_notes: list[str]
+
+    # ── 동행을 실제로 나가는 데 필요한 것 ──────────────────────────
+    #
+    # **AI 가 알아낸 값이 아니라 기관이 이미 아는 값이다.** 그래서 확신도
+    # 3단계를 붙이지 않는다 — 주소는 케어 프로필에 적힌 사실이지 추정이
+    # 아니다. fields 에 넣지 않고 따로 싣는 이유가 그것이다.
+    #
+    # 이게 없으면 카드를 확정해도 배차가 안 된다. 어디로 모시러 갈지,
+    # 휠체어 차량이 필요한지, 못 만났을 때 누구에게 전화할지를 모른다.
+    # 실제로 카드에 5칸만 있어서 "이걸로 동행을 나갈 수 있나" 라는 물음이
+    # 나왔고, 나갈 수 없었다.
+    pickup: str | None = None          # 출발지 — 어르신 거주지
+    mobility: str | None = None        # 거동 상태 원문 (휠체어 차량 판단)
+    guardian: dict | None = None       # 보호자 이름·관계·연락처
+    caregiver: str | None = None       # 생활지원사 — 현장 인계
     flags: list[str] = field(default_factory=list)   # ⚠ 필수 확인 배지 등
     # 대리 접수 — 보호자·기관이 어르신 대신 요청한 경우
     requester: str = "본인"                          # 본인 | 대리
@@ -160,6 +175,12 @@ class Card:
             "need_basis": self.need_basis,
             "need_official": self.need_official,
             "guardian_contact": self.guardian_contact,
+            # 배차 정보. 값이 없으면 키는 남기고 None 을 보낸다 —
+            # 화면이 "정보 없음" 과 "아직 안 붙음" 을 구분해야 한다.
+            "pickup": self.pickup,
+            "mobility": self.mobility,
+            "guardian": self.guardian,
+            "caregiver": self.caregiver,
             "manager_notes": self.manager_notes,
             "flags": self.flags,
             "requester": self.requester,

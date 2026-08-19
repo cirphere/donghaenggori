@@ -321,8 +321,38 @@ def test_intent_fields() -> None:
           all(k in f2 for k in ("hospital", "dept", "date", "time")), str(list(f2)))
 
 
+def test_dispatch_fields() -> None:
+    """배차 정보는 대상자가 프로필로 확인된 접수에만 실린다.
+
+    출발지·보호자 연락처·거동 상태가 없으면 카드를 확정해도 동행을 못 나간다.
+    그렇다고 아무 접수에나 실으면 안 된다 — 미등록 번호나 보호자 대리 전화에
+    프로필을 붙이면 **남의 주소와 보호자 번호**가 카드에 뜬다.
+    """
+    from donghaenggori.core import pipeline
+    c = pipeline.run("010-1234-5678", "낼 정형외과 가야겄어",
+                     channel="전화", use_llm=False, with_rag=False).card.to_dict()
+    check("배차 정보 — 출발지", bool(c.get("pickup")), str(c.get("pickup")))
+    check("배차 정보 — 거동 상태", bool(c.get("mobility")), str(c.get("mobility")))
+    check("배차 정보 — 보호자 연락처",
+          bool((c.get("guardian") or {}).get("phone")), str(c.get("guardian")))
+    check("배차 정보 — 생활지원사", bool(c.get("caregiver")), str(c.get("caregiver")))
+    # 확신도 3단계를 붙이지 않는다 — 기관 기록이지 AI 추정이 아니다.
+    check("배차 정보는 fields 에 넣지 않는다",
+          all(k not in c["fields"] for k in ("pickup", "mobility", "guardian", "caregiver")),
+          str(list(c["fields"])))
+
+    for label, phone in (("미등록 번호", "010-0000-0000"),
+                         ("보호자 대리", "010-9876-5432")):
+        c2 = pipeline.run(phone, "낼 정형외과 가야겄어",
+                          channel="전화", use_llm=False, with_rag=False).card.to_dict()
+        empty = not any(c2.get(k) for k in ("pickup", "mobility", "guardian", "caregiver"))
+        check(f"대상자 미확정({label})엔 배차 정보를 싣지 않는다", empty,
+              f"pickup={c2.get('pickup')} guardian={c2.get('guardian')}")
+
+
 def main() -> int:
     db.init_db(force=True)
+    test_dispatch_fields()
     test_intent_fields()
     test_rules()
     test_pipeline()
