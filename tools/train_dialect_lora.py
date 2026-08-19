@@ -91,7 +91,7 @@ def main() -> int:
     args = ap.parse_args()
 
     import torch
-    from datasets import Audio, Dataset
+    from datasets import Dataset
     from peft import LoraConfig, get_peft_model
     from transformers import (
         Seq2SeqTrainer,
@@ -105,13 +105,24 @@ def main() -> int:
 
     processor = WhisperProcessor.from_pretrained(args.model, language=LANG, task=TASK)
 
-    ds = Dataset.from_list([{"audio": r["audio"], "text": r["text"]} for r in rows])
-    ds = ds.cast_column("audio", Audio(sampling_rate=16000))
+    # **datasets 의 Audio 기능을 쓰지 않는다.** 그건 디코딩에 librosa 를
+    # 요구하는데(datasets 2.x), librosa 는 numba·llvmlite 를 끌고 와서 파이썬
+    # 버전이 조금만 어긋나도 소스 빌드로 넘어가 깨진다 — 클러스터에서 실제로
+    # 겪었다. prep_dialect_finetune 이 이미 **16kHz 모노**로 맞춰 두었으므로
+    # 리샘플링이 필요 없고, soundfile 로 바로 읽으면 그만이다.
+    ds = Dataset.from_list([{"path": r["audio"], "text": r["text"]} for r in rows])
 
     def prepare(batch: dict) -> dict:
-        a = batch["audio"]
+        import soundfile as sf
+        wav, sr = sf.read(batch["path"], dtype="float32", always_2d=False)
+        if wav.ndim > 1:                       # 혹시 스테레오가 섞이면 모노로
+            wav = wav.mean(axis=1)
+        if sr != 16000:
+            # 리샘플링은 하지 않는다 — 학습셋을 만들 때 맞췄어야 하는 것이고,
+            # 여기서 조용히 고치면 채널이 어긋난 채로 학습이 돈다.
+            raise ValueError(f"16kHz 가 아니다: {sr}Hz — {batch['path']}")
         batch["input_features"] = processor.feature_extractor(
-            a["array"], sampling_rate=a["sampling_rate"]).input_features[0]
+            wav, sampling_rate=sr).input_features[0]
         batch["labels"] = processor.tokenizer(batch["text"]).input_ids
         return batch
 

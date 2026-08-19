@@ -3,13 +3,13 @@
 #
 #   sbatch tools/train_dialect.sbatch
 #
-# 파티션은 sinfo 로 확인해 맞춘다. 확인된 것:
-#   p01  A6000  무제한      p02(기본)  A6000  14일
-#   p03  A100×8 무제한      p04·p05    Q8000  무제한
-# A100 을 쓸 수 있으면 p03 이 가장 빠르다. 아래는 A6000 기준이다.
+# **파티션을 박지 않는다.** 계정마다 쓸 수 있는 곳이 다르다 — p01 을 지정했더니
+# "Invalid account or account/partition combination" 으로 거절당했다. 기본
+# 파티션에 맡기고, 다른 곳을 쓰려면 제출할 때 -p 로 준다:
+#     sbatch -p p04 tools/train_dialect.sbatch
+# 쓸 수 있는 곳은 sacctmgr show assoc where user=$USER 로 확인한다.
 #
 #SBATCH --job-name=dhg-dialect-lora
-#SBATCH --partition=p01
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/lora-%j.out
