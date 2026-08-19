@@ -231,80 +231,90 @@ def main(full: bool = False) -> int:
         check("프로필 업데이트 승인", r5.status_code == 200, f"HTTP {r5.status_code}")
         say(f"   {mark(r5.status_code == 200)} 사회복지사 승인 → 프로필 반영 + 감사 로그")
 
-    # ═══════════════ STEP 7 — 플라이휠 (8분판 전용) ═══════════════
+    # ═══════════ STEP 7 — 쌓이는 것을 보여준다 (8분판 전용) ═══════════
     #
-    # **보여줄 것은 "정확도가 오른다" 가 아니라 "물어볼 것이 줄어든다" 다.**
+    # **한 어르신의 1·2·3차 접수를 이어서 보여준다.** 예전에는 2회 방문이
+    # 되면 병원이 '추정 → 확인됨' 으로 올라가는 것을 보여줬는데, 그 승격은
+    # 안전 문제로 없앴다(#55) — 어르신이 말하지 않은 병원을 확정해서 전화
+    # 안내로 들려주고 있었다.
     #
-    # 예전에는 2회 방문이 되면 병원이 '추정 → 확인됨' 으로 올라가는 것을 보여줬다.
-    # 그 승격은 안전 문제로 없앴다(#55) — 어르신이 말하지 않은 병원을 확정해서
-    # 전화 안내로 들려주고 있었다. 그래서 장면이 비었다.
+    # 대신 두 가지가 변한다. 둘 다 실측값이라 화면에 그대로 찍는다.
+    #   · 확인할 항목   2개 → 0개    (복지사가 물어볼 것)
+    #   · 병원 근거     없음 → 1회 → 2회  (쌓이는 것은 확신이 아니라 근거)
     #
-    # 대신 게이트가 막는 항목 수를 센다. 이력이 없으면 대상자·병원·방문일 셋을
-    # 물어야 하고, 이력이 쌓이면 방문일 하나만 남는다. 복지사가 실제로 겪는
-    # 변화가 그것이고, 숫자로 보인다.
+    # 같은 발화를 세 번 쓴다. 발화가 같은데 결과가 달라지는 것이 요점이다 —
+    # 좋아진 것은 모델이 아니라 우리가 가진 데이터다.
     if full:
         say()
-        say("\033[1mSTEP 7\033[0m  쓸수록 물어볼 것이 줄어든다 — 플라이휠        (4:40~5:20)")
+        say("\033[1mSTEP 7\033[0m  쓸수록 물어볼 것이 줄어든다 — 데이터 순환      (4:40~5:20)")
 
-        u = "허리가 아파서 정형외과 가야 하는디"
-        def intake_of(phone: str) -> tuple[int, list[str], dict]:
-            r, _ = api("POST", "/api/intakes",
-                       json={"phone": phone, "utterance": u}, headers=SW_AUTH)
-            body = r.json()
-            iid = body.get("intake_id")
-            d, _ = api("GET", f"/api/intakes/{iid}", headers=SW_AUTH)
-            g = d.json().get("gate") or {}
-            return iid, [b["label"] for b in g.get("blockers", [])], body.get("card") or {}
-
-        # ① 이력이 없는 어르신 — 처음 겪는 접수
-        iid1, first, _ = intake_of(PHONE_NEW_FLYWHEEL)
-        say(f'   1차 접수(이력 없음): "{u}"')
-        say(f"   {mark(True)} 확인할 항목 {len(first)}개 — {', '.join(first)}")
-        say("                 병원도 대상자도 우리가 아는 것이 없다")
-
-        # ② 확인 → 확정 → 동행 → 사후기록.
-        #
-        # **이력만 넣어서는 안 된다.** 미등록 번호는 케어 프로필이 없어서
-        # 병원 후보 산출이 이력을 아예 보지 못한다. 확정이 프로필을 만들고,
-        # 그 프로필에 이력이 붙는다 — 이 순서가 곧 서비스의 데이터 순환이다.
+        u = "낼 허리가 아파서 정형외과 가야 하는디"
         today = datetime.date.today().isoformat()
-        # 1차에서 물어야 했던 것을 전부 확인한다 — 이것이 복지사가 실제로 거는
-        # 확인 전화다. 대상자만 확인하고 확정을 시도하면 병원에서 409 로 막힌다.
-        for field, value in (("target", "정복순"), ("hospital", "△△정형외과"),
-                             ("date", today)):
-            api("POST", f"/api/intakes/{iid1}/verify",
+
+        def intake() -> tuple[int, list[str], dict]:
+            r, _ = api("POST", "/api/intakes",
+                       json={"phone": PHONE_NEW_FLYWHEEL, "utterance": u}, headers=SW_AUTH)
+            body = r.json()
+            d, _ = api("GET", f"/api/intakes/{body['intake_id']}", headers=SW_AUTH)
+            g = d.json().get("gate") or {}
+            return body["intake_id"], [b["label"] for b in g.get("blockers", [])], body.get("card") or {}
+
+        def report(n: int, blockers: list[str], card: dict) -> None:
+            say(f'   {n}차 접수: "{u}"')
+            say(f"   {mark(True)} 확인할 항목 {len(blockers)}개"
+                + (f" — {', '.join(blockers)}" if blockers else " — 없음. 바로 확정 가능"))
+            hosp = card.get("hospital")
+            say(f"                 병원 {hosp or '—'} [{card.get('hospital_status')}]")
+            say(f"                 근거 {(card.get('reasons') or ['—'])[0][:58]}")
+
+        # ── 1차. 이 어르신에 대해 아는 것이 없다 ──
+        iid, first, c1 = intake()
+        report(1, first, c1)
+        say("                 → 대상자도 병원도 통화로 확인해야 한다")
+
+        # 확인 → 확정. 확정이 케어 프로필을 만들고, 거기에 이력이 붙는다.
+        # **이력만 넣어서는 안 된다** — 프로필이 없으면 병원 후보 산출이
+        # 이력을 아예 보지 못한다. 이 순서가 곧 데이터 순환이다.
+        for field, value in (("target", "정복순"), ("hospital", "△△정형외과")):
+            api("POST", f"/api/intakes/{iid}/verify",
                 json={"field": field, "value": value}, headers=SW_AUTH)
-        cr, _ = api("POST", f"/api/intakes/{iid1}/confirm",
+        cr, _ = api("POST", f"/api/intakes/{iid}/confirm",
                     json={"hospital": "△△정형외과", "date": today, "level": "동행 필요"},
                     headers=SW_AUTH)
         check("STEP 7 1차 — 확인 후 확정", cr.status_code == 200, f"HTTP {cr.status_code}")
-        say(f"   {mark(cr.status_code == 200)} 통화로 확인({len(first)}건) → 확정 → 케어 프로필 등록")
+        say(f"   {mark(cr.status_code == 200)} 통화로 확인 {len(first)}건 → 확정 → 케어 프로필 등록")
         api("POST", "/api/flywheel",
             json={"phone": PHONE_NEW_FLYWHEEL, "date": today,
                   "hospital": "△△정형외과", "dept": "정형외과"}, headers=SW_AUTH)
-        say(f"   {mark(True)} 동행 완료 → 사후기록 → 이력에 1건 누적")
+        say(f"   {mark(True)} 동행 완료 → 사후기록 → 이력 1건")
+        say()
 
-        # ③ 같은 발화, 같은 어르신 — 이번엔 프로필과 이력이 있다
-        _, second, c2 = intake_of(PHONE_NEW_FLYWHEEL)
-        say(f'   2차 접수(이력 1건): "{u}"')
-        say(f"   {mark(True)} 확인할 항목 {len(second)}개 — {', '.join(second) or '없음'}")
-        if c2.get("hospital"):
-            say(f"                 병원 후보: {c2['hospital']} [{c2['hospital_status']}]")
-            say(f"                 근거: {(c2.get('reasons') or ['—'])[0]}")
-
-        shrank = len(second) < len(first)
-        check("STEP 7 플라이휠 — 확인할 항목이 줄어든다", shrank,
+        # ── 2차. 같은 발화인데 물어볼 것이 없다 ──
+        _, second, c2 = intake()
+        report(2, second, c2)
+        check("STEP 7 2차 — 확인할 항목이 줄어든다", len(second) < len(first),
               f"{len(first)}개({','.join(first)}) → {len(second)}개({','.join(second) or '없음'})")
 
-        # ④ 오래 다닌 어르신과 비교 — 도달점을 보여준다
-        _, veteran, _ = intake_of(PHONE)
-        say(f"   {mark(True)} 참고: 이력 3건인 어르신은 확인할 항목 {len(veteran)}개 "
-            f"— {', '.join(veteran) or '없음'}")
-        check("STEP 7 이력이 많을수록 더 줄어든다", len(veteran) <= len(second),
-              f"이력1건 {len(second)}개 · 이력3건 {len(veteran)}개")
+        api("POST", "/api/flywheel",
+            json={"phone": PHONE_NEW_FLYWHEEL, "date": today,
+                  "hospital": "△△정형외과", "dept": "정형외과"}, headers=SW_AUTH)
+        say(f"   {mark(True)} 한 번 더 동행 → 이력 2건")
+        say()
 
-        say("   멘트: 쌓이는 것은 확신이 아니라 근거입니다. 병원은 여전히 '추정'이고")
-        say("         확정은 사람이 합니다. 대신 물어볼 것이 셋에서 하나로 줍니다.")
+        # ── 3차. 항목 수는 그대로지만 근거가 두꺼워진다 ──
+        _, third, c3 = intake()
+        report(3, third, c3)
+        thicker = "2회" in (c3.get("reasons") or [""])[0]
+        check("STEP 7 3차 — 근거가 두꺼워진다", thicker,
+              (c3.get("reasons") or ["—"])[0][:50])
+        check("STEP 7 병원은 끝까지 '추정'", c3.get("hospital_status") == "추정",
+              str(c3.get("hospital_status")))
+
+        say()
+        say("   멘트: 발화는 세 번 다 같았습니다. 달라진 것은 우리가 가진 데이터입니다.")
+        say("         물어볼 것이 둘에서 없음으로 줄었고, 병원 근거는 1회에서 2회로")
+        say("         두꺼워졌습니다. 다만 병원은 끝까지 '추정'입니다 —")
+        say("         자주 가신 곳이지, 이번에 거기 가신다고 말씀하신 것이 아니니까요.")
 
     # ══════════════════════ 시나리오 B — 실패 대응 ══════════════════════
     head("시나리오 B — 실패·저확신 대응", "목표 " + win("2:00 ~ 2:45","5:20 ~ 7:00"))
