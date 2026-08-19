@@ -217,13 +217,26 @@ def _rule_based(text: str) -> Analysis:
             a.dept_source = "spoken"
             break
     # 증상 → 진료과 (직접 언급이 없을 때)
-    for sym, dept in TERMS["symptom_to_dept"].items():
-        if sym in text:
-            a.symptom = sym
-            if a.dept is None:
-                a.dept = dept
-                a.dept_source = "dict"
-            break
+    #
+    # **먼저 나온 증상을 고른다.** 예전에는 사전에 적힌 순서대로 훑어 처음
+    # 걸리는 것을 썼는데, 그러면 짧은 키가 긴 낱말 안에 박혀 있을 때 그쪽이
+    # 이긴다. "발목이 다쳤어" 가 이비인후과로 갔다 — '발목이' 안의 '목이' 가
+    # 먼저 걸렸기 때문이다. 손목·팔목도 같았다.
+    #
+    # 위치로 고르면 그 문제가 사라진다. '발목' 은 0 에서, '목이' 는 1 에서
+    # 시작하므로 '발목' 이 이긴다. 같은 자리에서 시작하면 긴 쪽을 쓴다 —
+    # 더 많이 설명하는 키다.
+    #
+    # 어느 증상을 먼저 말했는지로 고르는 것이기도 하다. 사전 편집 순서보다
+    # 어르신이 말한 순서가 근거로 낫다.
+    hits = [(text.index(sym), -len(sym), sym, dept)
+            for sym, dept in TERMS["symptom_to_dept"].items() if sym in text]
+    if hits:
+        _, _, sym, dept = min(hits)
+        a.symptom = sym
+        if a.dept is None:
+            a.dept = dept
+            a.dept_source = "dict"
 
     # 사전이 못 잡으면 문장 임베딩으로 한 번 더 본다.
     #
