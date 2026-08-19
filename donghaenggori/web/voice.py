@@ -470,7 +470,8 @@ async def incoming(request: Request) -> Response:
 
     # 미등록 번호 — 이름을 모르니 확인할 것도 없다. 성함·읍면동부터 받는다.
     if not prof:
-        return _xml(_say(GREETING) + _ask_identity_first(request, "new"))
+        return _xml(_say(GREETING + _recording_notice())
+                    + _ask_identity_first(request, "new"))
 
     # 등록된 번호 — 바로 증상을 받는다.
     #
@@ -483,7 +484,11 @@ async def incoming(request: Request) -> Response:
     # 내리고 성함·읍면동을 따로 받았다. 그걸 잃는다 — 어르신 전화기로 다른
     # 사람이 걸면 이제 그 어르신 본인의 요청으로 기록된다. 화면에서 대상자를
     # 고쳐야 하고, 그건 사회복지사가 통화 원문을 읽고 판단할 몫이다.
-    return _xml(_say(SYMPTOM_PROMPT) + ask("skipped"))
+    # 등록된 어르신은 GREETING 을 듣지 않는다. 녹음 고지는 여기에도 붙여야
+    # **모든 발신자가** 듣는다 — 재이용자가 오히려 녹음이 많이 쌓이는 쪽이다.
+    return _xml(_say(_recording_notice().strip() + " " + SYMPTOM_PROMPT
+                     if _recording_notice() else SYMPTOM_PROMPT)
+                + ask("skipped"))
 
 
 @router.post("/identity", name="voice_identity")
@@ -736,6 +741,46 @@ KEEP_SAMPLES = (os.environ.get("VOICE_KEEP_SAMPLES") or "").strip().lower() in (
 SAMPLE_DIR = os.environ.get("VOICE_SAMPLE_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "voice_samples")
 
+# 보관 기간(일). **무기한으로 쌓지 않는다.** 어르신의 목소리와 건강 이야기라
+# "언젠가 쓸지 모른다" 로 남겨 둘 성질이 아니다. 0 이하면 안 지운다 —
+# 기관이 별도 보관 규정을 갖고 스스로 관리할 때만 그렇게 둔다.
+SAMPLE_RETENTION_DAYS = _int_env("VOICE_SAMPLE_RETENTION_DAYS", 30)
+
+# 녹음 보관을 켠 채로 알리지 않는 것은 안 된다(README 가 켜기 전 전제로 적어
+# 둔 것이기도 하다). **KEEP_SAMPLES 를 끄면 이 문장도 같이 사라진다** —
+# 안내와 실제 동작이 어긋나지 않게 한 곳에 묶어 둔다.
+RECORDING_NOTICE = os.environ.get("CLAWOPS_RECORDING_NOTICE") or (
+    "통화 내용은 상담 품질을 높이기 위해 녹음되어 보관됩니다.")
+
+
+def _recording_notice() -> str:
+    """첫 안내에 덧붙일 녹음 고지. 보관을 끄면 빈 문자열이다."""
+    return f" {RECORDING_NOTICE}" if KEEP_SAMPLES else ""
+
+
+def _prune_samples() -> None:
+    """보관 기간이 지난 표본을 지운다.
+
+    지우는 시점을 따로 두지 않고 **새로 쌓을 때 함께** 판다. 크론이나 별도
+    프로세스를 두면 그것이 안 도는 환경에서 조용히 무기한 보관이 된다.
+    """
+    if SAMPLE_RETENTION_DAYS <= 0:
+        return
+    cutoff = time.time() - SAMPLE_RETENTION_DAYS * 86400
+    removed = 0
+    for name in os.listdir(SAMPLE_DIR):
+        if not name.endswith((".wav", ".txt")):
+            continue                          # README.md 는 건드리지 않는다
+        path = os.path.join(SAMPLE_DIR, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        _log.info("보관 기간(%d일) 지난 표본 %d개 삭제", SAMPLE_RETENTION_DAYS, removed)
+
 
 def _keep_sample(audio: bytes, text: str) -> None:
     """음성과 전사를 짝지어 남긴다 — 나중에 사람이 전사를 고치면 그것이 정답이다.
@@ -756,6 +801,7 @@ def _keep_sample(audio: bytes, text: str) -> None:
         with open(os.path.join(SAMPLE_DIR, f"{stamp}.txt"), "w", encoding="utf-8") as f:
             f.write(text)
         _log.info("학습 표본 보관 — %s (%d바이트)", stamp, len(audio))
+        _prune_samples()
     except Exception as e:                   # 디스크가 차도 통화는 계속된다
         _log.warning("표본 보관 실패 — %s: %s", type(e).__name__, e)
 

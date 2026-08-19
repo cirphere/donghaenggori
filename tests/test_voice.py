@@ -520,6 +520,20 @@ def main() -> int:
     os.environ.pop("CLAWOPS_VOICE")
     check("미설정이면 빈 값", voice._voice_env() == "")
 
+    # ── 녹음 보관과 고지는 함께 켜지고 함께 꺼진다 ──────────────
+    # 어긋나면 어르신에게 알리지 않은 채로 목소리가 쌓인다. voice_samples/
+    # README 가 켜기 전 전제로 적어 둔 것이기도 하다.
+    원래 = voice.KEEP_SAMPLES
+    voice.KEEP_SAMPLES = False
+    check("보관이 꺼져 있으면 녹음 고지도 없다", voice._recording_notice() == "",
+          repr(voice._recording_notice()))
+    voice.KEEP_SAMPLES = True
+    check("보관을 켜면 첫 안내에 녹음 고지가 붙는다",
+          "녹음" in voice._recording_notice(), voice._recording_notice())
+    voice.KEEP_SAMPLES = 원래
+    check("보관 기간이 정해져 있다 — 무기한이 아니다",
+          voice.SAMPLE_RETENTION_DAYS > 0, f"{voice.SAMPLE_RETENTION_DAYS}일")
+
     print("\n전화 연동(ClawOps VoiceML) 2단계 흐름 검증")
     print("=" * 78)
     passed = 0
