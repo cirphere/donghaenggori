@@ -207,6 +207,16 @@ def main() -> int:
             num_train_epochs=args.epochs,
             bf16=True,
             gradient_checkpointing=True,
+            # **여기에도 줘야 한다.** 위에서 모델에 직접 걸어 둔 것을 Trainer 가
+            # 자기 기본값(reentrant)으로 다시 호출해 덮어쓴다. 그러면 인코더
+            # LoRA 에 기울기가 안 흐르는 상태로 되돌아간다 — 로그에 reentrant
+            # 경로(checkpoint.py:92)와 비-reentrant 경로(:295)가 **둘 다**
+            # 찍히는 것으로 드러났다.
+            #
+            # 학습 전 검증(assert_encoder_learns)은 Trainer 밖에서 재므로
+            # 이 상태를 못 잡는다. 검증이 통과하는데 학습은 틀린 구성으로
+            # 도는, 가장 속기 쉬운 형태였다.
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             logging_steps=25,
             eval_strategy="steps",
             eval_steps=200,
