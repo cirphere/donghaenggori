@@ -26,7 +26,9 @@ BASE = "http://localhost:8000"
 PHONE = "010-1234-5678"        # 박순자 — 정형외과 2회 이력 → 추정(직접 말한 것이 아니므로)
 PHONE_NEW = "010-0000-0000"    # 미등록
 GUARDIAN = "010-9876-5432"     # 박순자의 딸
-PHONE_FLYWHEEL = "010-2222-3333"   # 김수남 — 정형외과 1회 → 추정 (플라이휠 시연용)
+PHONE_FLYWHEEL = "010-2222-3333"   # 김수남 — 정형외과 1회 (참고용)
+# 플라이휠 시연 전용. **시드에 없는 번호여야** 1차 접수가 "이력 없음"이 된다.
+PHONE_NEW_FLYWHEEL = "010-3333-7788"
 FULL = False                   # True면 본선 Day2 8분판
 
 results: list[tuple[str, bool, str]] = []
@@ -230,38 +232,79 @@ def main(full: bool = False) -> int:
         say(f"   {mark(r5.status_code == 200)} 사회복지사 승인 → 프로필 반영 + 감사 로그")
 
     # ═══════════════ STEP 7 — 플라이휠 (8분판 전용) ═══════════════
+    #
+    # **보여줄 것은 "정확도가 오른다" 가 아니라 "물어볼 것이 줄어든다" 다.**
+    #
+    # 예전에는 2회 방문이 되면 병원이 '추정 → 확인됨' 으로 올라가는 것을 보여줬다.
+    # 그 승격은 안전 문제로 없앴다(#55) — 어르신이 말하지 않은 병원을 확정해서
+    # 전화 안내로 들려주고 있었다. 그래서 장면이 비었다.
+    #
+    # 대신 게이트가 막는 항목 수를 센다. 이력이 없으면 대상자·병원·방문일 셋을
+    # 물어야 하고, 이력이 쌓이면 방문일 하나만 남는다. 복지사가 실제로 겪는
+    # 변화가 그것이고, 숫자로 보인다.
     if full:
         say()
-        say("\033[1mSTEP 7\033[0m  다음 접수에서 달라지는 것 — 플라이휠           (4:40~5:20)")
+        say("\033[1mSTEP 7\033[0m  쓸수록 물어볼 것이 줄어든다 — 플라이휠        (4:40~5:20)")
+
         u = "허리가 아파서 정형외과 가야 하는디"
-        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u},
-                   headers=SW_AUTH)
-        c1 = r.json()["card"]
-        say(f'   1차 접수: "{u}"')
-        say(f"   {mark(True)} {c1['hospital']}  [{c1['hospital_status']}]  ← 1회 방문이라 '추정'")
+        def intake_of(phone: str) -> tuple[int, list[str], dict]:
+            r, _ = api("POST", "/api/intakes",
+                       json={"phone": phone, "utterance": u}, headers=SW_AUTH)
+            body = r.json()
+            iid = body.get("intake_id")
+            d, _ = api("GET", f"/api/intakes/{iid}", headers=SW_AUTH)
+            g = d.json().get("gate") or {}
+            return iid, [b["label"] for b in g.get("blockers", [])], body.get("card") or {}
 
+        # ① 이력이 없는 어르신 — 처음 겪는 접수
+        iid1, first, _ = intake_of(PHONE_NEW_FLYWHEEL)
+        say(f'   1차 접수(이력 없음): "{u}"')
+        say(f"   {mark(True)} 확인할 항목 {len(first)}개 — {', '.join(first)}")
+        say("                 병원도 대상자도 우리가 아는 것이 없다")
+
+        # ② 확인 → 확정 → 동행 → 사후기록.
+        #
+        # **이력만 넣어서는 안 된다.** 미등록 번호는 케어 프로필이 없어서
+        # 병원 후보 산출이 이력을 아예 보지 못한다. 확정이 프로필을 만들고,
+        # 그 프로필에 이력이 붙는다 — 이 순서가 곧 서비스의 데이터 순환이다.
         today = datetime.date.today().isoformat()
-        api("POST", "/api/flywheel", json={"phone": PHONE_FLYWHEEL, "date": today,
-                                           "hospital": c1["hospital"], "dept": "정형외과"},
-            headers=SW_AUTH)
-        say(f"   {mark(True)} 동행 완료 → 이력에 누적")
+        # 1차에서 물어야 했던 것을 전부 확인한다 — 이것이 복지사가 실제로 거는
+        # 확인 전화다. 대상자만 확인하고 확정을 시도하면 병원에서 409 로 막힌다.
+        for field, value in (("target", "정복순"), ("hospital", "△△정형외과"),
+                             ("date", today)):
+            api("POST", f"/api/intakes/{iid1}/verify",
+                json={"field": field, "value": value}, headers=SW_AUTH)
+        cr, _ = api("POST", f"/api/intakes/{iid1}/confirm",
+                    json={"hospital": "△△정형외과", "date": today, "level": "동행 필요"},
+                    headers=SW_AUTH)
+        check("STEP 7 1차 — 확인 후 확정", cr.status_code == 200, f"HTTP {cr.status_code}")
+        say(f"   {mark(cr.status_code == 200)} 통화로 확인({len(first)}건) → 확정 → 케어 프로필 등록")
+        api("POST", "/api/flywheel",
+            json={"phone": PHONE_NEW_FLYWHEEL, "date": today,
+                  "hospital": "△△정형외과", "dept": "정형외과"}, headers=SW_AUTH)
+        say(f"   {mark(True)} 동행 완료 → 사후기록 → 이력에 1건 누적")
 
-        r, _ = api("POST", "/api/intakes", json={"phone": PHONE_FLYWHEEL, "utterance": u},
-                   headers=SW_AUTH)
-        c2 = r.json()["card"]
-        # 쌓이는 것은 **근거**지 확신이 아니다. 2회가 돼도 어르신이 이번에 그
-        # 병원을 말한 것은 아니므로 상태는 '추정' 그대로다. 예전에는 여기서
-        # '확인됨' 으로 올렸는데, 그 값이 전화 안내까지 흘러가 말한 적 없는
-        # 병원을 확정해서 들려줬다.
-        r1, r2_ = (c1["reasons"] or [""])[0], (c2["reasons"] or [""])[0]
-        grew = (c1["hospital_status"] == "추정" and c2["hospital_status"] == "추정"
-                and c2["hospital"] is not None and "2회" in r2_ and r1 != r2_)
-        check("STEP 7 플라이휠 — 근거 누적(확정 승격 없음)", grew,
-              f"{c1['hospital_status']}/{r1[:24]} → {c2['hospital_status']}/{r2_[:24]}")
-        say(f"   {mark(grew)} 2차 접수: {c2['hospital']}  [{c2['hospital_status']}]  ← 2회가 됐지만 여전히 '추정'")
-        say(f"                근거: {r2_}")
-        say("   멘트: 기록이 쌓이면 후보의 근거가 두터워집니다. "
-            "다만 어르신이 말하지 않은 병원을 AI가 확정하지는 않습니다.")
+        # ③ 같은 발화, 같은 어르신 — 이번엔 프로필과 이력이 있다
+        _, second, c2 = intake_of(PHONE_NEW_FLYWHEEL)
+        say(f'   2차 접수(이력 1건): "{u}"')
+        say(f"   {mark(True)} 확인할 항목 {len(second)}개 — {', '.join(second) or '없음'}")
+        if c2.get("hospital"):
+            say(f"                 병원 후보: {c2['hospital']} [{c2['hospital_status']}]")
+            say(f"                 근거: {(c2.get('reasons') or ['—'])[0]}")
+
+        shrank = len(second) < len(first)
+        check("STEP 7 플라이휠 — 확인할 항목이 줄어든다", shrank,
+              f"{len(first)}개({','.join(first)}) → {len(second)}개({','.join(second) or '없음'})")
+
+        # ④ 오래 다닌 어르신과 비교 — 도달점을 보여준다
+        _, veteran, _ = intake_of(PHONE)
+        say(f"   {mark(True)} 참고: 이력 3건인 어르신은 확인할 항목 {len(veteran)}개 "
+            f"— {', '.join(veteran) or '없음'}")
+        check("STEP 7 이력이 많을수록 더 줄어든다", len(veteran) <= len(second),
+              f"이력1건 {len(second)}개 · 이력3건 {len(veteran)}개")
+
+        say("   멘트: 쌓이는 것은 확신이 아니라 근거입니다. 병원은 여전히 '추정'이고")
+        say("         확정은 사람이 합니다. 대신 물어볼 것이 셋에서 하나로 줍니다.")
 
     # ══════════════════════ 시나리오 B — 실패 대응 ══════════════════════
     head("시나리오 B — 실패·저확신 대응", "목표 " + win("2:00 ~ 2:45","5:20 ~ 7:00"))
