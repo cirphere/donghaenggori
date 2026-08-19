@@ -474,11 +474,50 @@ def case22() -> None:
           f" · 말한대로={말한대로} 이력알림={이력도알림} 이력유지={이력유지}")
 
 
+def case23() -> None:
+    """'내일모레' 는 하루다. 그리고 고친 말과 고르라는 말을 가른다.
+
+    실통화: "나 내일 모레 한 오후쯤에 한 3시 넘어가지고 정형외과 갈라 하는데"
+
+    '내일' 과 '모레' 가 각각 후보로 잡혀 '복수 표현' 으로 걸렸다. 날짜가 비면
+    확정 게이트가 막히고, 어르신은 분명하게 하루를 말했는데 확인 전화를 한 통
+    더 받는다.
+
+    **고친 말과 고르라는 말은 다르다.** "내일 아니고 모레" 는 앞을 물린
+    것이라 모레로 확정해도 되지만, "내일 아니면 모레" 는 둘 중 하나를
+    고르라는 말이라 우리가 고르면 안 된다 — 절반의 확률로 어르신이 엉뚱한
+    날 병원 앞에 선다.
+    """
+    하루 = [("내일모레 병원 가야 해", 2), ("내일 모레 병원 가야 해", 2),
+            ("낼모레 가야겄어", 2), ("낼 모레 가야겄어", 2),
+            ("내일 가야 해", 1), ("모레 가야 해", 2)]
+    for 말, 며칠 in 하루:
+        want = (BASE_DATE + datetime.timedelta(days=며칠)).isoformat()
+        got = dateparse.parse_date(말, today=BASE_DATE)
+        check(23, f"'{말[:12]}'", got and got["date"] == want,
+              f"{got['date'] if got else None} (기대 {want})")
+
+    정정 = ["내일 아니고 모레 가야 해", "내일 말고 모레", "내일 아니라 모레요",
+            "내일은 안 되고 모레로 해줘", "내일은 못 가고 모레 가야겄어"]
+    want = (BASE_DATE + datetime.timedelta(days=2)).isoformat()
+    for 말 in 정정:
+        got = dateparse.parse_date(말, today=BASE_DATE)
+        check(23, f"정정 '{말[:12]}'", got and got["date"] == want,
+              f"{got['date'] if got else None}")
+
+    # 고르라는 말은 비워 둔다 — 확인 질문으로 넘어간다.
+    for 말 in ["내일 아니면 모레", "내일이나 글피 중에", "내일이나 모레쯤",
+               "내일부터 글피까지"]:
+        got = dateparse.parse_date(말, today=BASE_DATE)
+        check(23, f"선택 '{말[:12]}'", got is not None and got["date"] is None,
+              f"{got['date'] if got else None} — 확정하면 안 된다")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case7b, case7c, case7d, case7e, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17, case18, case19, case20, case21, case22):
+               case14, case15, case16, case17, case18, case19, case20, case21, case22, case23):
         try:
             fn()
         except Exception as e:

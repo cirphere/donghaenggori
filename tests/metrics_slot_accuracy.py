@@ -117,8 +117,12 @@ CASES: list[tuple[str, bool, str, dict[str, str | None]]] = [
      {"date": offset(1), "dept": "내과"}),
     ("이번주 말고 담주 수요일에", True, PHONE,
      {"date": next_weekday(2)}),                        # 주 단위 정정
+    # '낼모레' 는 두 날이 아니라 하루다(=모레). 예전에는 '낼' 과 '모레' 가
+    # 각각 후보로 잡혀 '복수 표현' 으로 걸렸고, 이 기대값이 그 동작을 정답으로
+    # 굳혀 두고 있었다. '모레쯤' 은 원래도 확정하므로 '낼모레쯤' 만 물어보는
+    # 것은 앞뒤가 안 맞았다.
     ("낼모레쯤 가야 쓰겄는디", True, PHONE,
-     {"date": None}),                                   # 모호 — 물어야 한다
+     {"date": offset(2)}),
     ("아침 일찍 가고 잡소", True, PHONE,
      {"time": None}),                                   # 시각 아님
     ("낼 오후에 이비인후과", True, PHONE,
