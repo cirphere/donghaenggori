@@ -40,14 +40,42 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("STT_CONF_THRESHOLD", "-0.9"))
 #   접수 발화는 수십 초, 매니저 메모도 2분 안쪽이라 5분이면 충분히 넉넉하다.
 MAX_SECONDS = float(os.environ.get("STT_MAX_SECONDS", "300"))
 
-# 도메인 힌트 — Whisper가 진료과·복지 용어를 더 잘 잡게 한다
+# 도메인 힌트 — Whisper가 진료과·복지 용어를 더 잘 잡게 한다는 의도였다.
 #
-# **길게 쓰지 않는다.** initial_prompt 는 224 토큰에서 잘리고, 길수록 프롬프트에
-# 있는 단어를 없는데도 받아적는 쪽으로 기운다. 진료과처럼 닫힌 목록만 넣는다.
-DOMAIN_PROMPT = (
+# **기본을 끔으로 둔다. hotwords 와 같은 이유로, 같은 일이 실제로 일어났다.**
+#
+# 바로 아래 hotwords 주석에 적힌 사고("힌트로 준 어휘를 디코더가 신호 약한
+# 구간에서 그대로 받아적는다")가 initial_prompt 에서도 똑같이 났다. 그런데
+# 이쪽이 더 나쁘다 — hotwords 는 꼬리에 낱말이 붙는 정도였지만, 여기서는
+# **발화가 통째로 프롬프트로 바뀐다.**
+#
+#     정답: 나도 그것은 모르겄네 다보도 많이 #이름#께
+#     인식: 정형외과, 내과, 이비인후과, 생활지원사, 동행 매니저.
+#
+# 전라도 어르신 발화 282건(8kHz 전화 재현, large-v3)으로 켠 전후를 쟀다:
+#
+#                   CER      프롬프트 누수   CER>0.9 파탄
+#     켬(예전 기본) 0.2105       20건           13건
+#     끔            0.1744        0건            0건
+#
+# 누수가 0 이 되고 CER 이 상대 17% 내려간다. 길이와는 무관했다(2.9초~51초에
+# 고루 났다) — 그래서 "짧은 파일만 빼기" 같은 가드로는 못 막고, 프롬프트
+# 자체를 끄는 것이 답이다.
+#
+# 목록은 남겨 둔다. STT_DOMAIN_PROMPT=on 으로만 켜지고, **켜기 전에
+# tools/stt_eval.py 로 켠 전후 CER 을 재고 나아졌을 때만** 켠다. 그 순서를
+# 지키지 않아 hotwords 로 두 번, 여기서 한 번 더 샜다.
+_DOMAIN_PROMPT = (
     "병원동행 접수 통화입니다. 정형외과, 내과, 안과, 이비인후과, 치과, 재활의학과, "
     "신경과, 피부과, 보건의료원, 약국, 생활지원사, 사회복지사, 동행 매니저."
 )
+
+
+def domain_prompt() -> str:
+    """디코더에 줄 도메인 힌트(initial_prompt). **기본은 끔.**"""
+    if (os.environ.get("STT_DOMAIN_PROMPT") or "").strip().lower() != "on":
+        return ""
+    return _DOMAIN_PROMPT
 
 # hotwords — "이 단어들이 나올 수 있다" 는 어휘 힌트. initial_prompt 와 다른 인자다.
 #
@@ -253,7 +281,7 @@ def transcribe(audio_path: str, language: str = "ko",
     model = _get_model(size, device)
     segments, info = model.transcribe(
         audio_path, language=language,
-        initial_prompt=DOMAIN_PROMPT,
+        initial_prompt=domain_prompt(),
         hotwords=hotwords(),
         vad_filter=True,                    # 무음 구간 제거 — 통화 녹음에 유효
         vad_parameters=VAD_PARAMETERS,

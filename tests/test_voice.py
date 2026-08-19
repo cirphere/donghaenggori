@@ -257,6 +257,20 @@ def main() -> int:
               _stt._postprocess(원문))
     check("hotwords 는 기본이 꺼짐", _stt.hotwords() == "", repr(_stt.hotwords()))
 
+    # ── initial_prompt 도 같은 이유로 꺼져 있어야 한다 ──────────
+    # hotwords 와 원인이 같은데 피해는 더 크다. 전라도 어르신 발화 282건에서
+    # 20건이 프롬프트를 그대로 받아적었고(그 건들 CER 중앙값 0.96), 발화가
+    # 통째로 "정형외과, 내과, 이비인후과, 생활지원사, 동행 매니저." 로 바뀌었다.
+    # 끄면 누수 0건 · CER 0.2105 → 0.1744.
+    check("initial_prompt 는 기본이 꺼짐", _stt.domain_prompt() == "",
+          repr(_stt.domain_prompt()))
+
+    _os.environ["STT_DOMAIN_PROMPT"] = "on"
+    dp = _stt.domain_prompt()
+    check("on 으로 켜면 진료과 목록이 나온다", "정형외과" in dp and "내과" in dp, dp[:40])
+    _os.environ.pop("STT_DOMAIN_PROMPT", None)
+    check("끄면 다시 빈 값", _stt.domain_prompt() == "", repr(_stt.domain_prompt()))
+
     _os.environ["STT_HOTWORDS"] = "on"
     hw = _stt.hotwords()
     check("on 으로 켜면 이동 어휘가 나온다", "배편" in hw and "선착장" in hw, hw[-40:])
