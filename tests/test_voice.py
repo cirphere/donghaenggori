@@ -226,10 +226,18 @@ def main() -> int:
     # "배" 를 "비" 로 듣는 모음 혼동을 실제로 겪었고, 도메인 어휘를 알려주면
     # 디코더가 그 쪽으로 기운다. 개인 이력은 넣지 않는다 — 특정 어르신이 다닌
     # 병원을 넣으면 그분이 말하지 않은 이름이 전사에 뜬다.
+    import os as _os
+
     from donghaenggori.services import stt as _stt
+    # **기본은 끔.** 힌트로 준 어휘가 두 번 전사에 샜다 — 시설명("광주광역시
+    # 남구종합사회복지관…")이 한 번, 짧은 일반 명사("보건소 보행기 지팡이")가
+    # 한 번. 종류를 가리지 않는다. 이득은 잰 적이 없다.
+    _os.environ.pop("STT_HOTWORDS", None)
+    check("hotwords 는 기본이 꺼짐", _stt.hotwords() == "", repr(_stt.hotwords()))
+
+    _os.environ["STT_HOTWORDS"] = "on"
     hw = _stt.hotwords()
-    check("hotwords 에 이동 어휘가 있다", "배편" in hw and "선착장" in hw, hw[-40:])
-    check("hotwords 가 비어 있지 않다", len(hw.split()) >= 10, f"{len(hw.split())}개")
+    check("on 으로 켜면 이동 어휘가 나온다", "배편" in hw and "선착장" in hw, hw[-40:])
 
     # **고유명사를 넣지 않는다.** 관내 시설명·지역명을 넣었더니 어르신이 하지
     # 않은 말이 접수 원문으로 들어왔다 — "광주광역시 남구종합사회복지관
@@ -240,11 +248,7 @@ def main() -> int:
     check("hotwords 에 긴 고유명사가 없다", not 긴것, str(긴것))
     check("hotwords 에 지역명이 없다",
           not any(x in hw for x in ("광역시", "광주", "전남", "전주")), hw[:60])
-    # 시연 중에 또 헛말이 보이면 재배포 없이 끌 수 있어야 한다.
-    import os as _os
-    _os.environ["STT_HOTWORDS"] = "off"
-    check("STT_HOTWORDS=off 로 끌 수 있다", _stt.hotwords() == "", repr(_stt.hotwords()))
-    _os.environ.pop("STT_HOTWORDS")
+    _os.environ.pop("STT_HOTWORDS", None)
 
     # 앞 단계에서 받은 성함은 접수 원문에 섞이지 않는다.
     voice._remember_identity("CID2", "이영희요 목포시 용당동 삽니다")
