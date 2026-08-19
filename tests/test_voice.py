@@ -197,6 +197,16 @@ def main() -> int:
           and "who=new" in ir.text and "<Hangup" not in ir.text, ir.text[:160])
     check("성함 녹음 뒤엔 문의를 묻는다", "어디가 편찮으신지" in ir.text, ir.text[:160])
 
+    # STT 어휘 힌트 — 8kHz 에서 제일 많이 틀리는 것이 고유명사다.
+    # "배" 를 "비" 로 듣는 모음 혼동을 실제로 겪었고, 도메인 어휘를 알려주면
+    # 디코더가 그 쪽으로 기운다. 개인 이력은 넣지 않는다 — 특정 어르신이 다닌
+    # 병원을 넣으면 그분이 말하지 않은 이름이 전사에 뜬다.
+    from donghaenggori.services import stt as _stt
+    hw = _stt.hotwords()
+    check("hotwords 에 이동 어휘가 있다", "배편" in hw and "선착장" in hw, hw[-40:])
+    check("hotwords 가 비어 있지 않다", len(hw.split()) >= 10, f"{len(hw.split())}개")
+    check("hotwords 는 캐시된다", _stt.hotwords() is hw)
+
     # 앞 단계에서 받은 성함은 접수 원문에 섞이지 않는다.
     voice._remember_identity("CID2", "이영희요 목포시 용당동 삽니다")
     check("성함 발화는 CallId 로 넘긴다", voice._take_identity("CID2") is not None)
