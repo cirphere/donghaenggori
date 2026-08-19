@@ -91,6 +91,23 @@ def _cautions(pm10: list[int], pm25: list[int], bad: list) -> list[str]:
             out.append(f"초미세먼지 나쁨 (PM2.5 {avg:.0f}㎍/㎥) → 외출 시간 단축 권장")
     if bad and not out:
         out.append(f"일부 측정소 대기질 나쁨 ({', '.join(str(b) for b in bad[:2])} 등)")
+
+    # **문제가 없을 때도 한 줄 남긴다.**
+    #
+    # 예전에는 '나쁨' 일 때만 문구를 냈다. 공기가 좋은 날에는 이 칸이 통째로
+    # 비는데, 화면에서는 "확인했고 문제없음" 과 "확인하지 않음" 이 똑같이
+    # 보인다. 복지사에게는 그 둘이 다르다 — 동행을 내보내기 전에 봤는지
+    # 여부가 걸린다.
+    #
+    # 판단은 여전히 하지 않는다. 수치와 등급만 적고 "나가도 된다" 는 말은
+    # 넣지 않는다(문서 4-1: 방문 가부를 AI 가 결정하지 않는다).
+    if not out and (pm10 or pm25):
+        parts = []
+        if pm10:
+            parts.append(f"PM10 {sum(pm10) / len(pm10):.0f}")
+        if pm25:
+            parts.append(f"PM2.5 {sum(pm25) / len(pm25):.0f}")
+        out.append(f"미세먼지 보통 이하 ({' · '.join(parts)}㎍/㎥) — 특이사항 없음")
     return out
 
 

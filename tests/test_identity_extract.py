@@ -242,7 +242,31 @@ check("직접 말한 진료과는 spoken",
 check("증상에서 고른 진료과는 dict",
       nlu._rule_based("무릎이 아파서").dept_source == "dict")
 
+# ── 외출 참고 정보는 특이사항이 없어도 한 줄 남긴다 ────────────────
+#
+# '나쁨' 일 때만 문구를 내면, 공기가 좋은 날에는 칸이 통째로 빈다. 화면에서
+# "확인했고 문제없음" 과 "확인하지 않음" 이 똑같이 보이는데, 동행을 내보내는
+# 복지사에게는 그 둘이 다르다. 판단은 여전히 하지 않는다 — 수치만 적는다.
+from donghaenggori.services.airquality import _cautions as _air  # noqa: E402
+from donghaenggori.services.weather import _cautions as _wx  # noqa: E402
+
+good = _air([14, 12], [5, 4], [])
+check("대기질 좋아도 한 줄 남는다", len(good) == 1 and "특이사항 없음" in good[0], str(good))
+bad = _air([92, 88], [40, 38], [])
+check("나쁘면 안내 문구가 나온다", any("마스크" in x for x in bad), str(bad))
+check("측정값이 없으면 비운다", _air([], [], []) == [])
+
+wx = _wx(24, 15, 10)
+check("날씨 특이사항 없어도 한 줄", len(wx) == 1 and "특이사항 없음" in wx[0], str(wx))
+check("폭염이면 안내", any("폭염" in x for x in _wx(36, 26, 0)))
+check("예보가 없으면 비운다", _wx(None, None, None) == [])
+
+# 방문 가부를 판단하지 않는다(문서 4-1). 권유·금지 표현이 있으면 안 된다.
+for line in good + wx + _wx(36, 26, 0) + bad:
+    check(f"방문 가부를 말하지 않는다 — {line[:16]}",
+          not any(w in line for w in ("나가도", "취소", "연기하세요", "가지 마")), line)
+
 print("=" * 78)
-total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10 + 13
+total = 8 + 9 + 6 + 2 + 12 + 2 + 4 + 7 + 6 + 10 + 13 + 6 + 7
 print(f"  {total - _fail}/{total} 통과")
 sys.exit(1 if _fail else 0)

@@ -129,6 +129,20 @@ def _cautions(tmx: float | None, tmn: float | None, pop: int | None) -> list[str
         out.append(f"한파 가능성 (최저 {tmn:.0f}℃) → 방한 준비 안내")
     if pop is not None and pop >= RAIN_POP:
         out.append(f"강수확률 {pop}% → 우산·미끄럼 주의")
+
+    # 특이사항이 없어도 한 줄 남긴다 — 조회했다는 사실이 화면에 보여야
+    # "확인했고 문제없음" 과 "확인하지 않음" 이 구분된다. 판단은 하지 않는다.
+    if not out and (tmx is not None or tmn is not None):
+        parts = []
+        if tmn is not None and tmx is not None:
+            parts.append(f"{tmn:.0f}~{tmx:.0f}℃")
+        elif tmx is not None:
+            parts.append(f"최고 {tmx:.0f}℃")
+        else:
+            parts.append(f"최저 {tmn:.0f}℃")
+        if pop is not None:
+            parts.append(f"강수확률 {pop}%")
+        out.append(f"날씨 특이사항 없음 ({' · '.join(parts)})")
     return out
 
 
