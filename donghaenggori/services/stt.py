@@ -13,8 +13,14 @@ faster-whisper 로컬 추론을 쓴다. 외부 API 키가 필요 없고 오프�
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 from dataclasses import dataclass, field
+
+# voice.py 와 같은 로거를 쓴다 — uvicorn 이 루트에 핸들러를 안 달아서
+# 자체 이름으로 만들면 INFO 가 조용히 사라진다.
+_log = logging.getLogger("uvicorn.error")
 
 # 모델 크기: tiny < base < small < medium. 한국어는 small 이상을 권장한다.
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
@@ -156,8 +162,51 @@ def _get_model(size: str | None = None, device: str | None = None,
     return _model
 
 
+# Whisper 가 무음에 뱉는 자막 상투구.
+#
+# 실통화 접수 내용이다.
+#
+#     "…어쨌든 그려. 시청해주셔서 감사합니다. 이거 시청해주셔서 감사합니다."
+#
+# 어르신이 한 말이 아니다. hotwords 와는 다른 원인이다(그건 이미 껐다) —
+# Whisper 학습 데이터에 유튜브 자막이 대량으로 들어 있어서, 말이 끝난 뒤
+# 남는 무음 구간을 영상 끝으로 보고 자막 맺음말을 지어낸다. 한국어에서
+# 특히 잘 나오는 것이 '시청해주셔서 감사합니다' 다.
+#
+# **일반적인 인사말은 넣지 않는다.** '감사합니다' 만 지우면 어르신이 통화
+# 끝에 실제로 하는 인사를 지운다. 자막에서만 쓰는 말, 접수 통화에서 나올
+# 이유가 없는 낱말만 고른다.
+_HALLUCINATIONS = (
+    "시청해주셔서 감사합니다", "시청해 주셔서 감사합니다",
+    "시청해주셔서감사합니다", "끝까지 시청해주셔서 감사합니다",
+    "구독과 좋아요", "구독 좋아요", "좋아요와 구독",
+    "구독과 알림설정", "알림설정 부탁드립니다",
+    "다음 영상에서 만나요", "다음 시간에 만나요", "다음 영상에서 뵙겠습니다",
+    "한글자막 by", "자막 제공", "영상 편집",
+)
+
+
+def _strip_hallucinations(text: str) -> str:
+    """자막 상투구를 걷어낸다. 지웠으면 로그에 남긴다.
+
+    조용히 지우지 않는다 — 얼마나 자주 나오는지 알아야 다음 수를 정한다.
+    """
+    out = text
+    hit = []
+    for phrase in _HALLUCINATIONS:
+        if phrase in out:
+            hit.append(phrase)
+            out = out.replace(phrase, " ")
+    if hit:
+        # 지운 자리에 남는 구두점·공백을 정리한다.
+        out = re.sub(r"\s*([.,])\s*\1+", r"\1", out)
+        out = re.sub(r"\s+", " ", out).strip(" .,")
+        _log.info("자막 환각 제거 — %s", " / ".join(hit))
+    return out
+
+
 def _postprocess(text: str) -> str:
-    out = text.strip()
+    out = _strip_hallucinations(text.strip())
     for a, b in _FIXUPS:
         out = out.replace(a, b)
     return out
