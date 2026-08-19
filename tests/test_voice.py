@@ -135,28 +135,31 @@ def main() -> int:
 
     # ── 1턴 인사 ─────────────────────────────────────────────
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
-    ok = ("<Say" in body and "<Record" in body and "동행고리" in body
+    # 등록된 번호에는 "동행고리입니다" 인사를 하지 않는다 — 그 인사는 처음
+    # 연락한 어르신에게 하는 말이고(GREETING), 아는 번호에는 바로 묻는다.
+    ok = ("<Say" in body and "<Record" in body
           and "/api/voice/recording" in body)
-    check("인사 → 녹음", ok, "")
+    check("등록 번호 → 바로 녹음", ok, "")
     # 안내 멘트에는 119 를 넣지 않는다. 긴급은 발화로 감지해 담당자로 넘기고,
     # 전환이 실패했을 때만 119 를 안내한다(아래 '연결 실패' 검사 참조).
     check("안내 멘트에 119 없음", "119" not in body, "")
-    # AI 가 자유롭게 대화하면 설계가 깨진다. <Gather> 는 정해진 번호만 받으므로
-    # 대화가 아니다 — 음성을 해석해 분기하는 것이 아니라 키를 세는 것이다.
-    check("음성으로 분기하지 않음",
-          'numDigits="1"' in body and "input=" not in body, "DTMF 만 받는다")
+    # AI 가 자유롭게 대화하면 설계가 깨진다. 어느 경로에도 음성 인식으로
+    # 분기하는 곳이 없어야 한다 — 우리는 받아적을 뿐 통화를 끌지 않는다.
+    check("음성으로 분기하지 않음", "input=" not in body, "STT 로 분기하지 않는다")
 
-    # ── 본인 확인을 통화 앞에서 묻는다 ───────────────────────
-    # 예전에는 녹음 → STT → 되묻기 순이었는데, 그 대기 사이에 통화가 끊겨
-    # 확인 질문이 들리지 않았다. 앞으로 옮기면 STT 대기가 통화 끝으로 밀린다.
+    # ── 등록된 번호에는 되묻지 않는다 ────────────────────────
+    # "박순자 님 맞으신가요? 1번/2번" 을 뺐다. 그 답이 접수 카드를 바꾸지
+    # 않았기 때문이다 — 1번을 눌러도 안 눌러도 대상자는 '확인됨' 이고
+    # 확정 게이트도 똑같이 열렸다(아래 '누른 키가 카드를 바꾸지 않는다').
     body = post(client, "/api/voice/incoming", call_params(PHONE_SELF)).text
-    ok = ("<Gather" in body and "박순자" in body and "1번" in body and "2번" in body
-          and "/api/voice/identity" in body)
-    check("등록 대상자 → 1번/2번 묻기", ok, "")
-    # 확인 문구는 <Gather> 안에 있어야 barge-in 이 걸린다(문서). 밖으로 빼면
-    # 문장이 다 끝날 때까지 키를 못 누른다.
-    inside = body.split("<Gather")[1].split("</Gather>")[0]
-    check("확인 문구가 <Gather> 안에 있음", "맞으신가요" in inside, inside[:120])
+    check("등록 대상자 → 확인 질문 없이 바로 문의",
+          "맞으신가요" not in body and "<Gather" not in body, body[:150])
+    check("등록 대상자 → 증상을 묻는다",
+          "편찮으신지" in body and "<Record" in body, body[:150])
+    # 묻지 않았다는 사실이 접수에 남아야 한다. '응답 없음' 으로 남기면
+    # 물어봤는데 답이 없었다는 뜻이 되어, 나중에 "왜 확인 안 했나" 에
+    # 답할 수 없다.
+    check("묻지 않았음을 who=skipped 로 넘긴다", "who=skipped" in body, body[:200])
 
     # 미등록 번호 — 이름을 모르니 확인 질문은 건너뛰고 성함·읍면동부터 받는다.
     new_body = post(client, "/api/voice/incoming",
@@ -280,6 +283,26 @@ def main() -> int:
     check("2번이어도 말한 병원은 남는다", 아님.card.hospital == "송정병원",
           str(아님.card.hospital))
 
+    # **확인 질문을 뺀 근거.** 1번을 눌렀을 때와 아무것도 누르지 않았을 때
+    # 카드가 완전히 같다 — 대상자는 등록된 발신번호로 이미 정해지기 때문이다.
+    # 통화만 한 턴 길어졌다는 뜻이고, 그래서 뺐다.
+    #
+    # 이게 깨지면(누른 키가 카드를 바꾸게 되면) 확인 질문을 되살릴 이유가
+    # 생긴 것이다. 그때 이 테스트가 알려줘야 한다.
+    from donghaenggori.core import gate as G
+    무응답 = P.run("010-1234-5678", 말, channel="전화")
+    ㄱ, ㄴ = 본인.card.to_dict(), 무응답.card.to_dict()
+    check("1번과 무응답의 대상자가 같다",
+          ㄱ["fields"]["target"] == ㄴ["fields"]["target"],
+          f'{ㄱ["fields"]["target"]["status"]} vs {ㄴ["fields"]["target"]["status"]}')
+    check("1번과 무응답의 블로커가 같다",
+          [b["field"] for b in G.blockers(ㄱ)] == [b["field"] for b in G.blockers(ㄴ)],
+          str([b["field"] for b in G.blockers(ㄴ)]))
+    # 2번만 달랐다. 그 경로를 잃는 것이 이 변경의 유일한 비용이다.
+    check("2번은 달랐다 — 그것만 잃는다",
+          [b["field"] for b in G.blockers(아님.card.to_dict())] != [b["field"] for b in G.blockers(ㄱ)],
+          str([b["field"] for b in G.blockers(아님.card.to_dict())]))
+
     # .env 가 코드 기본값을 덮어써서 두 번 헤맸다. 빈 값은 '미설정'이어야 한다.
     for raw, want in (("", 60), ("  ", 60), ("45", 45), ("이상한값", 60)):
         os.environ["_T_REC"] = raw
@@ -295,10 +318,11 @@ def main() -> int:
           V._with_done_hint("말씀 후 아무 번호나 누르세요.") == "말씀 후 아무 번호나 누르세요.",
           V._with_done_hint("말씀 후 아무 번호나 누르세요."))
 
-    # 키를 못 누르면 <Gather> 는 콜백 없이 끝난다. 그때 흘러갈 곳이 있어야 한다.
-    check("키 안 눌러도 흘러갈 곳이 있음",
-          "<Record" in body and "who=unknown" in body,
-          "Gather 뒤에 Say+Record 가 따라온다")
+    # 되묻는 단계가 없으니 통화가 어디서도 멈추지 않는다 — 인사 뒤 곧바로
+    # 녹음이고, 키를 한 번도 누르지 않아도 접수까지 간다.
+    check("키를 안 눌러도 접수까지 간다",
+          "<Record" in body and "<Gather" not in body,
+          "되묻는 단계가 없다")
 
     # 미등록 번호는 물을 이름이 없다 — 바로 증상을 받는다
     body = post(client, "/api/voice/incoming", call_params(PHONE_NEW)).text
