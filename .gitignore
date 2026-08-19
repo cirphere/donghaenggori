@@ -36,6 +36,10 @@ __pycache__/
 *.hwp
 *.hwpx
 
+# 통화 표본 — 어르신 목소리와 건강 이야기다. README 만 남기고 전부 무시한다.
+donghaenggori/data/voice_samples/*
+!donghaenggori/data/voice_samples/README.md
+
 # 학습 산출물 — train_intent.py 로 재생성 (425MB)
 **/donghaenggori/data/models/
 

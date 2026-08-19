@@ -13,7 +13,9 @@ import base64
 import hashlib
 import hmac
 import os
+import shutil
 import sys
+import tempfile
 
 from fastapi.testclient import TestClient
 
@@ -196,6 +198,26 @@ def main() -> int:
           ir.status_code == 200 and "<Record" in ir.text
           and "who=new" in ir.text and "<Hangup" not in ir.text, ir.text[:160])
     check("성함 녹음 뒤엔 문의를 묻는다", "어디가 편찮으신지" in ir.text, ir.text[:160])
+
+    # 통화 표본 보관 — 기본은 꺼져 있어야 한다. 켜는 것은 운영 판단이고,
+    # 켜 두고 잊으면 어르신 목소리가 디스크에 조용히 쌓인다.
+    check("표본 보관은 기본 꺼짐", voice.KEEP_SAMPLES is False, str(voice.KEEP_SAMPLES))
+    _sample_dir = tempfile.mkdtemp(prefix="voice-sample-")
+    _prev_keep, _prev_dir = voice.KEEP_SAMPLES, voice.SAMPLE_DIR
+    voice.KEEP_SAMPLES, voice.SAMPLE_DIR = True, _sample_dir
+    try:
+        voice._keep_sample(b"RIFF....fake", "낼 정형외과 가야 쓰겄는디")
+        made = sorted(os.listdir(_sample_dir))
+        check("켜면 음성·전사가 짝으로 남는다",
+              len(made) == 2 and made[0].endswith(".txt") and made[1].endswith(".wav"),
+              str(made))
+        # 보관이 실패해도 통화는 계속돼야 한다.
+        voice.SAMPLE_DIR = "/proc/차단된경로"
+        voice._keep_sample(b"x", "y")
+        check("보관 실패가 통화를 막지 않는다", True)
+    finally:
+        voice.KEEP_SAMPLES, voice.SAMPLE_DIR = _prev_keep, _prev_dir
+        shutil.rmtree(_sample_dir, ignore_errors=True)
 
     # STT 어휘 힌트 — 8kHz 에서 제일 많이 틀리는 것이 고유명사다.
     # "배" 를 "비" 로 듣는 모음 혼동을 실제로 겪었고, 도메인 어휘를 알려주면
