@@ -22,14 +22,18 @@ FIELD_VALUE_ATTRS = {
     # 못한 접수(미등록 번호·본인 아님)에서만 채워진다. 언제나 '확인 필요' 다.
     "spoken_name": "spoken_name",
     "spoken_region": "spoken_region",
+    # 기존 흐름이 감당하지 못하는 요청(신규 병원 탐색·진료과 탐색·돌봄인력)에서만
+    # 세우는 칸. 어르신이 말한 조건을 구조화해 담고, 상태는 언제나 '확인 필요' 다.
+    "request": "request_summary",
     "hospital": "hospital",
     "dept": "dept",
     "date": "date_value",
     "time": "time_value",
 }
 FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
-                "spoken_region": "말한 주소", "hospital": "병원",
-                "dept": "진료과", "date": "방문일", "time": "방문 시각"}
+                "spoken_region": "말한 주소", "request": "요청 내용",
+                "hospital": "병원", "dept": "진료과",
+                "date": "방문일", "time": "방문 시각"}
 
 # 요청 유형별로 **의미가 있는 칸만** 낸다.
 #
@@ -50,6 +54,41 @@ INTENT_FIELDS = {
     "보호자연락": ("target", "spoken_name", "spoken_region"),
     "기타":     ("target", "spoken_name", "spoken_region", "date", "time"),
 }
+
+# 요청 유형(core/requesttype.py)이 의도보다 **우선**해서 칸을 정한다.
+#
+# 유형이 '기존재방문'이면 여기 없으므로 위 INTENT_FIELDS 가 그대로 쓰인다 —
+# 기존 접수는 무엇도 달라지지 않는다.
+#
+# 새 유형에는 '요청 내용'(request) 칸이 선다. 이 칸이 gate.BLOCKING 에 들어
+# 있어서, 사회복지사가 통화로 확인하기 전에는 확정이 막힌다. 칸을 세우지 않고
+# 병원·날짜만 '확인 필요'로 두는 방법도 있었지만, 그러면 게이트가 되묻는 질문이
+# "지난번 가셨던 ○○병원 맞으실까요?"가 된다 — 어디로 갈지 몰라서 전화한
+# 어르신에게 물을 말이 아니다.
+REQUEST_TYPE_FIELDS = {
+    # 어느 병원인지 우리가 모른다. 병원 칸은 남겨 조회 결과·불가 사유를 근거로
+    # 싣되(항상 '확인 필요'), 진료과는 직접 말했을 때만 값이 붙는다.
+    "신규병원탐색":   ("target", "spoken_name", "spoken_region", "request",
+                       "hospital", "dept", "date", "time"),
+    "진료과기반탐색": ("target", "spoken_name", "spoken_region", "request",
+                       "hospital", "dept", "date", "time"),
+    # 병원 일정이 아니라 사람을 요청한 것이다. 병원·진료과 칸을 세우지 않는다 —
+    # 인력 배치 데이터가 없으므로 우리가 채울 수 있는 것이 아무것도 없다.
+    "돌봄인력요청":   ("target", "spoken_name", "spoken_region", "request",
+                       "date", "time"),
+    # 무엇을 요청하는지조차 못 가렸다. 원문과 요청 칸만 남긴다.
+    "기타불분명":     ("target", "spoken_name", "spoken_region", "request"),
+}
+
+
+def fields_for(intent: str, request_type: str | None = None) -> tuple[str, ...] | None:
+    """이 카드에 세울 칸 목록. 모르는 값이면 None(= 전부 보여준다).
+
+    화면·게이트·파이프라인이 같은 판단을 각자 하지 않도록 한 곳에 둔다.
+    """
+    if request_type and request_type in REQUEST_TYPE_FIELDS:
+        return REQUEST_TYPE_FIELDS[request_type]
+    return INTENT_FIELDS.get(intent)
 
 
 @dataclass
@@ -110,6 +149,17 @@ class Card:
     # 잦고, 틀린 이름을 확정으로 띄우면 복지사가 그대로 부르게 된다.
     spoken_name: str | None = None
     spoken_region: str | None = None
+    # 요청 유형(core/requesttype.py). '기존재방문'이면 기존 흐름 그대로이고,
+    # 나머지 넷은 **AI가 병원·진료과·인력을 채우지 않은** 카드라는 뜻이다.
+    # None 은 유형을 가르지 않은 접수다(긴급·약국·보호자연락 등).
+    request_type: str | None = None
+    request_summary: str | None = None            # '요청 내용' 칸의 값
+    request_evidence: list[str] = field(default_factory=list)   # 판단에 쓴 원문 문구
+    request_conditions: dict = field(default_factory=dict)      # 구조화된 조건
+    # 검증된 목록에서 조회한 병원 후보(services/hospital_lookup.py).
+    # 항상 '추정 후보 — 사회복지사 확인 필요' 다. 조회가 안 되면 빈 목록이고,
+    # 그 사유는 병원 칸 근거에 문장으로 남는다.
+    lookup_candidates: list[dict] = field(default_factory=list)
 
     def fields_view(self) -> dict[str, dict]:
         """항목별 {값·상태·근거}. 평면 키(hospital, date_value…)는 그대로 두고 덧붙인다.
@@ -118,7 +168,7 @@ class Card:
         """
         # 유형에 없는 칸은 아예 내지 않는다. 모르는 유형(분류기가 새 라벨을
         # 내는 경우)은 전부 보여준다 — 빠뜨리는 것보다 낫다.
-        allowed = INTENT_FIELDS.get(self.intent)
+        allowed = fields_for(self.intent, self.request_type)
         out = {}
         for name, attr in FIELD_VALUE_ATTRS.items():
             if allowed is not None and name not in allowed:
@@ -150,6 +200,12 @@ class Card:
                 out[k]["status"] = "확인 필요"
             else:
                 out.pop(k)
+
+        # 요청 내용도 **어떤 경로로도 '확인됨'이 되지 않는다.** 기존 흐름이 감당
+        # 못 하는 요청이라 세운 칸이고, 닫는 방법은 사회복지사가 직접 응대해
+        # verify 로 확인한 값을 넣는 것뿐이다(gate.BLOCKING 에 들어 있다).
+        if "request" in out:
+            out["request"]["status"] = "확인 필요"
         return out
 
     def to_dict(self) -> dict:
@@ -188,6 +244,11 @@ class Card:
             "target_candidates": self.target_candidates,
             "outing_checklist": self.outing_checklist,
             "reference_candidates": self.reference_candidates,
+            # 새 요청 유형. '기존재방문'·None 이면 화면은 지금과 똑같이 그리면 된다.
+            "request_type": self.request_type,
+            "request_evidence": self.request_evidence,
+            "request_conditions": self.request_conditions,
+            "lookup_candidates": self.lookup_candidates,
         }
 
     def to_text(self) -> str:
@@ -198,17 +259,29 @@ class Card:
         L.append(f"│ 대상자   : {self.target}  ({self.phone_masked})")
         L.append(f"│ 원문 발화: \"{self.raw_utterance}\"")
         L.append(f"│ AI 요약  : {self.summary}")
-        L.append(f"│ 요청 유형: {self.intent}")
-        date_str = f"{self.date_label} ({self.date_value})" if self.date_value else "미확정"
-        if self.time_value:
-            date_str += f" {self.time_label} ({self.time_value})"
-        elif self.time_label:
-            date_str += f" {self.time_label} [오전·오후 확인 필요]"
-        L.append(f"│ 방문 예정: {date_str}")
-        hosp = self.hospital or "—"
-        L.append(f"│ 병원 후보: {hosp}  [{self.hospital_status}]   진료과: {self.dept or '—'}")
-        if self.reasons:
-            L.append(f"│ 근거     : {' / '.join(self.reasons)}")
+        L.append(f"│ 요청 유형: {self.intent}"
+                 + (f" / {self.request_type}" if self.request_type else ""))
+        if self.request_summary:
+            L.append(f"│ 요청 내용: {self.request_summary}  [확인 필요]")
+            if self.request_evidence:
+                L.append(f"│    근거   : {' / '.join(self.request_evidence)}")
+        # 세우지 않은 칸은 여기서도 내지 않는다. fields 에는 없는 "병원 후보: —"
+        # 가 이 뷰에만 남으면, 화면과 로그가 서로 다른 카드를 보여주게 된다 —
+        # 인력 요청에는 병원 칸이 아예 없다.
+        shown = fields_for(self.intent, self.request_type)
+        if shown is None or "date" in shown:
+            date_str = f"{self.date_label} ({self.date_value})" if self.date_value else "미확정"
+            if self.time_value:
+                date_str += f" {self.time_label} ({self.time_value})"
+            elif self.time_label:
+                date_str += f" {self.time_label} [오전·오후 확인 필요]"
+            L.append(f"│ 방문 예정: {date_str}")
+        if shown is None or "hospital" in shown:
+            hosp = self.hospital or "—"
+            L.append(f"│ 병원 후보: {hosp}  [{self.hospital_status}]"
+                     f"   진료과: {self.dept or '—'}")
+            if self.reasons:
+                L.append(f"│ 근거     : {' / '.join(self.reasons)}")
         if self.confirm_questions:
             L.append("│ 확인 질문(콜백):")
             for q in self.confirm_questions:
