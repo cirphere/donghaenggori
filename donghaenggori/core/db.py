@@ -671,6 +671,12 @@ def verify_card_field(intake_id: int, field: str, value: str,
         return None
 
     flat_key, column = _VERIFY_TARGETS[field]
+    # AI 가 뭐라고 했는지 먼저 집어 둔다. 아래에서 덮어쓰면 사라진다.
+    #
+    # 이 값이 없으면 감사 로그가 "안과로 확인함" 만 남아, 나중에 봐도 AI 가
+    # 맞혔는데 확인만 한 건지 틀린 것을 고친 건지 알 수 없다. 둘은 완전히
+    # 다른 사건이고, 무엇을 얼마나 고쳤는지가 곧 개선의 재료다.
+    was = (card.get(flat_key) or "").strip() if isinstance(card.get(flat_key), str) else card.get(flat_key)
     card[flat_key] = value
     fields = card.setdefault("fields", {})
     view = fields.setdefault(field, {"label": field})
@@ -705,7 +711,10 @@ def verify_card_field(intake_id: int, field: str, value: str,
         conn.commit()
     finally:
         conn.close()
-    log_audit(actor, role, "항목확인", "intake", str(intake_id), f"{field}={value}")
+    # 고친 것과 확인만 한 것을 구분해 남긴다.
+    detail = (f"{field}: {was} → {value}" if was and was != value
+              else f"{field}={value}")
+    log_audit(actor, role, "항목확인", "intake", str(intake_id), detail)
     return get_intake(intake_id)
 
 
