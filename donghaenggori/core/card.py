@@ -29,11 +29,18 @@ FIELD_VALUE_ATTRS = {
     "dept": "dept",
     "date": "date_value",
     "time": "time_value",
+    # 발화 기반 이동지원. 값은 아래 fields_view 에서 mobility_need 로 채운다 —
+    # 여기 attr 은 항목을 만들기 위한 자리다.
+    # 카드에 이미 mobility(거동 상태, 프로필의 "휠체어 사용" 등)가 있어서
+    # 키를 겹치지 않게 둔다 — 출처가 다른 두 값에 같은 이름을 붙이면
+    # 이 분리가 고치려던 문제를 그대로 다시 만든다.
+    "mobility_need": "mobility_need",
 }
 FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
                 "spoken_region": "말한 주소", "request": "요청 내용",
                 "hospital": "병원", "dept": "진료과",
-                "date": "방문일", "time": "방문 시각"}
+                "date": "방문일", "time": "방문 시각",
+                "mobility_need": "이동지원(발화)"}
 
 # 요청 유형별로 **의미가 있는 칸만** 낸다.
 #
@@ -46,7 +53,8 @@ FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
 # 차단도 함께 풀린다. 값을 지우는 게 아니라 **보여주지 않는** 것이라, 평면 키
 # (card.hospital 등)는 그대로 남아 나중에 유형이 바뀌어도 잃는 정보가 없다.
 INTENT_FIELDS = {
-    "병원동행": ("target", "spoken_name", "spoken_region", "hospital", "dept", "date", "time"),
+    "병원동행": ("target", "spoken_name", "spoken_region", "hospital", "dept",
+                 "date", "time", "mobility_need"),
     # 약을 대신 타 오는 요청. 어느 약국인지는 처방전을 봐야 알고 통화에서
     # 정할 수 있는 것이 아니라, 병원 칸을 세우지 않는다.
     "약국":     ("target", "spoken_name", "spoken_region", "date", "time"),
@@ -69,13 +77,13 @@ REQUEST_TYPE_FIELDS = {
     # 어느 병원인지 우리가 모른다. 병원 칸은 남겨 조회 결과·불가 사유를 근거로
     # 싣되(항상 '확인 필요'), 진료과는 직접 말했을 때만 값이 붙는다.
     "신규병원탐색":   ("target", "spoken_name", "spoken_region", "request",
-                       "hospital", "dept", "date", "time"),
+                       "hospital", "dept", "date", "time", "mobility_need"),
     "진료과기반탐색": ("target", "spoken_name", "spoken_region", "request",
-                       "hospital", "dept", "date", "time"),
+                       "hospital", "dept", "date", "time", "mobility_need"),
     # 병원 일정이 아니라 사람을 요청한 것이다. 병원·진료과 칸을 세우지 않는다 —
     # 인력 배치 데이터가 없으므로 우리가 채울 수 있는 것이 아무것도 없다.
     "돌봄인력요청":   ("target", "spoken_name", "spoken_region", "request",
-                       "date", "time"),
+                       "date", "time", "mobility_need"),
     # 무엇을 요청하는지조차 못 가렸다. 원문과 요청 칸만 남긴다.
     "기타불분명":     ("target", "spoken_name", "spoken_region", "request"),
 }
@@ -156,6 +164,18 @@ class Card:
     request_summary: str | None = None            # '요청 내용' 칸의 값
     request_evidence: list[str] = field(default_factory=list)   # 판단에 쓴 원문 문구
     request_conditions: dict = field(default_factory=dict)      # 구조화된 조건
+    # 이번 통화에서 어르신이 말한 이동지원 여부. **need_level 과 다른 축이다** —
+    # 저쪽은 프로필(장기요양등급·거동)에서 오는 '지원 수준'(단순 안내/차량+동행/
+    # 휠체어·부축)이고, 이건 '이 통화에서 필요하다고 했는가' 다.
+    #
+    # 섞으면 안 되는 이유가 성능평가로 드러났다 — "나 혼자 갈 수 있어" 라고
+    # 말해도 카드는 프로필 등급으로 "휠체어·부축 동행" 을 내놓았고, 그 말이
+    # 카드에 남지 않았다. 출처를 나눠 나란히 보여준다.
+    # {판정, 필요여부, 상태, 근거문구} — core/mobility.py
+    mobility_need: dict = field(default_factory=dict)
+    # 발화에서 들은 보호자 이야기. card.guardian(이름·관계·연락처, 프로필)과
+    # 다르다 — 저쪽은 못 만났을 때 전화할 곳이고, 이건 통화에서 한 말이다.
+    guardian_mentioned: dict = field(default_factory=dict)
     # 통화 중 후속질문과 그 답변. **사회복지사가 통화 과정을 그대로 검토할 수
     # 있어야 한다** — 값만 바뀌어 있으면 그 값이 어디서 왔는지 알 수 없고,
     # 어르신이 실제로 뭐라고 답했는지는 원문에도 없다(후속답변은 별도 녹음이다).
@@ -208,6 +228,19 @@ class Card:
             else:
                 out.pop(k)
 
+        # 이동지원은 fields 에 값이 따로 없다 — mobility_need 에서 옮겨 담는다.
+        # 항목으로 세우는 이유: 통화 중 되묻기가 fields 의 상태를 보고 물을 것을
+        # 고른다(core/followup.py). **게이트에는 넣지 않는다** — 이동지원을 몰라도
+        # 동행은 나간다는 정책은 그대로다.
+        if "mobility_need" in out:
+            mn = self.mobility_need or {}
+            out["mobility_need"] = {
+                "label": FIELD_LABELS["mobility_need"],
+                "value": mn.get("필요여부"),
+                "status": mn.get("상태") or "확인 필요",
+                "evidence": mn.get("근거문구") or [],
+            }
+
         # 요청 내용도 **어떤 경로로도 '확인됨'이 되지 않는다.** 기존 흐름이 감당
         # 못 하는 요청이라 세운 칸이고, 닫는 방법은 사회복지사가 직접 응대해
         # verify 로 확인한 값을 넣는 것뿐이다(gate.BLOCKING 에 들어 있다).
@@ -244,6 +277,11 @@ class Card:
             "mobility": self.mobility,
             "guardian": self.guardian,
             "caregiver": self.caregiver,
+            # 발화 기반 — 프로필 기반(need_level·guardian)과 나란히 둔다.
+            # 화면은 "지원 수준(프로필 기반)" 과 "이번 통화 언급(발화 기반)" 으로
+            # 갈라 보여준다. 출처를 나눠 보이는 것이 곧 설명가능성이다.
+            "mobility_need": self.mobility_need,
+            "guardian_mentioned": self.guardian_mentioned,
             "manager_notes": self.manager_notes,
             "flags": self.flags,
             "requester": self.requester,
@@ -305,7 +343,17 @@ class Card:
             for q in self.confirm_questions:
                 L.append(f"│    · {q}")
         mark = "공식 판정 기준" if self.need_official else "임시 추정"
-        L.append(f"│ 동행 지원 수준(후보): {self.need_level}  [{self.need_basis} · {mark}]")
+        L.append(f"│ 지원 수준(프로필 기반): {self.need_level}  [{self.need_basis} · {mark}]")
+        mn = self.mobility_need or {}
+        if mn:
+            need = mn.get("필요여부") or "확인 필요"
+            L.append(f"│ 이번 통화 언급(발화 기반): {need}  [{mn.get('상태')}]"
+                     f"  {mn.get('판정')}")
+            for e in (mn.get("근거문구") or [])[:3]:
+                L.append(f"│    근거: {e}")
+        gm = self.guardian_mentioned or {}
+        if gm.get("내용"):
+            L.append(f"│ 통화에서 들은 보호자: {gm['내용']}  [{gm.get('상태')}]")
         if self.need_reasons:
             L.append(f"│    근거: {', '.join(self.need_reasons)}")
         L.append(f"│ 보호자 연락 필요: {'예' if self.guardian_contact else '아니오'}")

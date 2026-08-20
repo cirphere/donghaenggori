@@ -94,7 +94,7 @@ def test_question() -> None:
             break
         seq.append(q.field)
     check("없는 것을 중복 없이 다 묻는다",
-          seq == ["hospital", "date", "time", "dept"], str(seq))
+          seq == ["hospital", "date", "time", "dept", "mobility_need"], str(seq))
 
     # **아는 것은 묻지 않는다.** 발신번호가 프로필과 일치하면 이름은 이미 아는
     # 것이고, 다시 묻는 것은 #105 에서 뺀 그 질문이다(답이 카드를 바꾸지 않았다).
@@ -144,7 +144,8 @@ def test_question() -> None:
           str(c3.get("request_type")))
 
     # 기본 정보가 다 있으면 묻지 않는다 — **아는 것을 다시 묻지 않는다.**
-    c4 = card_of("내일 오후 2시에 송정병원 정형외과 가야 해요")
+    # 이동지원까지 말한 발화여야 한다 — 그것도 되묻는 항목이다.
+    c4 = card_of("내일 오후 2시에 송정병원 정형외과 가야 해요, 혼자 갈 수 있어요")
     check("전부 채워졌으면 안 묻는다", fu.next_question(c4) is None,
           str(fu.pending_fields(c4)))
     check("아는 것은 하나도 다시 묻지 않는다", fu.pending_fields(c4) == [],
@@ -380,6 +381,11 @@ def test_call_flow() -> None:
     said["text"] = "정형외과요"
     xml = post(action_of(xml), CallId="C1", From=PHONE,
                RecordingUrl="http://x/a1b.wav", RecordingDuration="2")
+    # 이동지원도 되묻는 항목이다 — 언급이 없었으니 여기서 묻는다.
+    check("이동지원까지 묻는다", "혼자" in xml, xml[:200])
+    said["text"] = "혼자 갈 수 있어"
+    xml = post(action_of(xml), CallId="C1", From=PHONE,
+               RecordingUrl="http://x/a1c.wav", RecordingDuration="2")
     check("다 받으면 통화를 끝낸다", "<Hangup/>" in xml, xml[:160])
     check("아는 것(이름)은 되묻지 않는다", "맞으신가요" not in xml, xml[:200])
     row = db.get_intake(db.list_intakes(limit=1)[0]["id"])

@@ -19,6 +19,7 @@ from . import classify as classify_mod
 from . import dateparse, db
 from . import hospital as hospital_mod
 from . import identity as identity_mod
+from . import mobility as mobility_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
 from . import requesttype as rt_mod
@@ -477,6 +478,8 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 진료과를 아는가 — **직접 말했을 때만** 안다고 본다. 증상 사전이나 임베딩이
     # 고른 값은 우리 추정이라, 되물어 확인할 대상이다.
     dept_known = getattr(a, "dept_source", None) == "spoken"
+    # 발화 기반 이동지원 — 질문을 만들 때도 쓰고 카드에도 싣는다.
+    mob = mobility_mod.extract_mobility_need(utterance)
 
     flags, questions = [], []
     if new_type:
@@ -519,6 +522,10 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 필요로 남을 뿐이다 — 우리가 채우지 않는다.
     if "dept" in shown and not dept_known:
         questions.append("어느 과로 가시는지 알고 계신가요?")
+    # 이동지원은 발화에 언급이 없으면 통화에서 묻는다. 짧고 예/아니오로 답할 수
+    # 있어야 한다 — 어르신이 끝까지 듣고 답할 수 있는 길이여야 한다.
+    if "mobility_need" in shown and not mob.need:
+        questions.append("병원까지 혼자 가시기 어려우신가요?")
     if "date" in shown and not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
         questions.append(_ambiguity_question(a.date or {}, "날짜", channel))
@@ -557,6 +564,10 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         time_value=a.time.get("time") if a.time else None,
         reasons=hres.reasons, confirm_questions=questions,
         need_level=nres.level, need_reasons=nres.reasons,
+        # **발화에서만** 뽑는다. 프로필을 보지 않는다 — 섞이면 어디서 온 값인지
+        # 다시 구분할 수 없다(core/mobility.py 설명 참조).
+        mobility_need=mob.to_dict(),
+        guardian_mentioned=mobility_mod.extract_guardian_info(utterance).to_dict(),
         need_basis=nres.basis, need_official=nres.official,
         guardian_contact=nres.guardian_contact,
         # 기관이 이미 아는 값 — 확신도를 붙이지 않고 그대로 싣는다.

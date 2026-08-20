@@ -474,8 +474,10 @@ def main() -> int:
           "<Dial" in body and STAFF in body and "<Record" not in body, "")
 
     # ④ 기본 정보가 다 있으면 접수하고 끝낸다. **아는 것은 되묻지 않는다.**
+    #    이동지원도 되묻는 항목이라(core/followup.py) 발화에 그 말이 있어야
+    #    되묻지 않고 끝난다.
     voice._transcribe_url = lambda url: (
-        "허리 아파서 내일 송정병원 정형외과로 10시에 가야 될 것 같아")
+        "허리 아파서 내일 송정병원 정형외과로 10시에 가야 될 것 같아, 혼자 갈 수 있어요")
     body = post(client, "/api/voice/recording?who=self", rec_params(PHONE_SELF)).text
     row = newest()
     check("④ 정상 → 접수 안내 후 종료",

@@ -384,10 +384,37 @@ def case14() -> None:
         check(f"14 상호 아님 — {말[:16]}", got is None, str(got))
 
 
+# ── HOSPITAL-SAFE-15 : 상호 앞에 붙은 말을 이름에 넣지 않는다 ────
+def case15() -> None:
+    """앞 어절을 **버리고 남은 것을 쓴다.** 통째로 먹지도, 통째로 버리지도 않는다.
+
+    두 방향으로 다 틀린 적이 있다.
+      먹었다 — "새로 생긴 실버정형외과" → '생긴실버정형외과'(없는 병원, 확인됨)
+               "시내에 있는 이비인후과" → '시내에있는이비인후과'
+      잃었다 — "낼 한마음정형외과" → None. 그 자리를 과거 이력이 채웠다.
+
+    붙여 쓴 경우에는 앞 어절 검사를 아예 건너뛰고 있었다(gap 이 비어서).
+    띄어 썼는지는 상호 판단과 무관하다.
+    """
+    cases = [
+        ("동네에 새로 생긴 실버정형외과 거기 가고 싶은디", "실버정형외과"),
+        ("다음 주 수요일 오전에 시내에 있는 이비인후과 좀 가려고요", None),
+        ("무릎이 아파서 낼 한마음정형외과 10시에", "한마음정형외과"),
+        ("병원은 한마음 정형외과예요", "한마음정형외과"),
+        ("밝은 눈 안과 가려고요", "밝은눈안과"),
+        ("무릎이 아파서 정형외과 갈라고", None),
+        ("어제 간 안과 또 가야 해", None),
+        ("영 안 보여 안과 가봐야", None),
+    ]
+    for text, want in cases:
+        got = nlu.detect_hospital(text)
+        check(f"15 {want or '이름 없음'} — {text[:20]}…", got == want, f"→ {got}")
+
+
 def main() -> int:
     db.init_db()
     for fn in (case01, case02, case03, case04, case05, case06, case07, case08,
-               case09, case10, case11, case12, case13, case14):
+               case09, case10, case11, case12, case13, case14, case15):
         try:
             fn()
         except Exception as e:

@@ -282,7 +282,9 @@ def case16() -> None:
     r = pipeline.run(PHONE_MAIN, "모레 저번에 무릎 봐준 데 가야겄어")
     fields = r.card.to_dict()["fields"]
     allowed = {"확인됨", "추정", "확인 필요"}
-    ok = (set(fields) == {"target", "hospital", "dept", "date", "time"}
+    # mobility_need 는 발화 기반 이동지원 필요 여부다(core/mobility.py). 프로필의
+    # 거동 상태(card.mobility)와 다른 값이라 항목으로 따로 선다.
+    ok = (set(fields) == {"target", "hospital", "dept", "date", "time", "mobility_need"}
           and all(f["status"] in allowed for f in fields.values())
           and all(f["evidence"] for f in fields.values())
           and fields["target"]["status"] == "확인됨")
