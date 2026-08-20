@@ -215,6 +215,31 @@ def test_api() -> None:
     actions = [a["action"] for a in db.list_audit(limit=20)]
     check("'미확인 확정' 이 감사 로그에 남는다", "미확인 확정" in actions, str(actions[:4]))
 
+    # **'직접 응대함' 은 성격이 다른 사유다.** 나머지 넷은 "확인을 못 했거나
+    # 안 했다" 인데 이것은 "사람이 통화해서 처리했다" 다. 새 유형의 정상
+    # 경로가 여기라서, '물어볼 필요 없음' 이나 '기타' 로 적으면 감사 로그가
+    # 사실과 달라진다.
+    r = client.post("/api/intakes", json={"phone": PHONE_NEW,
+                                          "utterance": "병원 좀 가야 해. 다리가 아파서."},
+                    headers=AUTH)
+    iid_h = r.json()["intake_id"]
+    r = client.post(f"/api/intakes/{iid_h}/confirm",
+                    json={**payload, "acknowledge": True,
+                          "acknowledge_reason": "직접 응대함"}, headers=AUTH)
+    check("'직접 응대함' 사유로 확정된다", r.status_code == 200, f"HTTP {r.status_code}")
+    detail = [a["detail"] or "" for a in db.list_audit(limit=5)]
+    check("사유가 감사 로그에 그대로 남는다",
+          any("직접 응대함" in d for d in detail), str(detail[:2]))
+
+    # 계약 밖의 사유는 받지 않는다 — 아무 문자열이나 들어오면 집계가 무너진다.
+    r = client.post("/api/intakes", json={"phone": PHONE_NEW,
+                                          "utterance": "병원 좀 가야 해. 다리가 아파서."},
+                    headers=AUTH)
+    r = client.post(f"/api/intakes/{r.json()['intake_id']}/confirm",
+                    json={**payload, "acknowledge": True,
+                          "acknowledge_reason": "그냥"}, headers=AUTH)
+    check("계약 밖 사유는 422", r.status_code == 422, f"HTTP {r.status_code}")
+
     # 대상자를 확인하면 '말한 성함' 칸은 사라진다
     r = client.post("/api/intakes", json={"phone": PHONE_NEW,
                                           "utterance": "병원 좀 가야 해. 다리가 아파서."},
