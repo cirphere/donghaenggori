@@ -240,6 +240,35 @@ def test_api() -> None:
                           "acknowledge_reason": "그냥"}, headers=AUTH)
     check("계약 밖 사유는 422", r.status_code == 422, f"HTTP {r.status_code}")
 
+    # ── 이름 없는 프로필은 확정할 때 성함이 채워진다 ──────────
+    # 기관이 명단·주소부터 올리고 성함은 나중에 채우는 프로필이 있다.
+    # 그 번호로 전화가 오면 통화가 성함을 여쭙고 복지사가 확인해 확정까지
+    # 했는데도 프로필은 이름 없이 남았다 — 목록에 이름 자리에 지역이 뜬다.
+    # 물어보고 확인까지 받은 것을 버리는 셈이다.
+    NONAME = "010-4444-5555"
+    before = db.get_profile(NONAME)
+    check("시드에 이름 없는 프로필이 있다", before is not None and not (before["name"] or "").strip(),
+          repr((before or {}).get("name")))
+    r = client.post("/api/intakes", json={"phone": NONAME,
+                                          "utterance": "무릎이 아파서 낼 한마음정형외과 10시에"},
+                    headers=AUTH)
+    iid_nn = r.json()["intake_id"]
+    client.post(f"/api/intakes/{iid_nn}/verify",
+                json={"field": "target", "value": "조예원"}, headers=AUTH)
+    client.post(f"/api/intakes/{iid_nn}/confirm",
+                json={"hospital": "한마음정형외과", "date": "2026-08-21", "level": "일반"},
+                headers=AUTH)
+    after = db.get_profile(NONAME)
+    check("확정하면 성함이 채워진다", after["name"] == "조예원", repr(after["name"]))
+    # 다른 칸은 건드리지 않는다 — 덮어쓰기를 막는 원래 이유는 그대로 지킨다.
+    check("주소는 그대로", (after.get("region") or "") == (before.get("region") or ""),
+          f"{before.get('region')} → {after.get('region')}")
+    check("감사 로그에 남는다", "프로필 성함 등록" in [a["action"] for a in db.list_audit(limit=5)],
+          str([a["action"] for a in db.list_audit(limit=3)]))
+    # 이름이 이미 있는 프로필은 덮지 않는다.
+    check("기존 이름은 안 덮는다", db.get_profile("010-1234-5678")["name"] == "박순자",
+          db.get_profile("010-1234-5678")["name"])
+
     # 대상자를 확인하면 '말한 성함' 칸은 사라진다
     r = client.post("/api/intakes", json={"phone": PHONE_NEW,
                                           "utterance": "병원 좀 가야 해. 다리가 아파서."},
