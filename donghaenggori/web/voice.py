@@ -912,7 +912,7 @@ async def followup(request: Request) -> Response:
     try:
         db.apply_followup(intake_id, q.field, q.question, answer,
                           value=r.value, status=r.status, evidence=r.evidence,
-                          downgrade=r.downgrade)
+                          downgrade=r.downgrade, extra=r.extra)
     except Exception:
         _log.warning("후속답변 반영 실패", exc_info=True)
     data["asked"] += 1

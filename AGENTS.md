@@ -114,15 +114,22 @@ Copilot**이다. 어르신이 전화로 말한 짧고 모호한 요청을 받아
 - `신호없음`이면 '확인 필요' 다. **그때 프로필의 지원 수준을 이 칸에 끌어오지 않는다**
 - 규칙 기반이다. 근거는 원문 문구 그대로 남긴다. 방언 표현은 팀 사전
   (`docs/eval/전남방언_매핑사전.xlsx`)의 항목을 따랐다
+- **held-out 문장으로 재보면 44% 만 잡는다.** 문자열 포함 매칭이라 같은 뜻을 다른
+  말로 하면 놓친다("다리가 시원찮", "혼자서도 넉넉히 갈 수 있"). 사전을 넓히는
+  대신 **못 잡으면 통화에서 되묻는다**(followup 의 ASK_ORDER 에 mobility_need 가
+  있다). 놓친 것이 전부 '확인 필요' 로 떨어지는 방향이라 잘못된 확정은 없다
+- 카드 항목 키는 `mobility_need` 다. **`mobility` 로 두지 않는다** — 카드에 이미
+  거동 상태(프로필의 '휠체어 사용' 등)가 그 이름을 쓰고 있어서, 겹치면 이 분리가
+  고치려던 문제를 그대로 다시 만든다
 
-`tests/test_mobility.py`(42건)가 이 경계를 지킨다.
+`tests/test_mobility.py`(46건)가 이 경계를 지킨다.
 
 ---
 
 ## 통화 중 후속질문 (`donghaenggori/core/followup.py`)
 
 확인 필요로 남은 칸을 **어르신이 아직 통화 중일 때** 되묻는다. 동행 정보의 기본
-다섯(병원·방문일·방문시각·진료과·대상자)을 한 번에 하나씩, 통화당 최대 5회다
+여섯(병원·방문일·방문시각·진료과·이동지원·대상자)을 한 번에 하나씩, 통화당 최대 6회다
 (`CLAWOPS_FOLLOWUP_MAX=0` 이면 꺼진다. 기본 5회).
 
 **되묻는 목록은 `gate.BLOCKING` 과 다르다.** 막는 기준은 "일정이 성립하는가" 이고
@@ -238,8 +245,8 @@ PYTHONPATH=. python tests/test_voice.py           # 71
 PYTHONPATH=. python tests/test_file3_cases.py     # 26  ← 제출 문서 케이스
 PYTHONPATH=. python tests/test_identity_extract.py # 39
 PYTHONPATH=. python tests/test_request_type.py    # 75  ← 새 요청 유형 경계
-PYTHONPATH=. python tests/test_followup.py       # 129 ← 통화 중 후속질문
-PYTHONPATH=. python tests/test_mobility.py       # 42  ← 이동지원·보호자 출처 분리
+PYTHONPATH=. python tests/test_followup.py       # 131 ← 통화 중 후속질문
+PYTHONPATH=. python tests/test_mobility.py       # 46  ← 이동지원·보호자 출처 분리
 ruff check .
 ```
 

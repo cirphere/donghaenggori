@@ -48,7 +48,7 @@ from .korean import particle
 # 다시 전화한다. 어르신이 아직 통화 중일 때 받는 편이 낫다는 판단으로 넷까지
 # 늘렸다. 무응답·혼란이 이어지면 그 전에 사람에게 넘어가므로(detect_handoff_signal)
 # 통화가 무한히 늘어나지는 않는다.
-DEFAULT_MAX_QUESTIONS = 5
+DEFAULT_MAX_QUESTIONS = 6
 
 # 되물을 항목과 **묻는 순서**.
 #
@@ -58,7 +58,7 @@ DEFAULT_MAX_QUESTIONS = 5
 #
 # 순서는 게이트가 막는 것부터다 — 통화가 중간에 끊겨도 확정에 필요한 것이 먼저
 # 채워지는 편이 낫다.
-ASK_ORDER = ("hospital", "date", "time", "dept", "target")
+ASK_ORDER = ("hospital", "date", "time", "dept", "mobility_need", "target")
 
 # 예전 이름. 되물을 항목이 셋뿐이던 시절 이 이름으로 참조했다.
 ASKABLE = ASK_ORDER
@@ -349,6 +349,10 @@ class Reextract:
     value: str | None = None
     status: str = "확인 필요"          # 확인됨 | 추정 | 확인 필요
     evidence: list[str] = dc_field(default_factory=list)
+    # 항목마다 따로 실어야 하는 값. 이동지원의 '판정'(명시적_필요 등)이 그렇다 —
+    # 값과 상태만 갱신하면 카드에 "필요 [추정] · 신호없음" 처럼 앞뒤가 안 맞는
+    # 조합이 남는다(시뮬레이터로 잡았다).
+    extra: dict = dc_field(default_factory=dict)
     # 값을 채우지는 않지만 **상태를 내려야** 하는 경우. "박순자 님 맞으신가요?"
     # 에 아니라고 답한 것이 그렇다 — 발신번호로 붙은 '확인됨' 을 그대로 두면
     # 남의 프로필로 동행을 준비하게 된다.
@@ -387,6 +391,8 @@ def reextract_field(field: str, original: str, answer: str,
         return _reextract_time(said, spoken)
     if field == "dept":
         return _reextract_dept(said)
+    if field == "mobility_need":
+        return _reextract_mobility(said)
     if field == "target":
         return _reextract_target(said)
     # 되물을 수 없는 칸이 여기 오면 아무것도 하지 않는다.
@@ -487,6 +493,27 @@ def _reextract_dept(said: str) -> Reextract:
                       "증상에서 진료과를 옮기지 않는다 — 사회복지사가 확인"])
 
 
+def _reextract_mobility(said: str) -> Reextract:
+    """이동지원 — 되물은 답을 **같은 규칙으로** 다시 본다(core/mobility.py).
+
+    되묻기 전용 규칙을 따로 만들지 않는다. 그러면 "혼자 갈 수 있어" 가 첫 발화에서
+    한 뜻, 되물은 답에서 다른 뜻이 된다 — 같은 말을 두 기준으로 재는 셈이다.
+
+    held-out 로 재보니 이 규칙은 표현이 조금만 달라도 놓친다(44%). 그래서 못 잡으면
+    '확인 필요' 로 남기고 복지사가 확인한다 — 되묻기는 그 미탐을 줄이는 장치이고,
+    없는 값을 만들어 채우는 장치가 아니다.
+    """
+    from . import mobility as mobility_mod
+
+    m = mobility_mod.extract_mobility_need(said)
+    if m.need is None:
+        return Reextract("mobility_need", None, "확인 필요",
+                         [f"후속답변 '{said}' 에서 이동지원 여부를 확인하지 못함",
+                          "표현이 달라 규칙이 못 잡을 수 있다 — 사회복지사 확인"])
+    return Reextract("mobility_need", m.need, m.status, list(m.evidence),
+                     extra={"판정": m.verdict})
+
+
 def _reextract_target(said: str) -> Reextract:
     """대상자 — 답에 따라 셋으로 갈린다. **값을 올리지는 않는다.**
 
@@ -553,6 +580,6 @@ def max_questions(raw: str | None) -> int:
         n = int((raw or "").strip())
     except (TypeError, ValueError):
         return DEFAULT_MAX_QUESTIONS
-    # 되물을 항목이 다섯이라 상한도 거기까지 허용한다. 그보다 크게 잡을 이유가
+    # 되물을 항목이 여섯이라 상한도 거기까지 허용한다. 그보다 크게 잡을 이유가
     # 없다 — 물을 것이 없으면 알아서 멈춘다.
-    return max(0, min(n, 5))
+    return max(0, min(n, 6))

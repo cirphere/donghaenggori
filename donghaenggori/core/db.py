@@ -729,7 +729,8 @@ def verify_card_field(intake_id: int, field: str, value: str,
 def apply_followup(intake_id: int, field: str, question: str, answer: str,
                    value: str | None = None, status: str = "확인 필요",
                    evidence: list[str] | None = None,
-                   actor: str = "전화 시스템", downgrade: bool = False) -> dict | None:
+                   actor: str = "전화 시스템", downgrade: bool = False,
+                   extra: dict | None = None) -> dict | None:
     """통화 중 후속질문 한 번을 접수에 반영한다.
 
     **verify_card_field 와 일부러 갈라 뒀다.** 저쪽은 "사회복지사가 통화로
@@ -753,7 +754,23 @@ def apply_followup(intake_id: int, field: str, question: str, answer: str,
     entry = {"field": field, "question": question, "answer": answer,
              "result": None, "status": "확인 필요", "at": _now()}
 
-    if value and status in ("확인됨", "추정") and field in _VERIFY_TARGETS:
+    if value and status in ("확인됨", "추정") and field == "mobility_need":
+        # 이동지원은 평면 컬럼이 없다 — mobility_need(발화 기반)에 담긴다.
+        # **프로필 기반 need_level 은 건드리지 않는다**(출처를 섞지 않는다).
+        mn = card.setdefault("mobility_need", {})
+        was = mn.get("필요여부")
+        mn["필요여부"] = value
+        mn["상태"] = status
+        # 판정 라벨도 같이 갱신한다 — 안 하면 "필요 [추정] · 신호없음" 이 남는다.
+        mn.update(extra or {})
+        mn["근거문구"] = list(mn.get("근거문구") or []) + list(evidence or [])
+        fields = card.setdefault("fields", {})
+        view = fields.setdefault("mobility_need", {"label": "이동지원(발화)"})
+        view.update({"value": value, "status": status,
+                     "evidence": list(mn["근거문구"])})
+        entry["result"] = f"{value} [{status}]"
+        entry["status"] = status
+    elif value and status in ("확인됨", "추정") and field in _VERIFY_TARGETS:
         flat_key, column = _VERIFY_TARGETS[field]
         was = card.get(flat_key)
         card[flat_key] = value

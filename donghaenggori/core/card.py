@@ -29,11 +29,18 @@ FIELD_VALUE_ATTRS = {
     "dept": "dept",
     "date": "date_value",
     "time": "time_value",
+    # 발화 기반 이동지원. 값은 아래 fields_view 에서 mobility_need 로 채운다 —
+    # 여기 attr 은 항목을 만들기 위한 자리다.
+    # 카드에 이미 mobility(거동 상태, 프로필의 "휠체어 사용" 등)가 있어서
+    # 키를 겹치지 않게 둔다 — 출처가 다른 두 값에 같은 이름을 붙이면
+    # 이 분리가 고치려던 문제를 그대로 다시 만든다.
+    "mobility_need": "mobility_need",
 }
 FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
                 "spoken_region": "말한 주소", "request": "요청 내용",
                 "hospital": "병원", "dept": "진료과",
-                "date": "방문일", "time": "방문 시각"}
+                "date": "방문일", "time": "방문 시각",
+                "mobility_need": "이동지원(발화)"}
 
 # 요청 유형별로 **의미가 있는 칸만** 낸다.
 #
@@ -46,7 +53,8 @@ FIELD_LABELS = {"target": "대상자", "spoken_name": "말한 성함",
 # 차단도 함께 풀린다. 값을 지우는 게 아니라 **보여주지 않는** 것이라, 평면 키
 # (card.hospital 등)는 그대로 남아 나중에 유형이 바뀌어도 잃는 정보가 없다.
 INTENT_FIELDS = {
-    "병원동행": ("target", "spoken_name", "spoken_region", "hospital", "dept", "date", "time"),
+    "병원동행": ("target", "spoken_name", "spoken_region", "hospital", "dept",
+                 "date", "time", "mobility_need"),
     # 약을 대신 타 오는 요청. 어느 약국인지는 처방전을 봐야 알고 통화에서
     # 정할 수 있는 것이 아니라, 병원 칸을 세우지 않는다.
     "약국":     ("target", "spoken_name", "spoken_region", "date", "time"),
@@ -69,13 +77,13 @@ REQUEST_TYPE_FIELDS = {
     # 어느 병원인지 우리가 모른다. 병원 칸은 남겨 조회 결과·불가 사유를 근거로
     # 싣되(항상 '확인 필요'), 진료과는 직접 말했을 때만 값이 붙는다.
     "신규병원탐색":   ("target", "spoken_name", "spoken_region", "request",
-                       "hospital", "dept", "date", "time"),
+                       "hospital", "dept", "date", "time", "mobility_need"),
     "진료과기반탐색": ("target", "spoken_name", "spoken_region", "request",
-                       "hospital", "dept", "date", "time"),
+                       "hospital", "dept", "date", "time", "mobility_need"),
     # 병원 일정이 아니라 사람을 요청한 것이다. 병원·진료과 칸을 세우지 않는다 —
     # 인력 배치 데이터가 없으므로 우리가 채울 수 있는 것이 아무것도 없다.
     "돌봄인력요청":   ("target", "spoken_name", "spoken_region", "request",
-                       "date", "time"),
+                       "date", "time", "mobility_need"),
     # 무엇을 요청하는지조차 못 가렸다. 원문과 요청 칸만 남긴다.
     "기타불분명":     ("target", "spoken_name", "spoken_region", "request"),
 }
@@ -219,6 +227,19 @@ class Card:
                 out[k]["status"] = "확인 필요"
             else:
                 out.pop(k)
+
+        # 이동지원은 fields 에 값이 따로 없다 — mobility_need 에서 옮겨 담는다.
+        # 항목으로 세우는 이유: 통화 중 되묻기가 fields 의 상태를 보고 물을 것을
+        # 고른다(core/followup.py). **게이트에는 넣지 않는다** — 이동지원을 몰라도
+        # 동행은 나간다는 정책은 그대로다.
+        if "mobility_need" in out:
+            mn = self.mobility_need or {}
+            out["mobility_need"] = {
+                "label": FIELD_LABELS["mobility_need"],
+                "value": mn.get("필요여부"),
+                "status": mn.get("상태") or "확인 필요",
+                "evidence": mn.get("근거문구") or [],
+            }
 
         # 요청 내용도 **어떤 경로로도 '확인됨'이 되지 않는다.** 기존 흐름이 감당
         # 못 하는 요청이라 세운 칸이고, 닫는 방법은 사회복지사가 직접 응대해

@@ -177,7 +177,7 @@ def _followup(call: dict, answer: str) -> dict:
     state.record(q.field, answer, clear=r.resolved)
     db.apply_followup(intake_id, q.field, q.question, answer,
                       value=r.value, status=r.status, evidence=r.evidence,
-                      downgrade=r.downgrade)
+                      downgrade=r.downgrade, extra=r.extra)
     call["asked"] += 1
 
     # ③ 상한까지 남았으면 다음 칸을 묻는다. 갱신된 카드로 다시 본다.
