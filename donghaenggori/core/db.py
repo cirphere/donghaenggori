@@ -748,8 +748,10 @@ def apply_followup(intake_id: int, field: str, question: str, answer: str,
     if not card:
         return None
 
+    # status 를 result 문자열에만 담지 않는다. 화면이 뱃지 색을 고르려면 문자열을
+    # 파싱해야 하고, 문구를 다듬는 순간 조용히 깨진다(카드의 다른 칸들과 같은 이유).
     entry = {"field": field, "question": question, "answer": answer,
-             "result": None, "at": _now()}
+             "result": None, "status": "확인 필요", "at": _now()}
 
     if value and status in ("확인됨", "추정") and field in _VERIFY_TARGETS:
         flat_key, column = _VERIFY_TARGETS[field]
@@ -764,6 +766,7 @@ def apply_followup(intake_id: int, field: str, question: str, answer: str,
         if field == "hospital":
             card["hospital_status"] = status
         entry["result"] = f"{value} [{status}]"
+        entry["status"] = status
     else:
         fields = card.setdefault("fields", {})
         view = fields.setdefault(field, {"label": field})

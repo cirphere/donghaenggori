@@ -544,6 +544,39 @@ function renderCard(d) {
   }
   frag.append(need);
 
+  // 통화 중에 AI 가 되물은 질문과 어르신의 답. **값만 바뀌어 있으면 그 값이
+  // 어디서 왔는지 알 수 없다** — 후속답변은 별도 녹음이라 원문(raw_utterance)
+  // 에도 없어서, 이 칸이 없으면 복지사가 통화 과정을 확인할 방법이 아예 없다.
+  if (c.followups?.length) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "통화 중 되물은 것 (AI 질문 → 어르신 답)"));
+    c.followups.forEach((f) => {
+      const row = el("div", "followup");
+      row.append(el("div", "fq", `Q. ${f.question}`));
+      // 답이 없는 경우가 실제로 있다(무응답·전사 실패). 빈칸으로 두면
+      // "안 물어봤다" 와 "물었는데 답을 못 얻었다" 가 구분되지 않는다.
+      row.append(el("div", "fa", `A. ${f.answer || "(답변 없음)"}`));
+      // 결과가 없으면 그 항목은 아직 '확인 필요' 다 — 복지사가 다시 물어야 한다.
+      // 색은 서버가 준 status 로 고른다. result 문자열을 파싱하면 문구를 다듬는
+      // 순간 깨지고, 그건 화면이 조용히 틀리는 종류의 버그다.
+      const res = el("span", "badge " + (STATUS_CLASS[f.status] || "need"),
+        f.result ? `반영: ${f.result}` : "확인 필요 유지 — 사회복지사 확인");
+      row.append(res);
+      if (f.at) row.append(el("span", "src", f.at));
+      b.append(row);
+    });
+    frag.append(b);
+  }
+
+  // 되묻기를 중간에 그만둔 이유(어르신이 사람을 찾았거나 상한에 걸렸거나).
+  // 이유를 안 보여주면 "왜 하나만 물었나" 에 답할 수 없다.
+  if (c.followup_stopped) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "되묻기를 그만둔 이유"));
+    b.append(el("div", "stopped", c.followup_stopped));
+    frag.append(b);
+  }
+
   const lists = [
     ["확인 질문 (콜백용)", c.confirm_questions],
     ["외출 전 참고", c.outing_checklist],

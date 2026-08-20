@@ -221,3 +221,18 @@ button.linkish:hover { color: var(--ink); background: none; }
 .modal-foot .ack-reason { width: auto; min-width: 190px; margin-top: 0; margin-right: auto; }
 /* 확인하지 않고 넘어가는 버튼. 눌러도 되지만 기본 동작처럼 보이면 안 된다. */
 button.danger { border-color: var(--need); color: var(--need); }
+
+/* 통화 중 후속질문 — AI 가 물은 것과 어르신이 답한 것을 한 쌍으로 읽는다.
+   값이 아니라 **과정**을 보여주는 칸이라, 질문과 답을 나란히 두고 반영
+   결과를 뱃지로 붙인다. */
+.followup {
+  border-left: 3px solid var(--line);
+  padding: 8px 0 8px 12px;
+  margin: 10px 0;
+}
+.followup .fq { font-weight: 600; }
+.followup .fa { margin-top: 4px; }
+.followup .badge { margin-top: 6px; display: inline-block; }
+.followup .src { margin-left: 8px; font-size: 12px; opacity: .7; }
+.stopped { padding: 8px 12px; border-left: 3px solid var(--need);
+           background: var(--need-bg); border-radius: 4px; }

@@ -173,6 +173,7 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
    "question": "말씀하신 3시, 오전인가요 오후인가요?",
    "answer": "오후요",
    "result": "15:00 [확인됨]",
+   "status": "확인됨",
    "at": "2026-08-20 14:32"}
 ],
 "followup_stopped": "통화 중 사람 연결 신호 — 사람을 직접 요청함 — '사람 바꿔' · 남은 항목은 사회복지사 확인 필요"
@@ -181,6 +182,9 @@ dept  symptom  date  profile  urgent_message  facilities  card  intake_id
 - **질문과 답변 원문을 그대로 띄울 것.** 사회복지사가 통화 과정을 처음부터 검토할
   수 있어야 한다 — 값만 바뀌어 있으면 그게 어디서 왔는지 알 수 없고, 후속답변은
   별도 녹음이라 `raw_utterance` 에도 없다.
+- **뱃지 색은 `status` 로 고른다.** `result` 문자열(`"15:00 [확인됨]"`)을 파싱하지 말 것 —
+  문구를 다듬는 순간 조용히 깨진다. 이 저장소의 정적 콘솔(`frontend/public/staff/staff.js`)이
+  그렇게 그리고 있으니 가져다 쓰면 된다.
 - `result` 가 `null` 이면 **물었지만 답을 못 얻은 것**이다. 그 칸은 여전히 `확인 필요`
   이고, 화면은 같은 질문을 다시 물으라고 안내하면 된다.
 - `followup_stopped` 이 있으면 **되묻기를 중간에 그만둔 것**이다(어르신이 사람을

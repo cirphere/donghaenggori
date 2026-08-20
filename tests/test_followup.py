@@ -192,6 +192,10 @@ def test_record_into_intake() -> None:
     check("질문과 답변이 그대로 남는다",
           card["followups"][0]["question"] == q.question
           and card["followups"][0]["answer"] == "오후요", str(card["followups"]))
+    # 화면이 뱃지 색을 고르는 값이다. result 문자열을 파싱하게 두면 문구를
+    # 다듬는 순간 조용히 깨진다.
+    check("상태를 키로도 남긴다", card["followups"][0]["status"] == "확인됨",
+          str(card["followups"][0]))
 
     # **사람이 확인한 것과 구분된다** — 이게 무너지면 누가 확인했는지 답할 수 없다
     check("자동 전사에는 verified_by 가 없다",
@@ -216,6 +220,9 @@ def test_record_into_intake() -> None:
                       evidence=["후속답변 '글쎄' 에서 날짜를 찾지 못함"])
     card3 = db.get_intake(iid)["card"]
     check("못 채운 질문도 기록된다", len(card3["followups"]) == 2, str(card3["followups"]))
+    check("못 채운 항목의 상태는 확인 필요",
+          db.get_intake(iid)["card"]["followups"][-1]["status"] == "확인 필요",
+          str(db.get_intake(iid)["card"]["followups"][-1]))
     check("못 채웠으면 값을 건드리지 않는다",
           card3["fields"]["date"]["value"] == before, str(card3["fields"]["date"]))
     check("못 채운 사유는 근거에 남는다",
