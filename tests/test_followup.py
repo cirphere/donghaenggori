@@ -44,6 +44,10 @@ def card_of(utterance: str) -> dict:
     return pipeline.run(PHONE, utterance, use_llm=False, with_rag=False).card.to_dict()
 
 
+def card_of_phone(phone: str, utterance: str) -> dict:
+    return pipeline.run(phone, utterance, use_llm=False, with_rag=False).card.to_dict()
+
+
 # ------------------------------------------------------------ 도구 --
 
 def test_question() -> None:
@@ -74,6 +78,42 @@ def test_question() -> None:
           f"{rt_target.value} [{rt_target.status}]")
     check("들은 이름은 근거에 남는다",
           any("김말자" in e for e in rt_target.evidence), str(rt_target.evidence))
+
+    # **'추정' 도 묻는다.** 단골 병원이 '추정' 인데 안 물으면, 어르신이 말한 적
+    # 없는 병원으로 동행을 나간다 — 이 저장소가 제일 경계하는 사고다.
+    c_reg = card_of("병원 좀 가야 해요")          # 박순자 = 정형외과 이력 2회
+    check("단골 병원은 추정으로 잡힌다",
+          c_reg["fields"]["hospital"]["status"] == "추정",
+          str(c_reg["fields"]["hospital"]["status"]))
+    check("추정이어도 되묻는다", "hospital" in fu.pending_fields(c_reg),
+          str(fu.pending_fields(c_reg)))
+    seq = []
+    while len(seq) < fu.DEFAULT_MAX_QUESTIONS:
+        q = fu.next_question(c_reg, tuple(seq))
+        if not q:
+            break
+        seq.append(q.field)
+    check("없는 것을 중복 없이 다 묻는다",
+          seq == ["hospital", "date", "time", "dept"], str(seq))
+
+    # **아는 것은 묻지 않는다.** 발신번호가 프로필과 일치하면 이름은 이미 아는
+    # 것이고, 다시 묻는 것은 #105 에서 뺀 그 질문이다(답이 카드를 바꾸지 않았다).
+    check("대상자가 확인됨이면 묻지 않는다",
+          c_reg["fields"]["target"]["status"] == "확인됨"
+          and "target" not in fu.pending_fields(c_reg), str(fu.pending_fields(c_reg)))
+
+    # 이름을 모르는 접수는 물어진다 — 그때는 대상자가 '확인 필요' 다.
+    c_new = card_of_phone("010-0000-0000", "병원 좀 가야 해요")
+    check("이름을 모르면 대상자를 묻는다",
+          "target" in fu.pending_fields(c_new), str(fu.pending_fields(c_new)))
+
+    # "아니에요" 는 카드를 바꿔야 한다 — #105 에서 잃었던 안전장치다.
+    r_no = fu.reextract_field("target", "", "아니에요, 제가 아니에요")
+    check("본인이 아니라고 하면 상태를 내린다", r_no.downgrade, str(r_no.to_dict()))
+    r_yes = fu.reextract_field("target", "", "네 맞아요")
+    check("맞다고 해도 값을 올리지 않는다",
+          not r_yes.downgrade and r_yes.value is None and r_yes.status == "확인 필요",
+          str(r_yes.to_dict()))
 
     # 진료과는 게이트가 막지 않지만(없어도 동행은 나간다) 통화에서는 묻는다 —
     # 동행 정보에서 빠지면 복지사가 다시 전화하게 된다.
@@ -106,6 +146,8 @@ def test_question() -> None:
     # 기본 정보가 다 있으면 묻지 않는다 — **아는 것을 다시 묻지 않는다.**
     c4 = card_of("내일 오후 2시에 송정병원 정형외과 가야 해요")
     check("전부 채워졌으면 안 묻는다", fu.next_question(c4) is None,
+          str(fu.pending_fields(c4)))
+    check("아는 것은 하나도 다시 묻지 않는다", fu.pending_fields(c4) == [],
           str(fu.pending_fields(c4)))
 
 
@@ -333,6 +375,7 @@ def test_call_flow() -> None:
     xml = post(action_of(xml), CallId="C1", From=PHONE,
                RecordingUrl="http://x/a1b.wav", RecordingDuration="2")
     check("다 받으면 통화를 끝낸다", "<Hangup/>" in xml, xml[:160])
+    check("아는 것(이름)은 되묻지 않는다", "맞으신가요" not in xml, xml[:200])
     row = db.get_intake(db.list_intakes(limit=1)[0]["id"])
     check("진료과도 접수에 남는다", row["dept"] == "정형외과", str(row["dept"]))
 
