@@ -244,8 +244,35 @@ def detect_handoff_signal(utterance: str, state: CallState | None = None) -> Han
     return Handoff(False)
 
 
+# 한글 음절. 후속답변에 이것이 하나도 없으면 어르신의 말이 아니다.
+_HANGUL = re.compile(r"[가-힣]")
+
+
 def is_unclear(answer: str) -> bool:
-    """답이라고 보기 어려운가. 무응답·전사 실패도 여기로 온다."""
+    """답이라고 보기 어려운가. 무응답·전사 실패도 여기로 온다.
+
+    **한글이 한 글자도 없으면 답으로 보지 않는다.**
+
+    후속답변은 15초짜리 짧은 녹음이라 어르신이 말을 안 하면 무음이 길고,
+    Whisper 는 무음에서 다른 언어를 지어낸다. 실통화에서 이런 것이 답변
+    자리에 들어왔다.
+
+        어느 병원으로 모실지 말씀해 주세요.
+        私はもう生まれます。                    ← 어르신의 말이 아니다
+
+    복지사 화면에 이것이 '어르신 답' 으로 뜨면, 그 통화에서 무슨 일이
+    있었는지 잘못 읽는다. 재추출로 넘어가 이 문장에서 병원 이름을 찾는
+    것은 더 나쁘다.
+
+    한국 어르신이 한국 복지 서비스에 건 전화다. 한글이 없으면 전사 실패로
+    본다 — 숫자만 있는 답("3시")은 원문에 붙여 쓰이므로 여기서 걸러도
+    잃는 것이 없다. 실제로 '3시' 같은 답은 조사가 붙어 한글이 섞인다.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return True
+    if not _HANGUL.search(text):
+        return True
     return _norm(answer) in {_norm(w) for w in _EMPTY_ANSWER}
 
 

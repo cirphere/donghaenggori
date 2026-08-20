@@ -436,6 +436,31 @@ def test_call_flow() -> None:
     check("신규 유형 안내가 나간다", "사회복지사가 확인한 뒤" in xml, xml[:200])
 
 
+def test_non_korean_answer() -> None:
+    """한글이 없는 후속답변은 어르신의 말이 아니다.
+
+    후속답변은 15초짜리 짧은 녹음이라 어르신이 말을 안 하면 무음이 길고,
+    Whisper 는 무음에서 다른 언어를 지어낸다. 실통화에서 이것이 답변
+    자리에 들어왔다.
+
+        어느 병원으로 모실지 말씀해 주세요.
+        私はもう生まれます。
+
+    복지사 화면에 '어르신 답' 으로 뜨면 그 통화에서 무슨 일이 있었는지
+    잘못 읽는다. 재추출로 넘어가 이 문장에서 병원 이름을 찾는 것은 더 나쁘다.
+    """
+    for 답 in ("私はもう生まれます。", "Thank you for watching",
+               "サブスクライブ", "...", "", "   "):
+        check(f"한글 없으면 답이 아니다 — {답[:12]!r}", fu.is_unclear(답))
+
+    for 답 in ("오후요", "네 맞아요", "3시요", "송정병원이요", "아니 딴 데로"):
+        check(f"한글 답은 그대로 받는다 — {답}", not fu.is_unclear(답))
+
+    # 재추출로도 넘어가지 않는다 — 저 문장에서 병원을 찾으면 안 된다.
+    r = fu.reextract_field("hospital", "낼 병원 가야 해", "私はもう生まれます。")
+    check("한글 없는 답에서 값을 뽑지 않는다", not r.resolved, str(r.to_dict()))
+
+
 def main() -> int:
     db.init_db(force=True)
     test_question()
@@ -443,6 +468,7 @@ def main() -> int:
     test_reextract()
     test_record_into_intake()
     test_call_flow()
+    test_non_korean_answer()
 
     print("\n통화 중 후속질문 검증")
     print("=" * 82)
