@@ -513,11 +513,43 @@ def case23() -> None:
               f"{got['date'] if got else None} — 확정하면 안 된다")
 
 
+def case24() -> None:
+    """요일이 날짜를 확인해 주면 하나로 본다. 그리고 근거는 그 항목의 말로 적는다.
+
+    "9월 5일 토요일" 처럼 날짜와 요일을 함께 말하는 것이 오히려 흔한데,
+    요일 규칙이 '다가오는 토요일' 을 따로 계산해 값이 둘이 되고 '복수 표현'
+    으로 걸렸다. 어르신은 분명하게 하루를 말했고 두 표현이 서로를 확인해
+    주는데도 확인 전화가 한 통 더 나갔다.
+
+    **어긋나면 그대로 되묻는다.** 2026-09-05 는 토요일이므로 "9월 5일
+    금요일" 은 둘 중 어느 쪽이 맞는지 우리가 고를 일이 아니다.
+    """
+    fri = "2026-09-05"                       # 토요일
+    for 말, 기대 in (("9월 5일 토요일에 가야 해", fri),
+                     ("8월 22일 토요일", "2026-08-22"),
+                     ("9월 5일에 가야 해", fri)):
+        got = dateparse.parse_date(말, today=BASE_DATE)
+        check(24, f"'{말[:14]}'", got and got["date"] == 기대,
+              f"{got['date'] if got else None} (기대 {기대})")
+
+    got = dateparse.parse_date("9월 5일 금요일에 가야 해", today=BASE_DATE)
+    check(24, "어긋나면 되묻는다", got is not None and got["date"] is None,
+          f"{got['date'] if got else None} — 확정하면 안 된다")
+
+    # 근거 문구는 그 항목의 말로 적는다 — 날짜 칸에 '오전·오후' 가 붙었다.
+    r = pipeline.run("010-1234-5678", "9월 5일 금요일에 병원 가야 해", channel="전화")
+    ev = r.card.to_dict()["fields"]["date"]["evidence"]
+    check(24, "날짜 근거에 오전·오후가 없다",
+          not any("오전·오후" in e for e in ev), str(ev))
+    check(24, "무엇을 물어야 하는지 적힌다",
+          any("여러 날짜" in e for e in ev), str(ev))
+
+
 def main() -> int:
     db.init_db()
     for fn in (case1, case2, case3, case4, case5, case6,
                case7, case7b, case7c, case7d, case7e, case8, case9, case10, case11, case12, case13,
-               case14, case15, case16, case17, case18, case19, case20, case21, case22, case23):
+               case14, case15, case16, case17, case18, case19, case20, case21, case22, case23, case24):
         try:
             fn()
         except Exception as e:
