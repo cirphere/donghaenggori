@@ -1417,6 +1417,14 @@ def reset_db() -> None:
         conn.close()
 
 
+def _has_name(prof: dict | None) -> bool:
+    """쓸 수 있는 이름이 있는 프로필인가. 통화·파이프라인과 같은 기준이다."""
+    name = ((prof or {}).get("name") or "").strip()
+    if not name:
+        return False
+    return not any(k in name for k in ("미등록", "미확인", "신규 대상자", "후보"))
+
+
 def register_profile_from_intake(intake_id: int, actor: str, role: str) -> bool:
     """확정된 접수의 미등록 대상자를 최소 프로필로 등록한다.
 
@@ -1445,8 +1453,31 @@ def register_profile_from_intake(intake_id: int, actor: str, role: str) -> bool:
         return False
     if any(k in name for k in ("미등록", "미확인", "신규 대상자", "후보")):
         return False
-    if get_profile(phone):
-        return False
+
+    exist = get_profile(phone)
+    if exist:
+        # **이름만 비어 있으면 그것만 채운다.**
+        #
+        # 기관이 명단·주소부터 올리고 성함은 나중에 채우는 프로필이 있다.
+        # 그 번호로 전화가 오면 통화가 성함을 여쭙고(web/voice), 복지사가
+        # 확인해 확정까지 했는데도 프로필은 이름 없이 남았다 — 목록에
+        # 이름 자리에 지역이 뜬다. 물어보고 확인까지 받은 것을 버리는 셈이다.
+        #
+        # 다른 칸은 건드리지 않는다. 덮어쓰기를 막는 원래 이유(재확정 한 번에
+        # 건강 정보가 사라지는 것)는 그대로 지킨다 — 비어 있는 이름 한 칸만
+        # 채우는 것은 잃을 것이 없다.
+        if _has_name(exist):
+            return False
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE profiles SET name=? WHERE phone=?",
+                         (name, normalize_phone(phone)))
+            conn.commit()
+        finally:
+            conn.close()
+        log_audit(actor, role, "프로필 성함 등록", "profile", phone,
+                  f"비어 있던 성함을 채움 — {name}")
+        return True
 
     region = birth = relationship = None
     guardian = None
