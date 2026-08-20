@@ -990,16 +990,49 @@ SAMPLE_DIR = os.environ.get("VOICE_SAMPLE_DIR") or os.path.join(
 # 기관이 별도 보관 규정을 갖고 스스로 관리할 때만 그렇게 둔다.
 SAMPLE_RETENTION_DAYS = _int_env("VOICE_SAMPLE_RETENTION_DAYS", 30)
 
-# 녹음 보관을 켠 채로 알리지 않는 것은 안 된다(README 가 켜기 전 전제로 적어
-# 둔 것이기도 하다). **KEEP_SAMPLES 를 끄면 이 문장도 같이 사라진다** —
-# 안내와 실제 동작이 어긋나지 않게 한 곳에 묶어 둔다.
+# 녹음 보관을 켰으면 알리는 것이 기본이다(README 가 켜기 전 전제로 적어 둔
+# 것이기도 하다). **KEEP_SAMPLES 를 끄면 이 문장도 같이 사라진다** — 안내와
+# 실제 동작이 어긋나지 않게 한 곳에 묶어 둔다.
+#
+# 문구는 `CLAWOPS_RECORDING_NOTICE` 로 바꿀 수 있다. 빈 값은 '미설정' 으로 보고
+# 기본 문구를 쓴다 — .env 에서 `KEY=` 로 비워 두는 일이 흔해서, 그걸 '끄기' 로
+# 읽으면 실수로 고지가 사라진다.
 RECORDING_NOTICE = os.environ.get("CLAWOPS_RECORDING_NOTICE") or (
     "통화 내용은 상담 품질을 높이기 위해 녹음되어 보관됩니다.")
 
+# **고지를 끄는 것은 명시해야 한다.** `off`/`none`/`0` 을 적어야 꺼진다.
+#
+# 끌 수 있게 둔 이유: 리허설처럼 발표자가 자기 번호로 자기 목소리를 녹음하는
+# 통화에서는 고지가 안내만 길게 만든다. 다만 **실제 어르신 통화에서 보관을 켠
+# 채로 고지를 끄는 것은 다른 이야기다** — 목소리와 건강 이야기를 당사자 모르게
+# 남기는 것이 되므로, 그때는 이 값을 끄지 말고 보관(VOICE_KEEP_SAMPLES)을 끈다.
+#
+# 그래서 끈 상태를 **기동 로그에 경고로 남긴다.** 조용히 꺼져 있으면 다음 사람이
+# 그 상태로 실통화를 받는다.
+NOTICE_OFF = (os.environ.get("CLAWOPS_RECORDING_NOTICE") or "").strip().lower() in (
+    "off", "none", "no", "0", "끔")
+
+
+# 기동할 때 실제 상태를 남긴다. 보관·고지는 한 줄로 확인할 수 있어야 한다 —
+# 통화 설정이 코드가 아니라 .env 에 있어서 눈으로는 알 수 없다.
+if KEEP_SAMPLES and NOTICE_OFF:
+    _log.warning("통화 녹음 보관 켬 · **녹음 고지 끔** — 리허설용 설정이다. "
+                 "실제 어르신 통화를 받기 전에 CLAWOPS_RECORDING_NOTICE 를 비우거나 "
+                 "VOICE_KEEP_SAMPLES=0 으로 보관을 끌 것")
+elif KEEP_SAMPLES:
+    _log.info("통화 녹음 보관 켬 · 고지 켬 (보관 %d일)", SAMPLE_RETENTION_DAYS)
+else:
+    _log.info("통화 녹음 보관 끔 — 고지 안내도 나가지 않는다")
+
 
 def _recording_notice() -> str:
-    """첫 안내에 덧붙일 녹음 고지. 보관을 끄면 빈 문자열이다."""
-    return f" {RECORDING_NOTICE}" if KEEP_SAMPLES else ""
+    """첫 안내에 덧붙일 녹음 고지.
+
+    보관을 끄면 빈 문자열이고, 보관을 켠 채로 고지만 끌 수도 있다(NOTICE_OFF).
+    """
+    if not KEEP_SAMPLES or NOTICE_OFF:
+        return ""
+    return f" {RECORDING_NOTICE}"
 
 
 def _prune_samples() -> None:
