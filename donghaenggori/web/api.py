@@ -25,7 +25,7 @@ from ..config import settings
 from ..core import dateparse, db, gate, pipeline
 from ..core import requesttype as rt_mod
 from ..services import rag, stt, summarize
-from . import voice
+from . import sim, voice
 
 app = FastAPI(
     title="동행고리 AI",
@@ -410,6 +410,13 @@ def _login_failed(key: str) -> None:
         for k in [k for k, v in _LOGIN_FAILS.items()
                   if not v or now - v[-1] > _LOGIN_WINDOW]:
             _LOGIN_FAILS.pop(k, None)
+
+
+# 전화 시뮬레이터 — STT 를 건너뛰고 글로 통화를 재현한다(개발·시연 확인용).
+# 접수를 실제로 만들므로 /api/intakes 와 같은 조건(로그인)을 건다. 의존성을
+# 여기서 주입하는 이유는 sim 이 api 를 import 하면 순환이 되기 때문이다.
+app.include_router(sim.router, dependencies=[Depends(current_user)])
+app.include_router(sim.page_router)
 
 
 @app.post("/api/auth/login", tags=["인증"], response_model=LoginOut)
