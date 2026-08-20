@@ -257,6 +257,18 @@ def detect_hospital(text: str) -> str | None:
             # 어절마다 본다 — 두 어절을 받으니 앞 어절도 검사해야 한다.
             # "어제 간 안과" 의 '어제', "무릎이 아파서 정형외과" 의 '아파서'.
             words = name.split()
+            # **앞 어절이 걸리면 그 어절만 버리고 다시 본다.**
+            #
+            # 두 어절을 받기 시작하니 "낼 한마음정형외과" 가 '낼 한마음'
+            # 으로 잡혔고, '낼' 이 차단 목록에 있어 통째로 버려졌다 —
+            # 어르신이 말한 병원을 잃는 쪽이 훨씬 나쁘다.
+            #
+            # 다만 남은 한 글자로 상호를 만들지는 않는다("어제 간 안과" 의
+            # '간'). 두 글자 미만이면 버린다.
+            if len(words) == 2 and words[0] in _NOT_A_NAME:
+                words = words[1:]
+                if len(words[0]) < 2:
+                    continue
             if any(w in _NOT_A_NAME for w in words):
                 continue
             if gap and words[-1].endswith(_VERB_ENDINGS):
