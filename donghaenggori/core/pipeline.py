@@ -390,8 +390,15 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 이름을 모르는 프로필은 '확인됨' 이 아니다. 발신번호가 맞아도 누구인지
     # 모르는 상태이고, 그대로 확정되면 이름 없는 프로필이 그대로 등록된다.
     target_status = "확인됨" if _named(prof) else "확인 필요"
-    target_evidence = ([f"발신번호가 등록된 케어 프로필과 일치 — {prof['name']}"] if prof
-                       else ["발신번호가 등록된 대상자와 일치하지 않음"])
+    # 이름을 모르는 프로필이면 "일치 — " 뒤가 비어 문장이 끊긴다. 그때는
+    # 무엇을 아는지(번호·주소)와 모르는지(성함)를 나눠 적는다.
+    if _named(prof):
+        target_evidence = [f"발신번호가 등록된 케어 프로필과 일치 — {prof['name']}"]
+    elif prof:
+        target_evidence = ["발신번호는 등록돼 있으나 케어 프로필에 성함이 없음 — "
+                           "통화에서 여쭤 확인 필요"]
+    else:
+        target_evidence = ["발신번호가 등록된 대상자와 일치하지 않음"]
     if denied_owner is not None:
         target_evidence = [
             f"발신번호는 {denied_owner['name']} 님으로 등록돼 있으나, 통화에서 "
@@ -555,7 +562,9 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         # 기관이 이미 아는 값 — 확신도를 붙이지 않고 그대로 싣는다.
         # 대상자가 확정되지 않았으면(미등록·대리) 프로필이 없거나 남의
         # 것일 수 있으므로 아무것도 싣지 않는다.
-        pickup=(prof.get("address") or prof.get("region")) if prof else None,
+        # region 과 address 를 이어 붙인다. address 만 쓰면 '여서로' 처럼
+        # 시군구가 빠져 어디인지 알 수 없다.
+        pickup=_where(prof) or None,
         mobility=prof.get("mobility") if prof else None,
         guardian=prof.get("guardian") if prof else None,
         caregiver=prof.get("caregiver") if prof else None,
