@@ -344,11 +344,42 @@ def case13() -> None:
     check("13 병원을 지어내지 않는다", c["hospital"] is None, str(c["hospital"]))
     check("13 진료과도 지어내지 않는다", c["dept"] is None, str(c["dept"]))
 
+def case14() -> None:
+    """'한마음 정형외과' 처럼 띄어 쓴 상호도 잡는다.
+
+    시연 대본이 "병원은 한마음 정형외과를 가려고 합니다" 인데 놓쳤다.
+    붙여 쓴 것만 상호로 봤기 때문이다 — 그런데 사람들은 진료과 상호를
+    띄어 쓰는 것이 오히려 흔하다.
+
+    **앞말이 용언이면 거른다.** "무릎이 아파서 정형외과" 와 "한마음 정형외과"
+    를 가르는 것은 앞말이 어미로 끝나느냐다.
+
+    **1차가 버린 것을 2차가 줍지 않는다.** "백병원에는 피부과가 없으니" 는
+    1차가 부정 문맥이라 버렸는데, 2차가 '백병원에는피부과' 로 주워 오면
+    그 판단이 뒤집힌다.
+    """
+    from donghaenggori.core import nlu
+    for 말, 기대 in (("병원은 한마음 정형외과를 가려고 합니다", "한마음정형외과"),
+                     ("서울 내과 갈라고", "서울내과"),
+                     ("밝은눈안과 예약했어", "밝은눈안과"),
+                     ("전남대학교 병원 가야 해", "전남대학교병원"),
+                     ("담양제일병원 내과 갈라고", "담양제일병원")):
+        got = nlu.analyze(말).hospital
+        check(f"14 상호 — {말[:16]}", got == 기대, f"{got} (기대 {기대})")
+
+    for 말 in ("무릎이 하도 아파서 정형외과 진료받으러 가는 거예요",
+               "아파가지고 정형외과 진료를 받으러 가는 건데",
+               "정형외과를 가고 싶은데 정형외과가 있는 병원이 있을까",
+               "백병원에는 피부과가 없으니 다른 병원 추천해줘",
+               "내일 정형외과 가야겄어"):
+        got = nlu.analyze(말).hospital
+        check(f"14 상호 아님 — {말[:16]}", got is None, str(got))
+
 
 def main() -> int:
     db.init_db()
     for fn in (case01, case02, case03, case04, case05, case06, case07, case08,
-               case09, case10, case11, case12, case13):
+               case09, case10, case11, case12, case13, case14):
         try:
             fn()
         except Exception as e:
