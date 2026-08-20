@@ -89,6 +89,10 @@ def blockers(card: dict | None) -> list[dict]:
 # 못 고르면 None 이다 — 없는 질문을 지어내면 통화에서 엉뚱한 걸 묻게 된다.
 _QUESTION_HINTS = {
     "request": ("어떤 도움", "직접 확인", "새로운 유형"),
+    # 진료과는 **확정을 막지 않는다**(BLOCKING 에 없다). 그래도 질문은 골라 줘야
+    # 한다 — 통화 중 되묻기(core/followup.py)가 게이트가 막는 것보다 넓게 묻기
+    # 때문이다. 막는 기준과 묻는 기준은 다르다.
+    "dept": ("어느 과", "진료과"),
     # '병원' 하나로는 못 잡는다. 되묻는 문장에 들어가는 것은 **상호**이고
     # ("지난번 가셨던 ○○정형외과의원 맞으실까요?"), 이력의 상호는 의원·한의원·
     # 보건소로 끝나는 경우가 흔하다. 그러면 question 이 None 이 되어 **화면은
@@ -106,6 +110,15 @@ def _question_for(name: str, questions: list[str]) -> str | None:
         if any(h in q for h in _QUESTION_HINTS.get(name, ())):
             return q
     return None
+
+
+def question_for(field: str, card: dict | None) -> str | None:
+    """그 항목을 되묻는 질문. 없으면 None — **없는 질문을 지어내지 않는다.**
+
+    질문 문장을 만드는 것은 pipeline 의 일이고 여기서는 고르기만 한다. 고르는
+    규칙이 두 곳에 생기면(화면과 통화) 같은 항목에 다른 질문이 붙는다.
+    """
+    return _question_for(field, (card or {}).get("confirm_questions") or [])
 
 
 def hard_block() -> bool:

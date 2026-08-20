@@ -433,6 +433,10 @@ def _build_card(phone, utterance, a, prof, hres, nres,
                              f"{a.symptom} 관련" if a.symptom else None) if x]
         summary = f"{a.intent} 접수 — " + (", ".join(parts) if parts else "추가 정보 확인 필요")
 
+    # 진료과를 아는가 — **직접 말했을 때만** 안다고 본다. 증상 사전이나 임베딩이
+    # 고른 값은 우리 추정이라, 되물어 확인할 대상이다.
+    dept_known = getattr(a, "dept_source", None) == "spoken"
+
     flags, questions = [], []
     if new_type:
         # Inbox 배지가 읽는 문구. 접수 목록에서 이 한 줄로 새 유형이 갈린다.
@@ -468,6 +472,12 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         else:
             questions.append(f"어르신, 지난번 가셨던 {hosp} 맞으실까요?" if hosp
                              else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
+    # 진료과는 확정을 막지 않지만(gate.BLOCKING) **통화에서는 되묻는다.**
+    # 동행 정보에서 빠지면 복지사가 다시 전화해야 하는 항목이라, 어르신이 아직
+    # 통화 중일 때 한 번 물어보는 편이 낫다. 모르실 수도 있고, 그때는 확인
+    # 필요로 남을 뿐이다 — 우리가 채우지 않는다.
+    if "dept" in shown and not dept_known:
+        questions.append("어느 과로 가시는지 알고 계신가요?")
     if "date" in shown and not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
         questions.append(_ambiguity_question(a.date or {}, "날짜", channel))
