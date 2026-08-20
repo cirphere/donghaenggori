@@ -48,7 +48,7 @@ from .korean import particle
 # 다시 전화한다. 어르신이 아직 통화 중일 때 받는 편이 낫다는 판단으로 넷까지
 # 늘렸다. 무응답·혼란이 이어지면 그 전에 사람에게 넘어가므로(detect_handoff_signal)
 # 통화가 무한히 늘어나지는 않는다.
-DEFAULT_MAX_QUESTIONS = 4
+DEFAULT_MAX_QUESTIONS = 5
 
 # 되물을 항목과 **묻는 순서**.
 #
@@ -62,6 +62,27 @@ ASK_ORDER = ("hospital", "date", "time", "dept", "target")
 
 # 예전 이름. 되물을 항목이 셋뿐이던 시절 이 이름으로 참조했다.
 ASKABLE = ASK_ORDER
+
+# **'확인됨'이 아니면 묻는다.** 추정도 묻는다.
+#
+# 처음에는 '확인 필요' 만 물었다. 그러면 단골 병원이 빠져나간다 — 이력 2회면
+# '추정' 이 되고, 추정은 안 물으니 **어르신이 말한 적 없는 병원으로 동행을 나간다.**
+# 그게 이 저장소가 제일 경계하는 사고다(README '단골이어도 확인됨이 아니다').
+#
+# 되물어서 "맞아" 를 들으면 근거가 하나 늘고, "아니야" 를 들으면 확인 필요로
+# 내려간다. 어느 쪽이든 묻기 전보다 낫다.
+ASK_UNLESS = ("확인됨",)
+
+# 상태와 무관하게 묻는 항목 — **비어 있다.**
+#
+# 대상자를 여기 넣어 봤다가 뺐다. 발신번호가 프로필과 일치하면 이름은 이미
+# 아는 것이고, 아는 것을 다시 묻는 것은 #105 에서 뺀 그 질문이다("박순자 님
+# 맞으신가요?" — 답이 카드를 바꾸지 않았다). 넣으면 **모든 정상 통화에 턴이
+# 하나 붙는다** — 시연 장면 1 처럼 정보가 다 있는 통화까지 되묻게 된다.
+#
+# 이름을 모르는 접수(미등록·대리)는 대상자가 '확인 필요' 라서 아래 규칙으로
+# 자동으로 물어진다. 물어야 할 때는 물어지고, 아는 것은 묻지 않는다.
+ALWAYS_ASK = ()
 
 
 # ── 후속질문 생성 ────────────────────────────────────────────────────────
@@ -114,12 +135,33 @@ def generate_followup_question(field: str, known: dict,
     if field in asked or field not in ASK_ORDER:
         return None
     f = ((known or {}).get("fields") or {}).get(field)
-    if not f or f.get("status") != "확인 필요":
+    if not f:
         return None
-    q = gate.question_for(field, known)
+    if field not in ALWAYS_ASK and f.get("status") in ASK_UNLESS:
+        return None                          # 이미 확인된 것은 다시 묻지 않는다
+    q = gate.question_for(field, known) or _fallback_question(field, f)
     if not q:
         return None                          # 물을 말을 지어내지 않는다
     return Followup(field=field, question=_for_call(q), label=f.get("label") or field)
+
+
+# 카드가 '확인됨' 이라 확인 질문을 만들지 않은 항목의 통화용 문구.
+#
+# 대상자가 그렇다 — 화면은 발신번호 일치를 확인됨으로 보므로 되물을 질문이 없다.
+# 통화에서는 한 번 확인해야 하므로(ALWAYS_ASK) 여기서 만든다. 이름은 카드에
+# 있는 값을 그대로 읽는다 — 우리가 지어내는 부분은 없다.
+_TARGET_DECOR = ("미확인", "신규", "후보", "대리")
+
+
+def _fallback_question(field: str, f: dict) -> str | None:
+    if field != "target":
+        return None
+    name = (f.get("value") or "").split("(")[0].strip()
+    if name and not any(w in name for w in _TARGET_DECOR):
+        return f"{name} 님 맞으신가요?"
+    # 이름을 모르는 접수(미등록·대리)는 통화 앞에서 이미 성함을 받았거나 받을
+    # 자리가 따로 있다. 여기서 또 묻지 않는다.
+    return None
 
 
 def pending_fields(card: dict | None, asked: tuple[str, ...] = ()) -> list[str]:
@@ -139,9 +181,14 @@ def pending_fields(card: dict | None, asked: tuple[str, ...] = ()) -> list[str]:
     if (card.get("request_type") or "") in rt_mod.STAFF_HANDLED:
         return []
     fields = card.get("fields") or {}
-    return [name for name in ASK_ORDER
-            if name not in asked
-            and (fields.get(name) or {}).get("status") == "확인 필요"]
+    out = []
+    for name in ASK_ORDER:
+        f = fields.get(name)
+        if not f or name in asked:
+            continue                     # 카드에 없는 칸은 이 유형에 의미가 없다
+        if name in ALWAYS_ASK or f.get("status") not in ASK_UNLESS:
+            out.append(name)
+    return out
 
 
 def next_question(card: dict | None, asked: tuple[str, ...] = ()) -> Followup | None:
@@ -302,6 +349,10 @@ class Reextract:
     value: str | None = None
     status: str = "확인 필요"          # 확인됨 | 추정 | 확인 필요
     evidence: list[str] = dc_field(default_factory=list)
+    # 값을 채우지는 않지만 **상태를 내려야** 하는 경우. "박순자 님 맞으신가요?"
+    # 에 아니라고 답한 것이 그렇다 — 발신번호로 붙은 '확인됨' 을 그대로 두면
+    # 남의 프로필로 동행을 준비하게 된다.
+    downgrade: bool = False
 
     @property
     def resolved(self) -> bool:
@@ -437,17 +488,26 @@ def _reextract_dept(said: str) -> Reextract:
 
 
 def _reextract_target(said: str) -> Reextract:
-    """대상자 — **들은 것을 기록하고 값은 채우지 않는다.**
+    """대상자 — 답에 따라 셋으로 갈린다. **값을 올리지는 않는다.**
 
     8kHz 전화 음질에서 받아 적은 이름은 어떤 경로로도 '확인됨' 이 되지 않는다
     (card.fields_view). '추정' 을 주면 게이트가 풀리는데, 대상자는 발신번호로도
     확정하지 않는다는 것이 이 서비스의 불변조건이다(AGENTS.md 3).
 
-    그래서 여기서는 묻고 **답을 그대로 남기는 것까지만** 한다. 복지사는 카드의
-    후속질문 기록에서 어르신이 말한 성함을 읽고, 확정은 사람이 한다. 물어본 것이
-    헛일은 아니다 — 되걸어 "성함이 어떻게 되세요" 를 다시 묻지 않아도 된다.
+    다만 **"아니에요" 는 카드를 바꿔야 한다.** "박순자 님 맞으신가요?" 에 아니라고
+    답했으면 그 번호의 프로필로 채운 값(필요도·병원 이력)이 남의 것이다. 그걸
+    '확인됨' 으로 남겨 두면 복지사가 엉뚱한 기준으로 동행을 준비한다 — #105 에서
+    통화 앞 확인 질문을 빼면서 잃었던 바로 그 안전장치다.
     """
     from . import identity as identity_mod
+
+    norm = _norm(said)
+    if any(_norm(w) in norm for w in _NO):
+        return Reextract("target", None, "확인 필요",
+                         [f"통화에서 본인이 아니라고 답함 — '{said}'",
+                          "발신번호로 등록된 대상자의 필요도·이력을 그대로 쓰지 말 것",
+                          "대상자 확정은 원문을 듣고 사회복지사가 한다"],
+                         downgrade=True)
 
     name, region = identity_mod.parse_identity_answer(said)
     heard = " · ".join(x for x in (name, region) if x)
@@ -455,6 +515,12 @@ def _reextract_target(said: str) -> Reextract:
         return Reextract("target", None, "확인 필요",
                          [f"통화에서 들은 것 — {heard}",
                           "이름은 전화 음질에서 오인식이 잦다 — 대상자 확정은 사회복지사가 한다"])
+    if any(_norm(w) in norm for w in _YES):
+        # 맞다고 답했다. 상태를 올리지는 않는다 — 남의 폰으로 건 사람도 "맞다" 고
+        # 한다. 근거만 하나 늘린다.
+        return Reextract("target", None, "확인 필요",
+                         [f"통화에서 본인이라고 답함 — '{said}' (자동 전사)",
+                          "누른 것도 답한 것도 본인이라는 증거는 아니다 — 확정은 사회복지사가 한다"])
     return Reextract("target", None, "확인 필요",
                      [f"후속답변 '{said}' 에서 성함을 확인하지 못함"])
 

@@ -729,7 +729,7 @@ def verify_card_field(intake_id: int, field: str, value: str,
 def apply_followup(intake_id: int, field: str, question: str, answer: str,
                    value: str | None = None, status: str = "확인 필요",
                    evidence: list[str] | None = None,
-                   actor: str = "전화 시스템") -> dict | None:
+                   actor: str = "전화 시스템", downgrade: bool = False) -> dict | None:
     """통화 중 후속질문 한 번을 접수에 반영한다.
 
     **verify_card_field 와 일부러 갈라 뒀다.** 저쪽은 "사회복지사가 통화로
@@ -772,6 +772,14 @@ def apply_followup(intake_id: int, field: str, question: str, answer: str,
         view = fields.setdefault(field, {"label": field})
         view["evidence"] = list(view.get("evidence") or []) + list(evidence or [])
         was = None
+        if downgrade and view.get("status") != "확인 필요":
+            # 값을 채우지는 않지만 상태를 내린다 — "본인이 아니다" 를 듣고도
+            # 발신번호로 붙은 '확인됨' 을 두면 남의 프로필로 동행을 준비한다.
+            was = view.get("status")
+            view["status"] = "확인 필요"
+            view.pop("verified_by", None)
+            entry["result"] = f"{was} → 확인 필요"
+            entry["status"] = "확인 필요"
 
     card.setdefault("followups", []).append(entry)
 

@@ -452,14 +452,23 @@ def main() -> int:
     check("③ 긴급 → 통화 중 <Dial>",
           "<Dial" in body and STAFF in body and "<Record" not in body, "")
 
-    # ④ 정상 → 접수하고 끝낸다. 되묻지 않는다(앞에서 이미 물었다).
-    voice._transcribe_url = lambda url: "허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아"
+    # ④ 기본 정보가 다 있으면 접수하고 끝낸다. **아는 것은 되묻지 않는다.**
+    voice._transcribe_url = lambda url: (
+        "허리 아파서 내일 송정병원 정형외과로 10시에 가야 될 것 같아")
     body = post(client, "/api/voice/recording?who=self", rec_params(PHONE_SELF)).text
     row = newest()
     check("④ 정상 → 접수 안내 후 종료",
           "<Hangup/>" in body and "<Record" not in body and "접수했습니다" in body,
           f"#{row['id']}")
     check("④ 병원명이 발화에서 잡힘", row["hospital"] == "송정병원", f"{row['hospital']}")
+
+    # ④-b 진료과를 **말하지 않았으면** 되묻는다. "허리 아파서" 는 증상이고,
+    #     거기서 옮긴 정형외과는 우리 추정이다 — 동행 정보에서 빠지면 복지사가
+    #     다시 전화하게 되므로 통화 중에 확인한다(core/followup.py).
+    voice._transcribe_url = lambda url: "허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아"
+    body = post(client, "/api/voice/recording?who=self", rec_params(PHONE_SELF)).text
+    check("④-b 추정만 있는 진료과는 되묻는다",
+          "<Record" in body and "어느 과" in body, body[:200])
 
     # ⑤ 누른 번호가 접수에 남는다. '확인됨' 으로 올리지 않는다 —
     #    남의 폰으로 건 사람도 1번을 누를 수 있다.
