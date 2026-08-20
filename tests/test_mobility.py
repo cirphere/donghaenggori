@@ -74,6 +74,26 @@ def test_priority() -> None:
           any("바로 필요해진다" in e for e in fam.evidence), str(fam.evidence))
 
 
+def test_mixed_priority() -> None:
+    """암시적 필요와 가족지원이 한 문장에 같이 나오면 **가족지원이 이긴다.**
+
+    팀 승인된 우선순위다 — 가족이 온다면 우리 동행은 불필요하고, 근거에
+    "가족이 못 오게 되면 바로 필요해진다" 가 남아 복지사가 그 위험을 본다.
+
+    순서: ① 명시적_불필요 ② 가족지원있음 ③ 명시적_필요 ④ 암시적_필요 ⑤ 신호없음
+    """
+    m = mb.extract_mobility_need("다리가 불편한데 우리 아들이 데려다 준다고 했어")
+    check("암시 + 가족지원 → 가족지원이 이긴다", m.verdict == mb.FAMILY_SUPPORT, m.verdict)
+    check("그때도 불필요·확정", (m.need, m.status) == ("불필요", "확인됨"),
+          f"{m.need} [{m.status}]")
+    check("가족이 못 오면 필요해진다는 경고가 남는다",
+          any("바로 필요해진다" in e for e in m.evidence), str(m.evidence))
+
+    # 본인이 직접 괜찮다고 하면 그것이 가족지원보다 앞선다 — 당사자의 말이다.
+    m2 = mb.extract_mobility_need("아들이 데려다 준다는데 나 혼자 갈 수 있어")
+    check("본인 말이 가족지원보다 앞선다", m2.verdict == mb.EXPLICIT_NO_NEED, m2.verdict)
+
+
 def test_guardian() -> None:
     g = mb.extract_guardian_info("삭신이 다 쑤셔서 못 가것다, 우리 아들내미가 델러다 줄틴디")
     check("가족이 데려다주면 그렇게 적는다",
@@ -155,6 +175,7 @@ def main() -> int:
     db.init_db(force=True)
     test_verdicts()
     test_priority()
+    test_mixed_priority()
     test_guardian()
     test_no_profile_access()
     test_card_keeps_both()
