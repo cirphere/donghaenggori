@@ -350,6 +350,23 @@ _WHY_UNSURE = {
 GUARDIAN_CHANNEL = "앱·웹(보호자)"
 
 
+def _named(prof: dict | None) -> bool:
+    """쓸 수 있는 이름이 있는 프로필인가.
+
+    **존재 여부만 보면 안 된다.** 주소·연락처만 채우고 이름은 비워 둔
+    프로필이 실제로 만들어진다(기관이 명단부터 올리는 경우). 통화는 그때
+    성함을 묻는데(web/voice._has_real_name), 파이프라인이 프로필이 있다는
+    이유로 그 답을 버리면 **물어놓고 안 쓰는** 셈이 된다. 대상자는 빈 이름
+    그대로 남고, 확정하면 이름 없는 프로필이 그대로 등록된다.
+
+    판정 기준은 통화·등록과 같게 맞춘다.
+    """
+    name = ((prof or {}).get("name") or "").strip()
+    if not name:
+        return False
+    return not any(k in name for k in ("미등록", "미확인", "신규 대상자", "후보"))
+
+
 def _build_card(phone, utterance, a, prof, hres, nres,
                 channel: str = "전화", denied_owner: dict | None = None,
                 identity_utterance: str | None = None,
@@ -362,7 +379,7 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     if channel == GUARDIAN_CHANNEL:
         requester = "대리"
 
-    target = prof["name"] if prof else "신규 대상자(미등록 번호)"
+    target = prof["name"] if _named(prof) else "신규 대상자(미등록 번호)"
     # 번호 주인이 아니라고 직접 밝혔다. 누구인지는 원문에만 있으므로 비워 두되,
     # 어느 번호로 왔는지는 남긴다 — 복지사가 되걸 곳이 그 번호뿐이다.
     if denied_owner is not None:
@@ -370,7 +387,9 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 표시 문자열과 별개로 상태를 필드로 남긴다. 예전에는 "대상자 후보 3명 —
     # 확인 필요" 같은 한글 문장이 유일한 단서라, 화면이 상태를 알려면 그 문장을
     # 파싱해야 했다.
-    target_status = "확인됨" if prof else "확인 필요"
+    # 이름을 모르는 프로필은 '확인됨' 이 아니다. 발신번호가 맞아도 누구인지
+    # 모르는 상태이고, 그대로 확정되면 이름 없는 프로필이 그대로 등록된다.
+    target_status = "확인됨" if _named(prof) else "확인 필요"
     target_evidence = ([f"발신번호가 등록된 케어 프로필과 일치 — {prof['name']}"] if prof
                        else ["발신번호가 등록된 대상자와 일치하지 않음"])
     if denied_owner is not None:
@@ -393,7 +412,7 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     # 긴 문장에서 골라내는 것보다 훨씬 정확하다. 없으면 문의 발화에서 뽑는다 —
     # 웹처럼 한 번에 받는 경로가 그렇다.
     spoken_name = spoken_region = None
-    if prof is None:
+    if not _named(prof):
         if identity_utterance:
             # 전용 답변이다 — 문장 전체가 답이라 훨씬 느슨하게 봐도 된다.
             # "이영희요" 처럼 이름만 툭 말하는 형태가 오히려 흔하다.
