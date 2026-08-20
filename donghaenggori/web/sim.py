@@ -1,6 +1,6 @@
 """전화 시뮬레이터 — STT 를 건너뛰고 글로 통화를 재현한다.
 
-    GET  /sim              화면 (인증 없음 — 안에서 로그인한다)
+    GET  /api/sim          화면 (인증 없음 — 안에서 로그인한다)
     POST /api/sim/start    전화가 걸려왔다 (발신번호만)
     POST /api/sim/say      어르신이 말했다 (성함·문의·후속답변 전부 이 하나로)
 
@@ -40,6 +40,13 @@ _log = logging.getLogger("donghaenggori.sim")
 # 의존성은 api.py 가 include 할 때 주입한다(여기서 api 를 import 하면 순환).
 router = APIRouter(tags=["전화 시뮬레이터"])
 page_router = APIRouter(include_in_schema=False)
+
+# 화면 주소가 /api/sim 인 이유 — 배포에서 nginx 가 **`/api/` 로 시작하는 것만**
+# 백엔드로 넘기고 나머지는 Next 로 보낸다. `/sim` 으로 두면 프론트가 받아
+# 404 를 낸다(실제로 그랬다). API 도 아닌 화면에 /api 접두어가 붙는 게
+# 어색하지만, nginx·Cloudflare 를 건드리지 않고 한 도메인에서 여는 값이 이쪽이
+# 더 크다. 프론트에 location 을 추가하는 쪽으로 옮길 수 있다.
+PAGE_PATH = "/api/sim"
 
 # 진행 중인 모의 통화. voice._FOLLOWUP 과 같은 이유로 **DB 에 넣지 않는다** —
 # 접수로 이어지지 못한 통화의 발화를 남기지 않는다.
@@ -352,7 +359,7 @@ function reset(){KEY=null; lock(true); add('sys','— 끊었습니다 —');}
 """
 
 
-@page_router.get("/sim", response_class=HTMLResponse)
+@page_router.get(PAGE_PATH, response_class=HTMLResponse)
 def page() -> str:
     """시뮬레이터 화면. 인증은 안에서 한다(로그인 상자를 그려야 하므로)."""
     return _PAGE
