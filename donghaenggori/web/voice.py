@@ -30,6 +30,7 @@ import hmac
 import logging
 import os
 import re
+import secrets
 import tempfile
 import time
 
@@ -225,10 +226,11 @@ SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는�
 # 안 나온 것(DEMO_CALLER_PHONE 미설정)도, 녹음이 30 초에서 잘리는 것도
 # 코드만 봐서는 알 수 없다. 소스에 60 이라 적혀 있어도 배포본이 그 값으로
 # 도는지는 별개다. 통화 한 번 걸어보기 전에 로그로 확인할 수 있어야 한다.
-_log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 시연매핑 %s · 안내음성 %s",
+_log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 시연매핑 %s · 안내음성 %s · 후속질문 %s",
           MAX_RECORD_SECONDS, FINISH_ON_KEY or "(없음)",
           "켬" if (DEMO_CALLER_PHONE and DEMO_CALLER_TARGET) else "끔",
-          f"{VOICE} (글자수 과금)" if VOICE else "무료 기본")
+          f"{VOICE} (글자수 과금)" if VOICE else "무료 기본",
+          f"{FOLLOWUP_MAX}회·{FOLLOWUP_SECONDS}초" if FOLLOWUP_MAX > 0 else "끔")
 
 
 # ─────────────────────────────────────────────── VoiceML 만들기 --
@@ -664,36 +666,46 @@ async def recording(request: Request) -> Response:
 
 # ────────────────────────────────────────────── 통화 중 후속질문 --
 
-# CallId → (만료시각, 상태). **DB 에 넣지 않는다** — _IDENTITY_SAID 와 같은
+# 통화 하나가 들고 있는 것. **DB 에 넣지 않는다** — _IDENTITY_SAID 와 같은
 # 이유다. 접수로 이어지지 못한 통화의 발화를 남기지 않는다. 접수는 이미
 # 저장돼 있고(아래 참조), 답을 받을 때마다 그 접수에 반영한다.
+#
+# **열쇠를 우리가 만들어 콜백 주소에 넣는다.** 처음에는 CallId 로 묶었는데,
+# 통신사가 통화 ID 를 무슨 이름으로 보내는지는 문서에 없다(CallId · CallSid ·
+# call_id …). 그 이름이 다르면 후속질문이 **아무 소리 없이 통째로 건너뛰어진다**
+# — 우리가 부를 주소에 우리가 넣은 값이 그대로 돌아오는 쪽이 확실하다.
 _FOLLOWUP: dict[str, tuple[float, dict]] = {}
 _FOLLOWUP_TTL = 600
 
 
-def _put_followup(call_id: str, data: dict) -> None:
+def _put_followup(key: str, data: dict) -> None:
     now = time.time()
     for k, (exp, _) in list(_FOLLOWUP.items()):
         if exp < now:
             _FOLLOWUP.pop(k, None)
-    if call_id:
-        _FOLLOWUP[call_id] = (now + _FOLLOWUP_TTL, data)
+    if key:
+        _FOLLOWUP[key] = (now + _FOLLOWUP_TTL, data)
 
 
-def _get_followup(call_id: str) -> dict | None:
-    exp_data = _FOLLOWUP.get(call_id or "")
+def _get_followup(key: str) -> dict | None:
+    exp_data = _FOLLOWUP.get(key or "")
     if not exp_data:
         return None
     exp, data = exp_data
     if exp < time.time():
-        _FOLLOWUP.pop(call_id, None)
+        _FOLLOWUP.pop(key, None)
         return None
     return data
 
 
-def _ask(request: Request, q, n: int) -> Response:
-    """질문 하나를 읽어주고 답을 녹음한다. **한 번에 한 칸만 묻는다.**"""
-    action = _callback(request, "voice_followup") + f"?n={n}"
+def _ask(request: Request, q, n: int, key: str, intake_id: int) -> Response:
+    """질문 하나를 읽어주고 답을 녹음한다. **한 번에 한 칸만 묻는다.**
+
+    주소에 열쇠·접수번호·항목을 함께 싣는다. 메모리 상태가 사라져도(서버 재시작)
+    이것만으로 답을 그 접수에 반영할 수 있다 — 어르신이 답한 것을 잃지 않는다.
+    """
+    action = (_callback(request, "voice_followup")
+              + f"?n={n}&fu={key}&intake={intake_id}&field={q.field}")
     return _xml(_say(_with_done_hint(q.question))
                 + _record(action, FOLLOWUP_SECONDS))
 
@@ -705,24 +717,64 @@ def _start_followup(request: Request, form: dict, res, intake_id: int | None,
     **접수는 이미 저장된 뒤에 묻는다.** 되묻는 도중에 어르신이 끊어도 접수가
     사라지면 안 된다 — 통화가 끊기는 것은 흔한 일이고, 그때 잃는 것이 접수
     전체여서는 곤란하다.
+
+    **묻지 않기로 한 것도 로그에 남긴다.** 조용히 건너뛰면 "왜 안 물었나"에
+    답할 수가 없다 — 꺼져 있는 것과 되물을 것이 없는 것은 완전히 다른 상황인데
+    통화 로그에서는 똑같이 아무것도 안 보인다.
     """
-    if FOLLOWUP_MAX <= 0 or not intake_id or res.card is None:
+    if FOLLOWUP_MAX <= 0:
+        _log.info("후속질문 건너뜀 — 꺼져 있음(CLAWOPS_FOLLOWUP_MAX=0)")
+        return None
+    if res.card is None:
+        _log.info("후속질문 건너뜀 — 카드가 없는 접수(긴급 등)")
+        return None
+    if not intake_id:
+        _log.info("후속질문 건너뜀 — 접수가 저장되지 않아 답을 반영할 곳이 없다")
         return None
     card = res.card.to_dict()
     q = fu_mod.next_question(card)
     if q is None:
+        from ..core import gate as gate_mod
+        blocked = [b["field"] for b in gate_mod.blockers(card)]
+        _log.info("후속질문 건너뜀 — 되물을 것이 없다 (막힌 칸 %s · 유형 %s)",
+                  blocked or "없음", card.get("request_type"))
         return None
-    call_id = (form.get("CallId") or "").strip()
-    if not call_id:
-        # 통화를 이어붙일 열쇠가 없다. 되묻지 않고 지금까지대로 끝낸다.
-        _log.info("CallId 가 없어 후속질문을 건너뛴다")
-        return None
-    _put_followup(call_id, {
+
+    key = secrets.token_urlsafe(8)
+    _put_followup(key, {
         "intake_id": intake_id, "original": text, "state": fu_mod.CallState(),
         "pending": q, "asked": 0,
     })
     _log.info("후속질문 1/%d — %s: %s", FOLLOWUP_MAX, q.field, q.question)
-    return _ask(request, q, 1)
+    return _ask(request, q, 1, key, intake_id)
+
+
+def _recover_followup(request: Request) -> dict | None:
+    """메모리 상태가 없을 때 **주소에 실린 것만으로** 되살린다.
+
+    잃는 것은 통화 이력(반복·무응답 횟수)뿐이고, 그건 없어도 답변을 접수에
+    반영하는 데 지장이 없다. 질문은 저장된 카드에서 다시 만든다 — 그 카드가
+    바로 우리가 방금 물어본 근거다.
+    """
+    try:
+        intake_id = int(request.query_params.get("intake") or 0)
+    except ValueError:
+        return None
+    field = (request.query_params.get("field") or "").strip()
+    if not intake_id or field not in fu_mod.ASKABLE:
+        return None
+    row = db.get_intake(intake_id)
+    card = (row or {}).get("card")
+    if not card:
+        return None
+    q = fu_mod.generate_followup_question(field, card)
+    if q is None:
+        return None
+    return {"intake_id": intake_id, "original": card.get("raw_utterance") or "",
+            "state": fu_mod.CallState(), "pending": q,
+            # 상한을 알 수 없으니 마지막 질문으로 본다. 되묻기가 무한히 늘어나는
+            # 것보다 한 번 덜 묻는 쪽이 낫다.
+            "asked": max(0, FOLLOWUP_MAX - 1)}
 
 
 @router.post("/followup", name="voice_followup")
@@ -735,13 +787,20 @@ async def followup(request: Request) -> Response:
     """
     t0 = time.monotonic()
     form = await _verify(request)
-    call_id = (form.get("CallId") or "").strip()
-    data = _get_followup(call_id)
-    if not data:
-        # 서버가 재시작됐거나 통화가 너무 길었다. 접수는 이미 저장돼 있으므로
-        # 잃는 것은 이번 답변뿐이다 — 캐묻지 않고 마무리한다.
-        _log.warning("후속질문 상태 없음 — CallId %s", call_id or "(없음)")
-        return _hangup(f"접수했습니다. {BYE}")
+    key = (request.query_params.get("fu") or "").strip()
+    data = _get_followup(key)
+
+    if data is None:
+        # 서버가 재시작됐거나 통화가 너무 길었다. **그래도 답변은 살린다** —
+        # 주소에 접수번호와 항목이 실려 있어서, 질문은 저장된 카드에서 다시
+        # 만들 수 있다. 어르신이 이미 답한 것을 우리 사정으로 버리지 않는다.
+        data = _recover_followup(request)
+        if data is None:
+            _log.warning("후속질문 상태를 복구하지 못했다 — fu=%s intake=%s",
+                         key or "(없음)", request.query_params.get("intake"))
+            return _hangup(f"접수했습니다. {BYE}")
+        _log.info("후속질문 상태 복구 — 접수 %s · %s",
+                  data["intake_id"], data["pending"].field)
 
     intake_id = data["intake_id"]
     q = data["pending"]
@@ -752,7 +811,7 @@ async def followup(request: Request) -> Response:
     # ① 사람 연결 신호가 먼저다.
     h = fu_mod.detect_handoff_signal(answer, state)
     if h.needed:
-        _FOLLOWUP.pop(call_id, None)
+        _FOLLOWUP.pop(key, None)
         reason = f"통화 중 사람 연결 신호 — {h.reason}"
         try:
             db.apply_followup(intake_id, q.field, q.question, answer,
@@ -785,11 +844,13 @@ async def followup(request: Request) -> Response:
         nxt = fu_mod.next_question(card, tuple(state.asked))
         if nxt is not None:
             data["pending"] = nxt
-            _put_followup(call_id, data)
+            nkey = secrets.token_urlsafe(8)
+            _FOLLOWUP.pop(key, None)
+            _put_followup(nkey, data)
             _log.info("후속질문 %d/%d — %s", data["asked"] + 1, FOLLOWUP_MAX, nxt.field)
-            return _ask(request, nxt, data["asked"] + 1)
+            return _ask(request, nxt, data["asked"] + 1, nkey, intake_id)
 
-    _FOLLOWUP.pop(call_id, None)
+    _FOLLOWUP.pop(key, None)
     left = fu_mod.pending_fields(card, tuple(state.asked))
     if left:
         # 남은 것은 그대로 '확인 필요'로 둔다. 우리가 채우지 않는다.

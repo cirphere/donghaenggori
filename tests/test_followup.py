@@ -23,6 +23,10 @@ _TMP_DB = os.path.join(tempfile.mkdtemp(prefix="followup-test-"), "test.db")
 os.environ["DONGHAENGGORI_DB"] = _TMP_DB
 os.environ["CLAWOPS_SIGNING_KEY"] = "test-key"
 os.environ["CLAWOPS_STAFF_NUMBER"] = "010-9999-0000"
+# 개발기의 .env.app 이 배포 주소를 들고 있으면 콜백이 그 호스트로 나가 서명이
+# 어긋난다. 테스트는 환경 파일에 흔들리지 않아야 한다(test_voice 도 같은 값을
+# 손으로 돌려놓는다).
+os.environ["PUBLIC_BASE_URL"] = ""
 
 from donghaenggori.core import db, gate, pipeline  # noqa: E402
 from donghaenggori.core import followup as fu  # noqa: E402
@@ -231,6 +235,8 @@ def test_call_flow() -> None:
     import base64
     import hashlib
     import hmac
+    import html as html_mod
+    import re
 
     from fastapi.testclient import TestClient
 
@@ -247,8 +253,23 @@ def test_call_flow() -> None:
             hmac.new(b"test-key", data.encode(), hashlib.sha256).digest()).decode()
         r = client.post(path, data=form,
                         headers={"X-Signature": sig, "X-Forwarded-Proto": "https"})
-        check(f"POST {path} 200", r.status_code == 200, f"HTTP {r.status_code}")
+        check(f"POST {path.split('?')[0]} 200", r.status_code == 200, f"HTTP {r.status_code}")
         return r.text
+
+    def action_of(xml: str) -> str | None:
+        """XML 이 지시한 다음 주소를 그대로 따라간다.
+
+        경로를 테스트가 손으로 적으면 **배선이 틀려도 테스트는 통과한다** —
+        실제로 상태 열쇠를 주소에 싣도록 바꿨을 때 그랬다. 통신사가 하는 대로
+        우리가 내려보낸 action 을 그대로 부른다.
+        """
+        m = re.search(r'<Record[^>]*action="([^"]+)"', xml)
+        if not m:
+            return None
+        url = html_mod.unescape(m.group(1))
+        # 절대 주소로 나와도 경로만 떼어 부른다 — PUBLIC_BASE_URL 이 무엇이든
+        # 테스트는 같은 클라이언트로 같은 경로를 두드려야 한다.
+        return re.sub(r"^https?://[^/]+", "", url)
 
     # 녹음 내려받기·STT 를 흉내낸다 — 회선 없이 흐름만 본다.
     said = {"text": "모레 3시에 송정병원 가야 해"}
@@ -263,7 +284,9 @@ def test_call_flow() -> None:
 
     # 답을 하면 값이 채워지고 통화가 끝난다(남은 칸이 없으므로)
     said["text"] = "오후요"
-    xml = post("/api/voice/followup?n=1", CallId="C1", From=PHONE,
+    nxt = action_of(xml)
+    check("다음 주소에 상태 열쇠가 실린다", nxt and "fu=" in nxt and "intake=" in nxt, str(nxt))
+    xml = post(nxt, CallId="C1", From=PHONE,
                RecordingUrl="http://x/a1.wav", RecordingDuration="2")
     check("답을 받으면 통화를 끝낸다", "<Hangup/>" in xml, xml[:160])
     row = db.list_intakes(limit=1)[0]
@@ -271,10 +294,10 @@ def test_call_flow() -> None:
 
     # ── 사람을 찾으면 즉시 그만둔다 ──────────────────────────────
     said["text"] = "모레 3시에 송정병원 가야 해"
-    post("/api/voice/recording", CallId="C2", From=PHONE,
-         RecordingUrl="http://x/rec2.wav", RecordingDuration="7")
+    xml = post("/api/voice/recording", CallId="C2", From=PHONE,
+               RecordingUrl="http://x/rec2.wav", RecordingDuration="7")
     said["text"] = "사람 좀 바꿔줘"
-    xml = post("/api/voice/followup?n=1", CallId="C2", From=PHONE,
+    xml = post(action_of(xml), CallId="C2", From=PHONE,
                RecordingUrl="http://x/a2.wav", RecordingDuration="2")
     check("사람을 직접 찾으면 담당자로 넘긴다", "<Dial" in xml, xml[:200])
     card = db.get_intake(db.list_intakes(limit=1)[0]["id"])["card"]
@@ -284,10 +307,10 @@ def test_call_flow() -> None:
 
     # 혼란·거부는 담당자 폰을 울리지 않는다
     said["text"] = "모레 3시에 송정병원 가야 해"
-    post("/api/voice/recording", CallId="C3", From=PHONE,
-         RecordingUrl="http://x/rec3.wav", RecordingDuration="7")
+    xml = post("/api/voice/recording", CallId="C3", From=PHONE,
+               RecordingUrl="http://x/rec3.wav", RecordingDuration="7")
     said["text"] = "됐어요 그만할래"
-    xml = post("/api/voice/followup?n=1", CallId="C3", From=PHONE,
+    xml = post(action_of(xml), CallId="C3", From=PHONE,
                RecordingUrl="http://x/a3.wav", RecordingDuration="2")
     check("그만하겠다면 캐묻지 않고 끝낸다", "<Hangup/>" in xml and "<Dial" not in xml,
           xml[:200])
@@ -298,20 +321,34 @@ def test_call_flow() -> None:
                RecordingUrl="http://x/rec4.wav", RecordingDuration="7")
     asks = 0
     for i in range(1, 5):
-        if "voice/followup" not in xml:
+        nxt = action_of(xml)
+        if not nxt or "followup" not in nxt:
             break
         asks += 1
         said["text"] = "글쎄 잘 모르겄어" if i == 1 else "그냥"
-        xml = post(f"/api/voice/followup?n={i}", CallId="C4", From=PHONE,
+        xml = post(nxt, CallId="C4", From=PHONE,
                    RecordingUrl=f"http://x/b{i}.wav", RecordingDuration="2")
     check("통화당 상한을 지킨다", asks <= v.FOLLOWUP_MAX, f"{asks}회 물음")
     check("상한에서 통화가 끝난다", "<Hangup/>" in xml, xml[:160])
+
+    # ── 상태가 사라져도(서버 재시작) 답변을 잃지 않는다 ──────────
+    said["text"] = "모레 3시에 송정병원 가야 해"
+    xml = post("/api/voice/recording", CallId="C6", From=PHONE,
+               RecordingUrl="http://x/rec6.wav", RecordingDuration="7")
+    nxt = action_of(xml)
+    v._FOLLOWUP.clear()                      # 재시작을 흉내낸다
+    said["text"] = "오후요"
+    xml = post(nxt, CallId="C6", From=PHONE,
+               RecordingUrl="http://x/a6.wav", RecordingDuration="2")
+    row = db.list_intakes(limit=1)[0]
+    check("상태가 없어도 답을 접수에 반영한다", row["time_value"] == "15:00",
+          str(row["time_value"]))
 
     # ── 신규 유형에는 되묻지 않는다 ──────────────────────────────
     said["text"] = "허리가 아픈데 주변에 어떤 병원이 있는지를 모르겠어"
     xml = post("/api/voice/recording", CallId="C5", From=PHONE,
                RecordingUrl="http://x/rec5.wav", RecordingDuration="7")
-    check("신규 유형은 되묻지 않고 사람에게", "voice/followup" not in xml, xml[:200])
+    check("신규 유형은 되묻지 않고 사람에게", action_of(xml) is None, str(action_of(xml)))
     check("신규 유형 안내가 나간다", "사회복지사가 확인한 뒤" in xml, xml[:200])
 
 
