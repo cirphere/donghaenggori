@@ -1,0 +1,25 @@
+# 방언 파인튜닝 STT 오버레이 — 켜고 끄기 쉬운 형태로 둔다.
+#
+# .env 의 COMPOSE_FILE **맨 뒤**에 붙인다. 나중 파일이 이기므로, gpu.yml 이
+# environment: 로 박아 둔 WHISPER_MODEL(large-v3)을 여기서 덮어쓸 수 있다.
+# (.env.app 으로는 못 바꾼다 — environment: 가 env_file 을 이긴다.)
+#
+#   COMPOSE_FILE=...:docker-compose.gpu.yml:...:docker-compose.dialect.yml
+#
+# **되돌리기는 그 한 조각을 지우고 `docker compose up -d`** 다. 모델이 원본
+# 그대로 돌아온다. 어댑터를 병합해 버렸으므로 이 디렉터리가 곧 되돌릴 수 없는
+# 산출물이고, 원본은 HuggingFace 에서 다시 받으면 되므로 여기가 유일한 사본은
+# 아니다.
+#
+# 모델 디렉터리는 저장소에 넣지 않는다(2.9GB). 호스트 경로를 마운트한다 —
+# 기기마다 다르므로 DIALECT_MODEL_DIR 로 바꿀 수 있게 둔다.
+
+services:
+  app:
+    environment:
+      # faster-whisper 는 이름(large-v3) 대신 **디렉터리 경로**를 주면 그것을 쓴다.
+      WHISPER_MODEL: /models/dialect
+    volumes:
+      # 읽기 전용이다. 추론만 하므로 쓸 이유가 없고, 실수로 덮어쓰면 다시
+      # 학습해야 한다(GPU 서버에서 13분 + 변환).
+      - ${DIALECT_MODEL_DIR:-/home/circle/aix/dialect/lora-v1-ct2}:/models/dialect:ro
