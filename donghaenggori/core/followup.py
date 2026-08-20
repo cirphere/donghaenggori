@@ -43,11 +43,25 @@ from . import requesttype as rt_mod
 from .korean import particle
 
 # 통화당 후속질문 상한. 0 이면 기능이 꺼진다 — 시연장에서 한 줄로 끌 수 있어야 한다.
-DEFAULT_MAX_QUESTIONS = 2
+#
+# 동행 정보의 기본 항목(병원·방문일·시각·진료과·대상자)이 빠지면 복지사가 결국
+# 다시 전화한다. 어르신이 아직 통화 중일 때 받는 편이 낫다는 판단으로 넷까지
+# 늘렸다. 무응답·혼란이 이어지면 그 전에 사람에게 넘어가므로(detect_handoff_signal)
+# 통화가 무한히 늘어나지는 않는다.
+DEFAULT_MAX_QUESTIONS = 4
 
-# 되물을 칸. gate.BLOCKING 중에서 **통화로 답을 받으면 실제로 풀리는 것**만 남겼다.
-# target 은 여기 없다(위 설명 참조). request 도 없다 — 신규 유형은 사람 몫이다.
-ASKABLE = ("hospital", "date", "time")
+# 되물을 항목과 **묻는 순서**.
+#
+# **gate.BLOCKING 과 다른 목록이다.** 막는 기준은 "일정을 세우는 데 반드시
+# 필요한가" 이고, 묻는 기준은 "동행 정보에서 빠지면 다시 전화해야 하는가" 다.
+# 진료과는 없어도 확정할 수 있지만(막지 않는다) 통화에서는 물어본다.
+#
+# 순서는 게이트가 막는 것부터다 — 통화가 중간에 끊겨도 확정에 필요한 것이 먼저
+# 채워지는 편이 낫다.
+ASK_ORDER = ("hospital", "date", "time", "dept", "target")
+
+# 예전 이름. 되물을 항목이 셋뿐이던 시절 이 이름으로 참조했다.
+ASKABLE = ASK_ORDER
 
 
 # ── 후속질문 생성 ────────────────────────────────────────────────────────
@@ -58,6 +72,12 @@ _TRIM = (
     ("어르신, ", ""),
     (" 확인 부탁드립니다", " 말씀해 주세요"),
     ("한 번 더 확인 부탁드립니다", "다시 한 번 말씀해 주세요"),
+    # 화면용 문구가 통화에서는 답을 유도하지 못하는 경우. 뜻은 그대로 두고
+    # 어르신이 답할 수 있는 말로 바꾼다.
+    ("방문 시각도 알려주시면 차량 배차에 반영하겠습니다.",
+     "몇 시에 가시는지 알려 주시겠어요?"),
+    ("성함과 거주 읍면동을 알려주시면 대상자를 확인하겠습니다.",
+     "성함을 다시 한 번 말씀해 주시겠어요?"),
 )
 
 
@@ -85,34 +105,43 @@ def generate_followup_question(field: str, known: dict,
                                asked: tuple[str, ...] = ()) -> Followup | None:
     """확인 필요로 남은 칸 하나를 묻는 질문. 물을 것이 없으면 None.
 
-    known 은 지금까지 파악한 내용 — 접수카드 dict 다. 이미 값이 있는 칸은
-    `gate.blockers` 에 애초에 들어오지 않으므로, 아는 것을 다시 묻는 일이 없다.
+    known 은 지금까지 파악한 내용 — 접수카드 dict 다. **이미 아는 것은 묻지
+    않는다**: 상태가 '확인 필요' 인 칸만 대상이고, 값이 있으면 애초에 그 상태가
+    아니다.
     """
     from . import gate  # 순환 import 를 피해 함수 안에서 부른다
 
-    if field in asked:
+    if field in asked or field not in ASK_ORDER:
         return None
-    for b in gate.blockers(known):
-        if b["field"] != field or field not in ASKABLE:
-            continue
-        q = b.get("question")
-        if not q:
-            return None                      # 물을 말을 지어내지 않는다
-        return Followup(field=field, question=_for_call(q), label=b.get("label") or field)
-    return None
+    f = ((known or {}).get("fields") or {}).get(field)
+    if not f or f.get("status") != "확인 필요":
+        return None
+    q = gate.question_for(field, known)
+    if not q:
+        return None                          # 물을 말을 지어내지 않는다
+    return Followup(field=field, question=_for_call(q), label=f.get("label") or field)
 
 
 def pending_fields(card: dict | None, asked: tuple[str, ...] = ()) -> list[str]:
-    """되물을 수 있는 칸을 게이트 순서대로. 이미 물은 것은 뺀다."""
-    from . import gate
+    """되물을 항목을 ASK_ORDER 순서로. 이미 물은 것은 뺀다.
 
+    **게이트가 막는 목록을 그대로 쓰지 않는다.** 진료과는 확정을 막지 않지만
+    (없어도 동행은 나간다) 동행 정보에서 빠지면 복지사가 다시 전화하게 되므로
+    통화에서는 묻는다. 시각도 어르신이 말한 적 없어도 묻는다 — 게이트는 그때
+    막지 않지만(OPTIONAL_UNLESS_SPOKEN), 예약 시간 없이 동행을 잡을 수는 없다.
+
+    막는 것과 묻는 것을 가른 것이다. 되물어서 못 얻으면 그 칸은 '확인 필요' 로
+    남고, 확정 정책은 지금까지와 똑같다.
+    """
     if not card:
         return []
     # 신규 유형은 되물어서 풀리지 않는다 — 통째로 사람에게 넘긴다.
     if (card.get("request_type") or "") in rt_mod.STAFF_HANDLED:
         return []
-    return [b["field"] for b in gate.blockers(card)
-            if b["field"] in ASKABLE and b["field"] not in asked]
+    fields = card.get("fields") or {}
+    return [name for name in ASK_ORDER
+            if name not in asked
+            and (fields.get(name) or {}).get("status") == "확인 필요"]
 
 
 def next_question(card: dict | None, asked: tuple[str, ...] = ()) -> Followup | None:
@@ -278,6 +307,10 @@ def reextract_field(field: str, original: str, answer: str,
         return _reextract_date(said)
     if field == "time":
         return _reextract_time(said, spoken)
+    if field == "dept":
+        return _reextract_dept(said)
+    if field == "target":
+        return _reextract_target(said)
     # 되물을 수 없는 칸이 여기 오면 아무것도 하지 않는다.
     return Reextract(field, evidence=[f"'{field}' 은 통화로 되묻지 않는 항목"])
 
@@ -360,6 +393,45 @@ def _reextract_time(said: str, spoken: str | None) -> Reextract:
 _CANDIDATE_RE = re.compile(r"가셨던\s+(.+?)\s*맞으실까요")
 
 
+def _reextract_dept(said: str) -> Reextract:
+    """진료과 — 어르신이 **말한 것만** 쓴다.
+
+    증상에서 우리가 옮기지 않는다("허리가 아파요" → 정형외과). 그건 되묻기 전에도
+    할 수 있었던 추정이고, 되물은 자리에서 추정을 답으로 채우면 물어본 의미가 없다.
+    어느 과인지 모르는 어르신이 많고, 그때는 확인 필요로 남는 것이 맞다.
+    """
+    for dept in nlu_mod.TERMS["dept_keywords"]:
+        if dept in said:
+            return Reextract("dept", dept, "확인됨",
+                             [f"후속질문에 '{dept}'{_particle(dept)} 직접 말함"])
+    return Reextract("dept", None, "확인 필요",
+                     [f"후속답변 '{said}' 에서 진료과를 확인하지 못함",
+                      "증상에서 진료과를 옮기지 않는다 — 사회복지사가 확인"])
+
+
+def _reextract_target(said: str) -> Reextract:
+    """대상자 — **들은 것을 기록하고 값은 채우지 않는다.**
+
+    8kHz 전화 음질에서 받아 적은 이름은 어떤 경로로도 '확인됨' 이 되지 않는다
+    (card.fields_view). '추정' 을 주면 게이트가 풀리는데, 대상자는 발신번호로도
+    확정하지 않는다는 것이 이 서비스의 불변조건이다(AGENTS.md 3).
+
+    그래서 여기서는 묻고 **답을 그대로 남기는 것까지만** 한다. 복지사는 카드의
+    후속질문 기록에서 어르신이 말한 성함을 읽고, 확정은 사람이 한다. 물어본 것이
+    헛일은 아니다 — 되걸어 "성함이 어떻게 되세요" 를 다시 묻지 않아도 된다.
+    """
+    from . import identity as identity_mod
+
+    name, region = identity_mod.parse_identity_answer(said)
+    heard = " · ".join(x for x in (name, region) if x)
+    if heard:
+        return Reextract("target", None, "확인 필요",
+                         [f"통화에서 들은 것 — {heard}",
+                          "이름은 전화 음질에서 오인식이 잦다 — 대상자 확정은 사회복지사가 한다"])
+    return Reextract("target", None, "확인 필요",
+                     [f"후속답변 '{said}' 에서 성함을 확인하지 못함"])
+
+
 def _asked_candidate(card: dict | None, question: str = "") -> str | None:
     """"맞다"가 무엇을 가리키는가 — **우리가 물은 질문에 들어 있던 이름**이다.
 
@@ -388,4 +460,6 @@ def max_questions(raw: str | None) -> int:
         n = int((raw or "").strip())
     except (TypeError, ValueError):
         return DEFAULT_MAX_QUESTIONS
-    return max(0, min(n, 3))
+    # 되물을 항목이 다섯이라 상한도 거기까지 허용한다. 그보다 크게 잡을 이유가
+    # 없다 — 물을 것이 없으면 알아서 멈춘다.
+    return max(0, min(n, 5))

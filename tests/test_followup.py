@@ -64,8 +64,25 @@ def test_question() -> None:
     check("이미 물은 칸은 다시 묻지 않는다",
           fu.next_question(c2, asked=tuple(fu.pending_fields(c2))) is None)
 
-    # 대상자는 되묻지 않는다 — 통화로 받아 적은 이름은 '확인됨'이 되지 않는다
-    check("대상자는 되묻지 않는다", "target" not in fu.ASKABLE, str(fu.ASKABLE))
+    # 대상자는 **묻기는 하되 값을 채우지 않는다.** 8kHz 전사 이름은 어떤 경로로도
+    # '확인됨'이 되지 않고, '추정'을 주면 게이트가 풀린다 — 대상자는 발신번호로도
+    # 확정하지 않는다는 불변조건(AGENTS.md 3)이 무너진다.
+    check("대상자도 되묻는다", "target" in fu.ASK_ORDER, str(fu.ASK_ORDER))
+    rt_target = fu.reextract_field("target", "", "김말자요")
+    check("대상자 답변은 기록만 하고 값은 비운다",
+          rt_target.value is None and rt_target.status == "확인 필요",
+          f"{rt_target.value} [{rt_target.status}]")
+    check("들은 이름은 근거에 남는다",
+          any("김말자" in e for e in rt_target.evidence), str(rt_target.evidence))
+
+    # 진료과는 게이트가 막지 않지만(없어도 동행은 나간다) 통화에서는 묻는다 —
+    # 동행 정보에서 빠지면 복지사가 다시 전화하게 된다.
+    c_dept = card_of("모레 오후 2시에 송정병원 가야 해요")
+    check("진료과는 게이트가 막지 않는다",
+          "dept" not in {b["field"] for b in gate.blockers(c_dept)},
+          str([b["field"] for b in gate.blockers(c_dept)]))
+    check("그래도 진료과는 되묻는다", "dept" in fu.pending_fields(c_dept),
+          str(fu.pending_fields(c_dept)))
 
     # **게이트가 자기가 만든 질문을 찾아야 한다.** 되묻는 문장에 들어가는 것은
     # 상호이고("지난번 가셨던 ○○정형외과의원 맞으실까요?"), 이력의 상호는
@@ -86,10 +103,10 @@ def test_question() -> None:
     check("신규 유형에는 후속질문을 하지 않는다", fu.next_question(c3) is None,
           str(c3.get("request_type")))
 
-    # 확인 필요가 없으면 묻지 않는다
-    c4 = card_of("내일 오후 2시에 송정병원 가야 해")
-    check("막힌 칸이 없으면 안 묻는다", fu.next_question(c4) is None,
-          str([b["field"] for b in gate.blockers(c4)]))
+    # 기본 정보가 다 있으면 묻지 않는다 — **아는 것을 다시 묻지 않는다.**
+    c4 = card_of("내일 오후 2시에 송정병원 정형외과 가야 해요")
+    check("전부 채워졌으면 안 묻는다", fu.next_question(c4) is None,
+          str(fu.pending_fields(c4)))
 
 
 def test_handoff() -> None:
@@ -307,9 +324,17 @@ def test_call_flow() -> None:
     check("다음 주소에 상태 열쇠가 실린다", nxt and "fu=" in nxt and "intake=" in nxt, str(nxt))
     xml = post(nxt, CallId="C1", From=PHONE,
                RecordingUrl="http://x/a1.wav", RecordingDuration="2")
-    check("답을 받으면 통화를 끝낸다", "<Hangup/>" in xml, xml[:160])
     row = db.list_intakes(limit=1)[0]
     check("통화로 받은 값이 접수에 남는다", row["time_value"] == "15:00", str(row["time_value"]))
+
+    # 시각을 받았으면 다음 항목(진료과)으로 이어진다 — 기본 정보를 빠짐없이 받는다
+    check("남은 항목을 이어서 묻는다", "어느 과" in xml, xml[:200])
+    said["text"] = "정형외과요"
+    xml = post(action_of(xml), CallId="C1", From=PHONE,
+               RecordingUrl="http://x/a1b.wav", RecordingDuration="2")
+    check("다 받으면 통화를 끝낸다", "<Hangup/>" in xml, xml[:160])
+    row = db.get_intake(db.list_intakes(limit=1)[0]["id"])
+    check("진료과도 접수에 남는다", row["dept"] == "정형외과", str(row["dept"]))
 
     # ── 사람을 찾으면 즉시 그만둔다 ──────────────────────────────
     said["text"] = "모레 3시에 송정병원 가야 해"

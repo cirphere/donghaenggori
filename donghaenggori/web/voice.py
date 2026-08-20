@@ -658,7 +658,10 @@ async def recording(request: Request) -> Response:
 
     # 확인 필요로 남은 칸이 있으면 **끊기 전에** 한 번 더 묻는다. 어르신은 아직
     # 전화기를 들고 있고, 나중에 복지사가 되거는 것보다 지금 묻는 편이 낫다.
-    ask = _start_followup(request, form, res, intake_id, text)
+    # 통화 앞에서 성함을 받았으면(미등록 번호) 대상자를 다시 묻지 않는다.
+    # 같은 것을 두 번 물으면 어르신은 우리가 못 알아들은 줄 안다.
+    ask = _start_followup(request, form, res, intake_id, text,
+                          already_asked=("target",) if said_url else ())
     if ask is not None:
         return ask
     return _hangup(f"{_receipt(res)} {BYE}")
@@ -711,7 +714,7 @@ def _ask(request: Request, q, n: int, key: str, intake_id: int) -> Response:
 
 
 def _start_followup(request: Request, form: dict, res, intake_id: int | None,
-                    text: str) -> Response | None:
+                    text: str, already_asked: tuple[str, ...] = ()) -> Response | None:
     """되물 것이 있으면 첫 질문을 돌려준다. 없으면 None(지금까지대로 종료).
 
     **접수는 이미 저장된 뒤에 묻는다.** 되묻는 도중에 어르신이 끊어도 접수가
@@ -732,17 +735,20 @@ def _start_followup(request: Request, form: dict, res, intake_id: int | None,
         _log.info("후속질문 건너뜀 — 접수가 저장되지 않아 답을 반영할 곳이 없다")
         return None
     card = res.card.to_dict()
-    q = fu_mod.next_question(card)
+    q = fu_mod.next_question(card, already_asked)
     if q is None:
-        from ..core import gate as gate_mod
-        blocked = [b["field"] for b in gate_mod.blockers(card)]
-        _log.info("후속질문 건너뜀 — 되물을 것이 없다 (막힌 칸 %s · 유형 %s)",
-                  blocked or "없음", card.get("request_type"))
+        _log.info("후속질문 건너뜀 — 되물을 것이 없다 (남은 칸 %s · 유형 %s)",
+                  fu_mod.pending_fields(card, already_asked) or "없음",
+                  card.get("request_type"))
         return None
 
     key = secrets.token_urlsafe(8)
+    state = fu_mod.CallState()
+    # 통화 앞에서 이미 물은 것은 '물었다' 로 표시해 둔다 — 그래야 다음 질문을
+    # 고를 때 건너뛴다.
+    state.asked.extend(already_asked)
     _put_followup(key, {
-        "intake_id": intake_id, "original": text, "state": fu_mod.CallState(),
+        "intake_id": intake_id, "original": text, "state": state,
         "pending": q, "asked": 0,
     })
     _log.info("후속질문 1/%d — %s: %s", FOLLOWUP_MAX, q.field, q.question)
