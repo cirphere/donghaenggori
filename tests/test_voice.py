@@ -147,6 +147,27 @@ def main() -> int:
     # 분기하는 곳이 없어야 한다 — 우리는 받아적을 뿐 통화를 끌지 않는다.
     check("음성으로 분기하지 않음", "input=" not in body, "STT 로 분기하지 않는다")
 
+    # ── 시연 매핑은 두 쌍까지 ─────────────────────────────────
+    # 폰 두 대로 서로 다른 어르신을 보여주려면 한 쌍으로는 안 된다 —
+    # 이름 있는 프로필과 이름 없는 프로필(성함을 묻는 경우)을 한 자리에서
+    # 보여야 한다.
+    _saved = (voice.DEMO_CALLER_PHONE, voice.DEMO_CALLER_TARGET,
+              voice.DEMO_CALLER_PHONE_2, voice.DEMO_CALLER_TARGET_2)
+    voice.DEMO_CALLER_PHONE, voice.DEMO_CALLER_TARGET = "010-1111-2222", "010-1234-5678"
+    voice.DEMO_CALLER_PHONE_2, voice.DEMO_CALLER_TARGET_2 = "010-3333-4444", "010-4444-5555"
+    try:
+        check("첫째 쌍이 바뀐다", voice._lookup_phone("010-1111-2222") == "010-1234-5678")
+        check("둘째 쌍도 바뀐다", voice._lookup_phone("010-3333-4444") == "010-4444-5555")
+        # 하이픈 표기가 제각각이라 정규화해서 맞춘다.
+        check("하이픈 없어도 맞는다", voice._lookup_phone("01033334444") == "010-4444-5555")
+        check("모르는 번호는 그대로", voice._lookup_phone("010-9999-0000") == "010-9999-0000")
+        # 한쪽만 채운 쌍은 쓰지 않는다 — 반만 설정하면 조용히 엉뚱한 곳을 본다.
+        voice.DEMO_CALLER_TARGET_2 = ""
+        check("반만 채운 쌍은 무시", voice._lookup_phone("010-3333-4444") == "010-3333-4444")
+    finally:
+        (voice.DEMO_CALLER_PHONE, voice.DEMO_CALLER_TARGET,
+         voice.DEMO_CALLER_PHONE_2, voice.DEMO_CALLER_TARGET_2) = _saved
+
     # ── 이름이 없는 프로필이면 성함을 묻는다 ──────────────────
     # 프로필 존재 여부만 보면 안 된다. 주소나 연락처만 채워 넣고 이름은
     # 비워 둔 프로필이 실제로 만들어진다 — 그러면 통화가 성함을 묻지 않고
