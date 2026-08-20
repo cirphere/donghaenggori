@@ -177,9 +177,28 @@ _HOUR_WORD_RE = re.compile(
     "(" + "|".join(sorted(_HOUR_WORDS, key=len, reverse=True)) + r")시")
 
 
+# 분도 우리말로 말한다 — "열 시 삼십 분". 대본 발화에서 30분이 통째로
+# 사라져 10:00 으로 잡혔다. 시각은 게이트가 막아주지 않는 값이라(말했으면
+# 확정된다) 조용히 30분 일찍 배차된다.
+#
+# **한자어 수사만 넣는다.** 분은 '삼십분'이지 '서른분'이 아니다.
+_MINUTE_WORDS = {
+    "십오": 15, "삼십": 30, "사십오": 45, "이십": 20, "사십": 40,
+    "오십": 50, "십": 10,
+}
+_MINUTE_WORD_RE = re.compile(
+    r"(?<![0-9])(" + "|".join(sorted(_MINUTE_WORDS, key=len, reverse=True))
+    + r")\s*분")
+
+
 def _digitize_hours(t: str) -> str:
-    """'세시반' → '3시반'. 시각 표기만 바꾸고 나머지 문장은 건드리지 않는다."""
-    return _HOUR_WORD_RE.sub(lambda m: f"{_HOUR_WORDS[m.group(1)]}시", t)
+    """'세시반' → '3시반', '열 시 삼십 분' → '10시 30분'.
+
+    시각 표기만 바꾸고 나머지 문장은 건드리지 않는다. 분을 먼저 바꾸면
+    '십분' 의 '십' 이 시 규칙에 걸릴 일이 없다 — 시 규칙은 '…시' 만 본다.
+    """
+    t = _HOUR_WORD_RE.sub(lambda m: f"{_HOUR_WORDS[m.group(1)]}시", t)
+    return _MINUTE_WORD_RE.sub(lambda m: f"{_MINUTE_WORDS[m.group(1)]}분", t)
 
 
 def parse_time(text: str) -> dict | None:
