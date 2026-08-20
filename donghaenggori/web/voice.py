@@ -455,6 +455,18 @@ async def _verify(request: Request) -> dict:
 
 # ──────────────────────────────────────────────────── 1턴 수신 --
 
+# 이름이 없거나 자리표시인 프로필. core/db.register_profile_from_intake 와
+# 같은 기준을 쓴다.
+_PLACEHOLDER_NAME = ("미등록", "미확인", "신규 대상자", "후보")
+
+
+def _has_real_name(prof: dict | None) -> bool:
+    name = ((prof or {}).get("name") or "").strip()
+    if not name:
+        return False
+    return not any(k in name for k in _PLACEHOLDER_NAME)
+
+
 @router.post("/incoming")
 async def incoming(request: Request) -> Response:
     """전화가 걸려왔다.
@@ -482,8 +494,17 @@ async def incoming(request: Request) -> Response:
     def ask(who: str) -> str:
         return _record(_callback(request, "voice_recording") + f"?who={who}")
 
-    # 미등록 번호 — 이름을 모르니 확인할 것도 없다. 성함·읍면동부터 받는다.
-    if not prof:
+    # 미등록 번호이거나 **이름을 모르는 프로필** — 성함·읍면동부터 받는다.
+    #
+    # 프로필 존재 여부만 보면 안 된다. 주소나 연락처만 채워 넣고 이름은
+    # 비워 둔 프로필이 실제로 만들어진다(기관이 명단부터 올리는 경우).
+    # 그러면 통화가 성함을 묻지 않고 넘어가는데, 정작 카드에는 부를 이름이
+    # 없다 — 물어볼 기회가 있었는데 놓친 것이다.
+    #
+    # 자리표시 이름도 없는 것으로 본다. 판정 기준은 프로필 등록과 같다
+    # (core/db.register_profile_from_intake) — 두 곳이 다르면 통화는
+    # 이름이 있다고 보고 지나가는데 등록은 거부하는 상태가 된다.
+    if not prof or not _has_real_name(prof):
         return _xml(_say(GREETING + _recording_notice())
                     + _ask_identity_first(request, "new"))
 

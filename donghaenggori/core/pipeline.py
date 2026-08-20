@@ -217,7 +217,7 @@ def _lookup_hospitals(prof: dict | None, req) -> tuple[list[dict], str]:
     latlon = None
     if prof and prof.get("region"):
         from . import geo
-        latlon = geo.coords_of(prof["region"])
+        latlon = geo.coords_of(_where(prof))
     try:
         res = hospital_lookup.lookup(
             dept=req.conditions.get("원하는진료과"),
@@ -231,6 +231,21 @@ def _lookup_hospitals(prof: dict | None, req) -> tuple[list[dict], str]:
     return res.candidates, res.note
 
 
+def _where(prof: dict | None) -> str:
+    """좌표를 뽑을 주소 문자열.
+
+    **region 만 보면 안 된다.** 프로필에 상세주소(address)만 채워 넣은
+    경우가 있는데, 그러면 날씨도 병원 후보도 조용히 아무것도 안 나온다 —
+    주소를 적어 넣고도 왜 안 되는지 알 방법이 없다.
+
+    둘을 이어 붙인다. geo 는 어절로 시군구를 찾으므로 앞뒤에 무엇이 붙어도
+    되고(core/geo.py), 둘 중 하나만 있어도 그것으로 찾는다.
+    """
+    if not prof:
+        return ""
+    return " ".join(x for x in (prof.get("region"), prof.get("address")) if x).strip()
+
+
 def _reference_candidates(prof: dict | None, a) -> list[dict]:
     """화면 04 4-A — 이력이 없을 때 거리 기준 '참고 후보'.
 
@@ -240,7 +255,7 @@ def _reference_candidates(prof: dict | None, a) -> list[dict]:
     if not prof:
         return []
     from . import geo
-    latlon = geo.coords_of(prof.get("region"))
+    latlon = geo.coords_of(_where(prof))
     if latlon is None:
         return []
     try:
@@ -251,7 +266,7 @@ def _reference_candidates(prof: dict | None, a) -> list[dict]:
         return []
     if res.unavailable:
         return []
-    precise = geo.is_precise(prof.get("region"))
+    precise = geo.is_precise(_where(prof))
     # 진료과 필터는 '해당 과목 보유 기관'을 뜻한다. 내과의원이 정형외과를 겸하는 등
     # 기관 이름과 과목이 달라 보일 수 있으므로 어떤 기준으로 걸렀는지 함께 표시한다.
     dept_note = f"{a.dept} 진료과목 보유" if a.dept else "진료과 미지정"
@@ -294,7 +309,7 @@ def _outing_checklist(prof: dict | None, a, spoken_region: str | None = None) ->
     그게 집 기준인지 병원 기준인지 알 수 없었다.
     """
     from . import geo
-    region = (prof or {}).get("region") or (spoken_region or "")
+    region = _where(prof) or (spoken_region or "")
     region = region.strip()
     if not region:
         return []
@@ -318,7 +333,7 @@ def _outing_checklist(prof: dict | None, a, spoken_region: str | None = None) ->
     if not out:
         return []
 
-    기준 = "등록된 거주지" if (prof or {}).get("region") else "통화에서 들은 주소"
+    기준 = "등록된 거주지" if _where(prof) else "통화에서 들은 주소"
     꼬리 = "" if geo.is_precise(region) else " · 시도 대표 좌표라 실제 방문지와 다를 수 있습니다"
     out.append(f"※ {기준}({region}) 기준입니다{꼬리}.")
     return out
