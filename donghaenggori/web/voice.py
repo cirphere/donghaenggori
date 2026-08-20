@@ -159,12 +159,17 @@ DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
 DEMO_CALLER_PHONE_2 = os.environ.get("DEMO_CALLER_PHONE_2", "")
 DEMO_CALLER_TARGET_2 = os.environ.get("DEMO_CALLER_TARGET_2", "")
 
+# 셋째 쌍. 시연에서 폰이 늘어나면 여기에 붙인다.
+DEMO_CALLER_PHONE_3 = os.environ.get("DEMO_CALLER_PHONE_3", "")
+DEMO_CALLER_TARGET_3 = os.environ.get("DEMO_CALLER_TARGET_3", "")
+
 
 def _demo_pairs() -> list[tuple[str, str]]:
     """(발신번호, 조회할 번호) 쌍. 양쪽이 다 있는 것만 쓴다."""
     return [(a, b) for a, b in (
         (DEMO_CALLER_PHONE, DEMO_CALLER_TARGET),
         (DEMO_CALLER_PHONE_2, DEMO_CALLER_TARGET_2),
+        (DEMO_CALLER_PHONE_3, DEMO_CALLER_TARGET_3),
     ) if a and b]
 
 # 우리 서비스의 공개 주소. 2턴 콜백(<Record action=...>)을 만들 때 쓴다.
