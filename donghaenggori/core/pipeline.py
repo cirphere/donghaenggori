@@ -324,6 +324,14 @@ def _outing_checklist(prof: dict | None, a, spoken_region: str | None = None) ->
     return out
 
 
+# 확정하지 못한 사유 → 복지사가 읽을 문장. 무엇을 되물어야 하는지가
+# 문장에 들어 있어야 한다.
+_WHY_UNSURE = {
+    dateparse.AMBIGUOUS_MERIDIEM: "오전·오후를 말하지 않아 확정할 수 없음",
+    dateparse.AMBIGUOUS_MULTIPLE: "여러 날짜·시각을 말해 어느 쪽인지 확인 필요",
+    dateparse.AMBIGUOUS_NEGATED: "말한 뒤 아니라고 해 확정할 수 없음",
+}
+
 GUARDIAN_CHANNEL = "앱·웹(보호자)"
 
 
@@ -600,7 +608,15 @@ def _field_evidence(a, hres, target_evidence: list[str], dept,
         if slot.get("corrected"):
             ev.append("앞선 표현을 정정했으므로 마지막에 말한 것을 최종 의도로 봄")
         if not slot.get("confident"):
-            ev.append("오전·오후를 말하지 않아 확정할 수 없음")
+            # **왜 확정 못 했는지를 그 항목에 맞게 적는다.**
+            #
+            # 이 함수는 날짜와 시각이 같이 쓴다. 예전에는 무엇이든
+            # "오전·오후를 말하지 않아" 라고 적어서, 날짜 칸에 시각 이야기가
+            # 붙었다 — "9월 5일 / 금요일" 아래에 오전·오후 문구가 떴다.
+            # 복지사가 읽고 무엇을 물어야 할지 알 수 없는 근거는 없느니만
+            # 못하다. 파서가 이미 사유를 알고 있으니 그것을 쓴다.
+            ev.append(_WHY_UNSURE.get(slot.get("ambiguous"), "")
+                      or f"말씀하신 {kind}{josa(kind, '을')} 하나로 확정할 수 없음")
         return ev
 
     out = {

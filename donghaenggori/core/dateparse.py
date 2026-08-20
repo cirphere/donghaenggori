@@ -74,6 +74,36 @@ def _resolve(cands: list[tuple[int, object, str]], text: str,
     return None, spoken, False, False, AMBIGUOUS_MULTIPLE
 
 
+def _fold_confirming_weekday(
+    cands: list[tuple[int, str, str]], ends: list[int],
+) -> tuple[list[tuple[int, str, str]], list[int]]:
+    """요일이 날짜를 **확인해 주는** 경우 요일 후보를 접는다.
+
+    "9월 5일 토요일" 처럼 날짜와 요일을 함께 말하는 것이 오히려 흔하다.
+    그런데 요일 규칙은 '다가오는 토요일'을 따로 계산하므로 값이 둘이 되고,
+    '복수 표현' 으로 걸려 확인 전화가 한 통 더 나갔다. 어르신은 분명하게
+    하루를 말했고, 두 표현이 서로를 확인해 주는데도 그랬다.
+
+    **요일이 실제로 그 날짜의 요일일 때만 접는다.** "9월 5일 금요일" 처럼
+    어긋나면(2026-09-05 는 토요일) 그대로 되묻는다 — 어느 쪽이 맞는지
+    우리가 고를 일이 아니다. 날짜를 잘못 알고 계신 것일 수도 있다.
+    """
+    요일 = [i for i, c in enumerate(cands) if c[2].endswith("요일")]
+    날짜 = [i for i, c in enumerate(cands) if not c[2].endswith("요일")]
+    if not 요일 or not 날짜:
+        return cands, ends
+    # 날짜 후보가 하나로 모이는 경우만 본다. 여럿이면 그것부터 애매하다.
+    values = {cands[i][1] for i in 날짜}
+    if len(values) != 1:
+        return cands, ends
+    d = datetime.date.fromisoformat(next(iter(values)))
+    이름 = "월화수목금토일"[d.weekday()]
+    if not all(cands[i][2].startswith(이름) for i in 요일):
+        return cands, ends            # 어긋난다 — 되묻는다
+    keep = [i for i in range(len(cands)) if i not in set(요일)]
+    return [cands[i] for i in keep], [ends[i] for i in keep]
+
+
 def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
     """발화 텍스트에서 날짜 표현을 찾아 해석한다.
 
@@ -149,6 +179,8 @@ def parse_date(text: str, today: datetime.date | None = None) -> dict | None:
 
     if not cands:
         return None
+
+    cands, ends = _fold_confirming_weekday(cands, ends)
 
     value, label, corrected, confident, why = _resolve(cands, t, ends)
     return {"date": value, "label": label, "confident": confident,
