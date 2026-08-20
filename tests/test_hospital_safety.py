@@ -310,10 +310,45 @@ def case12() -> None:
               f"{g['time'] if g else None} (기대 {기대})")
 
 
+def case13() -> None:
+    """'가려고' 는 가려움이 아니다. 그리고 추천 요청은 새 유형이다.
+
+    실통화다.
+
+        "내일 세시에 가려고 하는데 주변에 ○○병원이 없어가지고
+         추천을 받고 싶습니다"
+
+    진료과가 **피부과**로 잡혔다. 증상 사전의 '가려'(가렵다)가 동사 '가다'의
+    활용형 '가려고' 안에 걸린 것이다. 발목이/목이와 같은 종류다.
+
+    그리고 병원을 추천해 달라는 말인데 기존재방문으로 흘렀다. 그러면 과거
+    이력의 단골이 후보로 붙는다 — 어디로 갈지 몰라서 전화한 사람에게
+    지난번 병원을 내미는 것이다.
+    """
+    from donghaenggori.core import nlu, pipeline
+
+    for 말, 기대 in (("피부가 가려워서 병원 가야 해", "피부과"),
+                     ("온몸이 가렵고 발진이", "피부과"),
+                     ("간지러워서 못 참겄어", "피부과")):
+        got = nlu.analyze(말).dept
+        check(f"13 가려움 — {말[:12]}", got == 기대, f"{got} (기대 {기대})")
+
+    for 말 in ("내일 세시에 가려고 하는데", "낼 병원 가려고 해", "모레 가려면 몇 시에"):
+        got = nlu.analyze(말).dept
+        check(f"13 '가려고' 는 아님 — {말[:12]}", got != "피부과", str(got))
+
+    말 = "내일 세시에 가려고 하는데 주변에 병원이 없어가지고 추천을 받고 싶습니다"
+    c = pipeline.run(PHONE_MAIN, 말, channel="전화").card.to_dict()
+    check("13 추천 요청은 새 유형", c.get("request_type") == "신규병원탐색",
+          str(c.get("request_type")))
+    check("13 병원을 지어내지 않는다", c["hospital"] is None, str(c["hospital"]))
+    check("13 진료과도 지어내지 않는다", c["dept"] is None, str(c["dept"]))
+
+
 def main() -> int:
     db.init_db()
     for fn in (case01, case02, case03, case04, case05, case06, case07, case08,
-               case09, case10, case11, case12):
+               case09, case10, case11, case12, case13):
         try:
             fn()
         except Exception as e:
