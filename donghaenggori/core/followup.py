@@ -198,6 +198,12 @@ def detect_handoff_signal(utterance: str, state: CallState | None = None) -> Han
     for w in _CONFUSED:
         if _norm(w) in norm:
             return Handoff(True, f"질문을 이해하지 못함 — '{w}'")
+    # 다른 병원을 찾아 달라는 답. **되묻기로 풀리는 종류가 아니다** — 우리는
+    # 병원을 추천하지 않으므로(신규 병원 탐색은 사회복지사 몫) 여기서 끝낸다.
+    # 캐물어 봐야 어르신은 우리가 못 하는 것을 계속 기다린다.
+    for w in _WANT_OTHER:
+        if _norm(w) in norm:
+            return Handoff(True, f"다른 병원을 찾아 달라는 요청 — '{w}'")
 
     if state is not None:
         # 같은 말을 되풀이한다 — 우리 질문이 닿지 않고 있다는 뜻이다.
@@ -219,7 +225,16 @@ def is_unclear(answer: str) -> bool:
 # 후보를 되물었을 때의 긍정. "지난번 가셨던 ○○병원 맞으실까요?" → "응 맞아"
 _YES = ("맞아", "맞어", "맞습니다", "맞네", "그래", "그려", "그렇지", "응", "예", "네",
         "그거", "거기", "그 병원", "그럼")
-_NO = ("아니", "아녀", "아니요", "아뇨", "안 가", "다른 데", "다른 병원", "틀려")
+_NO = ("아니", "아녀", "아니요", "아뇨", "안 가", "틀려", "없어", "없으니", "없는데",
+       "없대", "없다", "안 해", "안 봐", "못 봐")
+
+# **다른 병원을 찾아 달라는 답.** 되묻던 흐름을 여기서 끝내고 사람에게 넘긴다 —
+# 우리는 병원을 추천하지 않는다(신규 병원 탐색은 사회복지사 몫이다).
+#
+# 실통화에서 이걸 놓쳤다. "백병원에는 피부과가 없으니 다른 병원을 추천해 주세요"
+# 를 받고도 백병원을 확인됨으로 채워 "백병원으로 접수했습니다" 를 들려줬다.
+_WANT_OTHER = ("다른 병원", "딴 병원", "다른 데", "딴 데", "다른 곳", "추천",
+               "찾아 주", "찾아주", "알아봐 주", "알아봐주", "어디 좋", "어디가 좋")
 
 # 오전·오후만 답한 경우. "3시"는 원문에 있으니 거기에 붙인다.
 _MERIDIEM = ("오전", "오후", "새벽", "아침", "점심", "저녁", "밤", "낮")
@@ -268,20 +283,36 @@ def reextract_field(field: str, original: str, answer: str,
 
 
 def _reextract_hospital(said: str, card: dict | None, question: str = "") -> Reextract:
+    """**부정·탐색 요청을 이름 추출보다 먼저 본다.**
+
+    순서가 뒤집혀 있어서 실통화가 깨졌다. "백병원에는 피부과가 없으니 다른
+    병원을 추천해 주세요" 에서 병원명 추출이 먼저 돌아 '백병원' 을 확인됨으로
+    올렸고, 통화 마지막에 "백병원으로 접수했습니다" 가 나갔다. 어르신은 그
+    병원이 **아니라고** 말한 것이다.
+    """
+    norm = _norm(said)
+    candidate = _asked_candidate(card, question)
+
+    # ① 다른 병원을 찾아 달라 — 우리가 채울 수 있는 답이 아니다.
+    if any(_norm(w) in norm for w in _WANT_OTHER):
+        return Reextract("hospital", None, "확인 필요",
+                         [f"후속질문에 '{said}'라고 답함 — 다른 병원을 찾아 달라는 요청",
+                          "AI가 병원을 추천하지 않는다 — 사회복지사 직접 응대 필요"])
+
+    # ② 아니라는 말이 섞여 있으면 그 말이 이긴다. 후보를 되물었든 아니든 같다 —
+    #    "거기 아니에요" 의 '거기' 가 동의로 잡히던 것도 이 순서로 막는다.
+    #    틀린 병원으로 배차하는 것보다 한 번 더 확인하는 쪽이 싸다.
+    if any(_norm(w) in norm for w in _NO):
+        why = f" — {candidate} 아님" if candidate else ""
+        return Reextract("hospital", None, "확인 필요",
+                         [f"후속질문에 '{said}'라고 답함{why}"])
+
+    # ③ 이름을 직접 댔다 — 기존 규칙과 같은 대우다(hospital.suggest).
     name = nlu_mod.detect_hospital(said)
     if name:
-        # 어르신이 이름을 직접 댔다 — 기존 규칙과 같은 대우다(hospital.suggest).
         return Reextract("hospital", name, "확인됨",
                          [f"후속질문에 '{name}'{_particle(name)} 직접 말함"])
 
-    norm = _norm(said)
-    candidate = _asked_candidate(card, question)
-    # **부정을 먼저 본다.** 긍정 신호를 먼저 보면 "거기 아니에요" 의 '거기' 가
-    # 동의로 잡힌다 — 실제로 그렇게 걸렸다. 아니라는 말이 섞여 있으면 그 말이
-    # 이긴다. 틀린 병원으로 배차하는 것보다 한 번 더 확인하는 쪽이 싸다.
-    if candidate and any(_norm(w) in norm for w in _NO):
-        return Reextract("hospital", None, "확인 필요",
-                         [f"후속질문에 '{said}'라고 답함 — {candidate} 아님"])
     if candidate and any(_norm(w) in norm for w in _YES):
         # 후보를 되물어 "맞다"고 답했다. **확인됨은 주지 않는다** — 8kHz 전사에서
         # '네'와 '아니요'가 뒤집히는 일이 있고, 이 값은 배차까지 흘러간다.

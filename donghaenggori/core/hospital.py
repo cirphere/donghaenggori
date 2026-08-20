@@ -31,6 +31,13 @@ class HospitalResult:
     reasons: list[str] = field(default_factory=list)   # 근거(설명가능성)
     candidates: list[dict] = field(default_factory=list)  # 후보 목록(병원, 횟수)
     need_confirm: bool = True         # 사회복지사 확인 필요 여부
+    # **발화의 진료과와 이력이 어긋나서** 확인 필요가 된 경우.
+    #
+    # 이때 candidates 에는 이력의 병원이 그대로 들어 있는데, 그걸 "지난번 가셨던
+    # ○○ 맞으실까요?" 로 되물으면 안 된다 — 어르신은 그 병원에 없는 진료과를
+    # 말한 것이다. 실통화에서 정형외과 이력만 있는 백병원을 피부과 요청에 되물어,
+    # "백병원에는 피부과가 없다" 는 답을 듣고도 백병원으로 접수해 버렸다.
+    dept_mismatch: bool = False
 
 
 def _recent_history(history: list[dict], today: datetime.date) -> list[dict]:
@@ -103,9 +110,11 @@ def suggest(profile: dict | None, dept: str | None, today: datetime.date | None 
         return HospitalResult(
             status="확인 필요",
             dept=dept,
-            reasons=[f"발화의 진료과('{dept}')와 일치하는 과거 이력이 없음 — 새 증상일 수 있어 확인 필요"],
+            reasons=[f"발화의 진료과('{dept}')와 일치하는 과거 이력이 없음 — 새 증상일 수 있어 확인 필요",
+                     "과거 방문 병원에 그 진료과가 있는지는 확인되지 않음 — 후보로 제시하지 않음"],
             candidates=_count_hospitals(pool),
             need_confirm=True,
+            dept_mismatch=True,
         )
 
     counts = _count_hospitals(matched)

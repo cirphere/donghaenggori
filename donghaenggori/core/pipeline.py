@@ -449,8 +449,17 @@ def _build_card(phone, utterance, a, prof, hres, nres,
     if "hospital" in shown and not new_type and hres.status in ("추정", "확인 필요"):
         flags.append("확인 필요: 병원명")
         hosp = hres.hospital or (hres.candidates[0]["hospital"] if hres.candidates else None)
-        questions.append(f"어르신, 지난번 가셨던 {hosp} 맞으실까요?" if hosp
-                         else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
+        if hres.dept_mismatch:
+            # **이력의 병원을 되묻지 않는다.** 어르신이 말한 진료과가 그 병원에
+            # 있는지 우리는 모른다. 실통화에서 "지난번 가셨던 백병원 맞으실까요?"
+            # 를 피부과 요청에 물었고, "거기 피부과 없어요" 라는 답을 받고도
+            # 백병원으로 접수했다. 물을 것은 '그 병원이 맞냐' 가 아니라
+            # '어느 병원이냐' 다.
+            questions.append(f"말씀하신 {a.dept}는 어느 병원으로 모실까요?" if a.dept
+                             else "어느 병원으로 모실지 알려주시겠어요?")
+        else:
+            questions.append(f"어르신, 지난번 가셨던 {hosp} 맞으실까요?" if hosp
+                             else "어르신, 어느 병원으로 모실지 확인 부탁드립니다.")
     if "date" in shown and not (a.date and a.date.get("confident")):
         flags.append("확인 필요: 날짜")
         questions.append(_ambiguity_question(a.date or {}, "날짜", channel))
