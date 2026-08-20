@@ -576,7 +576,11 @@ function renderCard(d) {
   frag.append(grid);
 
   const need = el("div", "block");
-  need.append(el("h3", null, "동행 지원 수준(후보)"));
+  // **출처를 갈라 보여준다.** 지원 수준은 프로필(장기요양등급·거동)에서 오고,
+  // 이동지원 필요 여부는 이번 통화에서 어르신이 한 말이다. 한 칸에 합쳐 두면
+  // "혼자 갈 수 있어" 라고 말한 어르신에게 프로필 등급이 그대로 붙는다 —
+  // 성능평가에서 실제로 그렇게 나왔다.
+  need.append(el("h3", null, "지원 수준 (프로필 기반)"));
   const nb = el("div", "need");
   nb.append(el("b", null, c.need_level));
   nb.append(el("span", "badge " + (c.need_official ? "ok" : "need"),
@@ -588,6 +592,40 @@ function renderCard(d) {
     need.append(ul);
   }
   frag.append(need);
+
+  // 이번 통화에서 들은 것 — 발화 기반. 프로필 값과 나란히 두고 출처를 붙인다.
+  const mn = c.mobility_need || {};
+  const gm = c.guardian_mentioned || {};
+  if (mn["판정"] || gm["판정"]) {
+    const b = el("div", "block");
+    b.append(el("h3", null, "이번 통화 언급 (발화 기반)"));
+    if (mn["판정"]) {
+      const row = el("div", "need");
+      row.append(el("b", null, mn["필요여부"] || "확인 필요"));
+      row.append(el("span", "badge " + (STATUS_CLASS[mn["상태"]] || "need"),
+        `${mn["상태"]} · ${mn["판정"]}`));
+      b.append(row);
+      // 근거는 원문 문구 그대로다 — 무엇을 듣고 그렇게 판정했는지 보여준다.
+      if (mn["근거문구"]?.length) {
+        const ul = el("ul", "evidence");
+        mn["근거문구"].forEach((e) => ul.append(el("li", null, e)));
+        b.append(ul);
+      }
+    }
+    if (gm["내용"]) {
+      const row = el("div", "need");
+      row.append(el("b", null, gm["내용"]));
+      row.append(el("span", "badge " + (STATUS_CLASS[gm["상태"]] || "need"),
+        `보호자 언급 · ${gm["상태"]}`));
+      b.append(row);
+      if (gm["근거문구"]?.length) {
+        const ul = el("ul", "evidence");
+        gm["근거문구"].forEach((e) => ul.append(el("li", null, e)));
+        b.append(ul);
+      }
+    }
+    frag.append(b);
+  }
 
   const lists = [
     ["확인 질문 (콜백용)", c.confirm_questions],

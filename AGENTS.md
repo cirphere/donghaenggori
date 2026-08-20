@@ -92,6 +92,33 @@ Copilot**이다. 어르신이 전화로 말한 짧고 모호한 요청을 받아
 
 ---
 
+## 이동지원·보호자는 출처가 둘이다 (`donghaenggori/core/mobility.py`)
+
+성능평가로 드러난 것 — 카드의 `need_level`(지원 수준)과 `guardian`(연락처)은 **발화가
+아니라 케어 프로필에서 온다.** 어르신이 "나 혼자 갈 수 있어" 라고 말해도 카드는
+프로필 등급으로 "휠체어·부축 동행" 을 내놓았고, 그 말은 카드에 남지 않았다.
+
+**합치지 않고 나란히 둔다.**
+
+| | 출처 | 무엇 |
+|---|---|---|
+| `need_level` | 프로필 | 지원 수준(휠체어·부축 등) — 배차에 쓴다 |
+| `mobility_need` | 발화 | 이번 통화에서 필요하다고 했는가 |
+| `guardian` | 프로필 | 연락처 — 못 만났을 때 전화할 곳 |
+| `guardian_mentioned` | 발화 | 통화에서 들은 보호자 이야기 |
+
+- **mobility.py 는 프로필·이력·DB 를 보지 않는다.** 입력은 발화 텍스트뿐이다. 한 번
+  섞이면 "발화에서 뽑았는지 프로필에서 왔는지" 를 다시 구분할 수 없다
+- **`가족지원있음`을 `명시적_불필요`와 갈라 둔다.** 둘 다 '불필요·확정' 이지만 근거가
+  다르다 — 가족이 못 오게 되면 바로 필요해진다. 복지사가 그 차이를 알아야 한다
+- `신호없음`이면 '확인 필요' 다. **그때 프로필의 지원 수준을 이 칸에 끌어오지 않는다**
+- 규칙 기반이다. 근거는 원문 문구 그대로 남긴다. 방언 표현은 팀 사전
+  (`docs/eval/전남방언_매핑사전.xlsx`)의 항목을 따랐다
+
+`tests/test_mobility.py`(42건)가 이 경계를 지킨다.
+
+---
+
 ## 통화 중 후속질문 (`donghaenggori/core/followup.py`)
 
 확인 필요로 남은 칸을 **어르신이 아직 통화 중일 때** 되묻는다. 동행 정보의 기본
@@ -211,7 +238,8 @@ PYTHONPATH=. python tests/test_voice.py           # 71
 PYTHONPATH=. python tests/test_file3_cases.py     # 26  ← 제출 문서 케이스
 PYTHONPATH=. python tests/test_identity_extract.py # 39
 PYTHONPATH=. python tests/test_request_type.py    # 75  ← 새 요청 유형 경계
-PYTHONPATH=. python tests/test_followup.py       # 121 ← 통화 중 후속질문
+PYTHONPATH=. python tests/test_followup.py       # 129 ← 통화 중 후속질문
+PYTHONPATH=. python tests/test_mobility.py       # 42  ← 이동지원·보호자 출처 분리
 ruff check .
 ```
 

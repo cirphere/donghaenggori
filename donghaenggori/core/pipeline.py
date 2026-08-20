@@ -19,6 +19,7 @@ from . import classify as classify_mod
 from . import dateparse, db
 from . import hospital as hospital_mod
 from . import identity as identity_mod
+from . import mobility as mobility_mod
 from . import needlevel as need_mod
 from . import nlu as nlu_mod
 from . import requesttype as rt_mod
@@ -557,6 +558,10 @@ def _build_card(phone, utterance, a, prof, hres, nres,
         time_value=a.time.get("time") if a.time else None,
         reasons=hres.reasons, confirm_questions=questions,
         need_level=nres.level, need_reasons=nres.reasons,
+        # **발화에서만** 뽑는다. 프로필을 보지 않는다 — 섞이면 어디서 온 값인지
+        # 다시 구분할 수 없다(core/mobility.py 설명 참조).
+        mobility_need=mobility_mod.extract_mobility_need(utterance).to_dict(),
+        guardian_mentioned=mobility_mod.extract_guardian_info(utterance).to_dict(),
         need_basis=nres.basis, need_official=nres.official,
         guardian_contact=nres.guardian_contact,
         # 기관이 이미 아는 값 — 확신도를 붙이지 않고 그대로 싣는다.

@@ -271,7 +271,11 @@ def detect_hospital(text: str) -> str | None:
                     continue
             if any(w in _NOT_A_NAME for w in words):
                 continue
-            if gap and words[-1].endswith(_VERB_ENDINGS):
+            # **어절마다 본다.** 마지막 어절만 보다가 "시내에 있는 이비인후과" 를
+            # '시내에있는이비인후과' 라는 없는 병원으로 잡았다 — '있는' 은 어미
+            # 목록에 없지만 '시내에' 의 '에' 는 있다. 두 어절을 받기로 한 순간
+            # 앞 어절도 같은 검사를 받아야 한다(#127 주석에도 그렇게 적혀 있다).
+            if gap and any(w.endswith(_VERB_ENDINGS) for w in words):
                 continue
             # **1차가 이미 보고 버린 것을 줍지 않는다.** 앞말에 병원 꼬리가
             # 들어 있으면 그것은 1차 규칙의 대상이었다 — "백병원에는 피부과가
