@@ -39,6 +39,13 @@
         "dept": "내과",
         "symptom": "혈압약 처방",
         "pharmacy": true
+      },
+      {
+        "date": "2026-07-14",
+        "hospital": "밝은눈안과",
+        "dept": "안과",
+        "symptom": "눈이 침침함",
+        "pharmacy": false
       }
     ]
   },

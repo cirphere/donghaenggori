@@ -56,6 +56,10 @@ FIXED = {
             {"date": "2026-03-05", "hospital": "○○정형외과의원", "dept": "정형외과", "symptom": "무릎 통증", "pharmacy": True},
             {"date": "2026-05-12", "hospital": "○○정형외과의원", "dept": "정형외과", "symptom": "무릎 통증", "pharmacy": True},
             {"date": "2026-06-20", "hospital": "△△내과의원", "dept": "내과", "symptom": "혈압약 처방", "pharmacy": True},
+            # 안과 이력 — "눈이 침침해서" 라고만 말해도 지난번 병원이 후보로
+            # 나오는 것을 보이는 자리다. 증상 사전이 안과를 잡고, 그 진료과의
+            # 이력에서 병원이 따라온다.
+            {"date": "2026-07-14", "hospital": "밝은눈안과", "dept": "안과", "symptom": "눈이 침침함", "pharmacy": False},
         ],
     },
     "010-2222-3333": {
