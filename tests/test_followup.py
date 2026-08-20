@@ -63,6 +63,20 @@ def test_question() -> None:
     # 대상자는 되묻지 않는다 — 통화로 받아 적은 이름은 '확인됨'이 되지 않는다
     check("대상자는 되묻지 않는다", "target" not in fu.ASKABLE, str(fu.ASKABLE))
 
+    # **게이트가 자기가 만든 질문을 찾아야 한다.** 되묻는 문장에 들어가는 것은
+    # 상호이고("지난번 가셨던 ○○정형외과의원 맞으실까요?"), 이력의 상호는
+    # 의원·한의원·보건소로 끝나는 경우가 흔하다. 힌트가 '병원' 하나였을 때
+    # question 이 None 이 되어 **화면은 되물을 말 없이 차단만 보여주고** 통화
+    # 후속질문도 병원을 건너뛰었다. 실제 이력(○○정형외과의원)으로 재현된다.
+    c5 = card_of("다음주에 피부과 좀 가야 하는데요")
+    hosp_blocker = next((b for b in gate.blockers(c5) if b["field"] == "hospital"), None)
+    check("병원 차단에는 되물을 질문이 붙는다",
+          hosp_blocker is not None and hosp_blocker["question"],
+          str(hosp_blocker))
+    check("'의원'으로 끝나는 상호도 되묻는다",
+          fu.generate_followup_question("hospital", c5) is not None,
+          str(fu.pending_fields(c5)))
+
     # 신규 유형은 되물어서 풀리지 않는다
     c3 = card_of("허리가 아픈데 주변에 어떤 병원이 있는지를 모르겠어")
     check("신규 유형에는 후속질문을 하지 않는다", fu.next_question(c3) is None,
