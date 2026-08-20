@@ -143,6 +143,19 @@ _HOSPITAL_RE = re.compile(
 # 어르신은 말하면서 고친다 — "송정병원 말고 목포한국병원". 날짜 파서와 같은 기준.
 _CORRECTION = re.compile(r"아니|말고|말구|아니라|아니고")
 
+# 이름 **뒤에** 이 말이 오면 그 병원을 말한 것이 아니라 **아니라고 말한 것**이다.
+#
+#   "백병원에는 피부과가 없으니 다른 병원을 추천해 주세요"
+#
+# 실통화에서 이 문장의 '백병원' 을 직접 언급으로 먹어 '확인됨' 까지 올라갔고,
+# 통화 마지막에 "백병원으로 접수했습니다" 를 들려줬다. 어르신은 그 병원에
+# 피부과가 없다고 말한 것이다.
+_NEGATED_AFTER = ("없", "말고", "말구", "아니", "안 가", "못 가", "빼고", "아닌", "싫")
+
+# 부정어를 찾을 범위. 이름 바로 뒤 한 마디 정도만 본다 — 문장 끝까지 보면
+# "송정병원으로 가야 하는데 시간이 없어요" 까지 부정으로 걸린다.
+_NEGATION_WINDOW = 14
+
 # 띄어 쓰지 않은 '병원/의원/클리닉' 은 상호로 본다("송정병원"). 띄어 쓴 것은
 # 대개 상호가 아니라 설명이다("좋아서 병원", "목포 병원", "어매 병원").
 _GENERIC_SUFFIX = {"병원", "의원", "클리닉"}
@@ -196,6 +209,20 @@ def detect_hospital(text: str) -> str | None:
         if name in TERMS["dept_keywords"]:
             continue
         found.append((m.start(), m.end(), name + suffix))
+
+    # 이름 뒤에서 부정하는 말이 오면 그 이름은 뺀다. 범위는 **다음 이름이
+    # 시작되기 전까지** — "송정병원 말고 목포한국병원" 에서 뒤쪽까지 걸리면
+    # 정정한 병원마저 사라진다.
+    kept = []
+    for i, (start, end, name) in enumerate(found):
+        limit = found[i + 1][0] if i + 1 < len(found) else end + _NEGATION_WINDOW
+        window = text[end:min(limit, end + _NEGATION_WINDOW)]
+        if any(w in window for w in _NEGATED_AFTER):
+            continue
+        kept.append((start, end, name))
+    # **다 빠지면 이름이 없는 것이 맞다.** 하나라도 남기려고 되돌리면 정작
+    # 아니라고 말한 병원이 그대로 살아난다 — 그게 이 수정의 목적이었다.
+    found = kept
 
     if not found:
         # 진료과로 끝나는 상호는 여기서 본다 — 위 규칙이 아무것도 못 찾았을
