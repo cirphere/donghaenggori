@@ -504,6 +504,32 @@ def test_non_korean_answer() -> None:
     check("한글 없는 답에서 값을 뽑지 않는다", not r.resolved, str(r.to_dict()))
 
 
+def test_ambiguous_question_reaches_followup() -> None:
+    """모호한 날짜·시각도 되묻는다.
+
+    **되묻기는 게이트가 만든 질문을 다듬어 쓴다.** 그래서 게이트가 질문을
+    못 고르면 통화가 조용히 건너뛴다 — 화면은 '확인 필요' 를 띄우는데
+    통화는 아무것도 묻지 않는다.
+
+    모호한 날짜 질문에는 '날짜'·'언제' 가 안 들어간다. 어르신이 말한 표현이
+    그대로 들어가기 때문이다.
+
+        "말씀하신 9월 5일 / 금요일 중에 어느 쪽으로 잡을까요?"
+
+    병원에서 같은 일이 있었다(#117) — 상호가 들어가서 '병원' 이 없었다.
+    """
+    from donghaenggori.core import gate, pipeline
+    for 말, 필드 in (("밝은 눈 안과 가기로 했어. 9월 5일 금요일 오후 2시로 잡아났고", "date"),
+                     ("모레 세시에 정형외과 가야겄어", "time")):
+        c = pipeline.run(PHONE, 말, channel="전화").card.to_dict()
+        blocked = {b["field"]: b.get("question") for b in gate.blockers(c)}
+        check(f"{필드} 가 막힌다", 필드 in blocked, str(list(blocked)))
+        check(f"{필드} 에 되물을 말이 있다", bool(blocked.get(필드)),
+              f"question={blocked.get(필드)!r}")
+        q = fu.next_question(c)
+        check(f"{필드} 를 되묻는다", q is not None, "질문 없음")
+
+
 def main() -> int:
     db.init_db(force=True)
     test_question()
@@ -512,6 +538,7 @@ def main() -> int:
     test_record_into_intake()
     test_call_flow()
     test_non_korean_answer()
+    test_ambiguous_question_reaches_followup()
 
     print("\n통화 중 후속질문 검증")
     print("=" * 82)
