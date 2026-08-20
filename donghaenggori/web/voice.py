@@ -153,6 +153,20 @@ _IDENTITY_ANSWER = {
 DEMO_CALLER_PHONE = os.environ.get("DEMO_CALLER_PHONE", "")
 DEMO_CALLER_TARGET = os.environ.get("DEMO_CALLER_TARGET", "")
 
+# 둘째 쌍. 시연에서 폰 두 대로 서로 다른 어르신을 보여줄 때 쓴다 — 이름이
+# 있는 프로필과 **이름이 없는 프로필**(통화가 성함을 묻는 경우)을 한 자리에서
+# 보이려면 한 쌍으로는 안 된다.
+DEMO_CALLER_PHONE_2 = os.environ.get("DEMO_CALLER_PHONE_2", "")
+DEMO_CALLER_TARGET_2 = os.environ.get("DEMO_CALLER_TARGET_2", "")
+
+
+def _demo_pairs() -> list[tuple[str, str]]:
+    """(발신번호, 조회할 번호) 쌍. 양쪽이 다 있는 것만 쓴다."""
+    return [(a, b) for a, b in (
+        (DEMO_CALLER_PHONE, DEMO_CALLER_TARGET),
+        (DEMO_CALLER_PHONE_2, DEMO_CALLER_TARGET_2),
+    ) if a and b]
+
 # 우리 서비스의 공개 주소. 2턴 콜백(<Record action=...>)을 만들 때 쓴다.
 #
 # request.url_for 만 쓰면 http:// 가 나온다 — nginx 가 app:8000 에 http 로
@@ -228,7 +242,7 @@ SYMPTOM_PROMPT = ("어디가 편찮으신지, 어느 병원에 언제 가시는�
 # 도는지는 별개다. 통화 한 번 걸어보기 전에 로그로 확인할 수 있어야 한다.
 _log.info("전화 설정 — 녹음 상한 %d초 · 종료키 %s · 시연매핑 %s · 안내음성 %s · 후속질문 %s",
           MAX_RECORD_SECONDS, FINISH_ON_KEY or "(없음)",
-          "켬" if (DEMO_CALLER_PHONE and DEMO_CALLER_TARGET) else "끔",
+          f"{len(_demo_pairs())}쌍" if _demo_pairs() else "끔",
           f"{VOICE} (글자수 과금)" if VOICE else "무료 기본",
           f"{FOLLOWUP_MAX}회·{FOLLOWUP_SECONDS}초" if FOLLOWUP_MAX > 0 else "끔")
 
@@ -617,10 +631,15 @@ def _take_identity(call_id: str) -> str | None:
 
 
 def _lookup_phone(raw: str) -> str:
-    """조회에 쓸 번호. 시연용 매핑이 걸려 있으면 바꿔 끼운다."""
-    if DEMO_CALLER_PHONE and DEMO_CALLER_TARGET:
-        if db.normalize_phone(raw) == db.normalize_phone(DEMO_CALLER_PHONE):
-            return DEMO_CALLER_TARGET
+    """조회에 쓸 번호. 시연용 매핑이 걸려 있으면 바꿔 끼운다.
+
+    쌍이 여럿이면 **먼저 걸린 것**을 쓴다. 같은 발신번호를 두 번 적는 것은
+    설정 실수이고, 그때 무엇이 이기는지 정해져 있어야 헤매지 않는다.
+    """
+    key = db.normalize_phone(raw)
+    for caller, target in _demo_pairs():
+        if key == db.normalize_phone(caller):
+            return target
     return raw
 
 

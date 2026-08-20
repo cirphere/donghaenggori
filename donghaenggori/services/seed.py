@@ -41,7 +41,12 @@ SEED_USERS = (
 # 시나리오 고정 3명 — 파일2·3·4에서 참조되므로 값을 바꾸지 않는다
 FIXED = {
     "010-1234-5678": {
-        "id": "P001", "name": "박순자", "age": 81, "region": "전남 고흥군 ○○면",
+        # **광주 용봉동에 둔다.** 전남 고흥군은 반경 6km 안에 병원이 거의
+        # 없어 '주변 병원 후보' 가 빈 채로 나온다 — 농촌의 현실이지만 시연에서
+        # 보여줄 것이 없다. 심평원 조회가 실제로 도는 것을 보이려면 병원이
+        # 있는 지역이어야 한다.
+        "id": "P001", "name": "박순자", "age": 81,
+        "region": "광주광역시 북구", "address": "용봉동",
         "guardian": {"name": "이지현", "relation": "딸", "phone": "010-9876-5432",
                      "available": "평일 18시 이후"},
         "caregiver": "김복지 생활지원사", "mobility": "거동 불편(보행기 사용)",
@@ -63,6 +68,18 @@ FIXED = {
             {"date": "2026-04-02", "hospital": "□□정형외과", "dept": "정형외과", "symptom": "허리", "pharmacy": False},
             {"date": "2026-05-10", "hospital": "◇◇재활의학과", "dept": "재활의학과", "symptom": "허리 물리치료", "pharmacy": False},
         ],
+    },
+    # **이름이 없는 프로필.** 기관이 명단·주소부터 올리고 성함은 나중에
+    # 채우는 경우가 실제로 있다. 통화가 이때 성함을 물어야 하고(voice.
+    # _has_real_name), 주소만으로도 날씨·병원 후보가 나와야 한다.
+    "010-4444-5555": {
+        "id": "P004", "name": "", "age": None,
+        "region": "전남 여수시", "address": "여서로",
+        "guardian": None, "caregiver": None,
+        "mobility": None, "fall_risk": False, "lives_alone": True,
+        "preferred_time": None,
+        "notes": "성함 미확인 — 확인 전화 필요",
+        "history": [],
     },
     "010-7777-8888": {
         "id": "P003", "name": "정말순", "age": 85, "region": "전남 보성군 ○○리",
@@ -94,7 +111,12 @@ def _hospital(mark: str, dept: str) -> str:
 
 
 def build(seed: int = 20260807) -> dict:
-    """프로필 20건 · 이력 60건을 결정적으로 생성한다."""
+    """프로필 7건 · 이력 20건을 결정적으로 생성한다.
+
+    20건에서 줄였다. 시연에서 목록을 훑을 때 20명은 스크롤만 길고, 어느
+    어르신을 봐야 하는지 알 수 없다. 고정 4명(시나리오용)에 생성 3명이면
+    이력 있음·없음·신규가 다 나온다.
+    """
     rnd = random.Random(seed)
     profiles: dict[str, dict] = {
         "_comment": ("발신번호 → 케어 프로필. 시연용 가상 데이터(실제 개인정보 아님). "
@@ -103,15 +125,21 @@ def build(seed: int = 20260807) -> dict:
     profiles.update({k: json_copy(v) for k, v in FIXED.items()})
 
     fixed_hist = sum(len(v["history"]) for v in FIXED.values())   # 5건
-    target_hist = 60
-    n_new = 20 - len(FIXED)                                        # 17명
+    target_hist = 20
+    n_new = 7 - len(FIXED)                                         # 3명
     used_names = {v["name"] for v in FIXED.values()}
 
-    # 남은 이력을 17명에게 배분 — 0~5건씩, 합계가 target에 맞게
-    remain = target_hist - fixed_hist                              # 55건
+    # 남은 이력을 생성 인원에게 배분 — 0~5건씩.
+    #
+    # **담을 수 있는 양을 넘겨 달라고 하면 안 된다.** 예전에는 목표 건수를
+    # 그대로 while 로 돌렸는데, 인원을 20명에서 7명으로 줄이자 3명(최대
+    # 5건씩 = 10건)에게 15건을 나누라는 요구가 되어 루프가 끝나지 않았다.
+    # 담을 수 있는 만큼으로 먼저 자른다.
     per = [0] * n_new
-    # 2명은 신규(이력 0)로 남겨 cold start 재현
-    idx = list(range(2, n_new))
+    # 1명은 신규(이력 0)로 남겨 cold start 재현 — 그 사람은 배분에서 뺀다.
+    idx = list(range(1, n_new))
+    cap = len(idx) * 5
+    remain = min(target_hist - fixed_hist, cap)
     while remain > 0:
         i = rnd.choice(idx)
         if per[i] >= 5:
