@@ -544,6 +544,17 @@ def main() -> int:
     voice.KEEP_SAMPLES = True
     check("보관을 켜면 첫 안내에 녹음 고지가 붙는다",
           "녹음" in voice._recording_notice(), voice._recording_notice())
+    # 고지는 **명시해야** 끌 수 있다. .env 에서 `KEY=` 로 비워 두는 일이 흔한데,
+    # 빈 값을 '끄기' 로 읽으면 실수로 고지가 사라진다.
+    voice.KEEP_SAMPLES = True
+    고지원래 = voice.NOTICE_OFF
+    voice.NOTICE_OFF = True
+    check("off 를 적으면 고지만 끌 수 있다", voice._recording_notice() == "",
+          repr(voice._recording_notice()))
+    voice.NOTICE_OFF = 고지원래
+    check("빈 값은 미설정으로 본다 — 기본 문구가 남는다",
+          "녹음" in voice.RECORDING_NOTICE, voice.RECORDING_NOTICE)
+
     voice.KEEP_SAMPLES = 원래
     check("보관 기간이 정해져 있다 — 무기한이 아니다",
           voice.SAMPLE_RETENTION_DAYS > 0, f"{voice.SAMPLE_RETENTION_DAYS}일")
