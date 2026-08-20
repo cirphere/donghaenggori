@@ -1,10 +1,11 @@
 {
-  "_comment": "발신번호 → 케어 프로필. 시연용 가상 데이터(실제 개인정보 아님). history는 과거 동행 이력. 병원 후보 3단계 재현을 위해 패턴을 배분함. 장기요양등급(ltci_grade)·노인맞춤돌봄 군(care_program)은 공식 판정 결과를 옮겨 적는 자리다. 비어 있으면 관찰 특성으로 임시 후보를 내고 확정 전 확인을 요구한다. 시연 데이터는 전부 가상이다.",
+  "_comment": "발신번호 → 케어 프로필. 시연용 가상 데이터(실제 개인정보 아님). history는 과거 동행 이력. 병원 후보 3단계 재현을 위해 패턴을 배분함.",
   "010-1234-5678": {
     "id": "P001",
     "name": "박순자",
     "age": 81,
-    "region": "전남 고흥군 ○○면",
+    "region": "광주광역시 북구",
+    "address": "용봉동",
     "guardian": {
       "name": "이지현",
       "relation": "딸",
@@ -39,9 +40,7 @@
         "symptom": "혈압약 처방",
         "pharmacy": true
       }
-    ],
-    "ltci_grade": "2",
-    "address": "전남 고흥군 ○○면 ○○길 4"
+    ]
   },
   "010-2222-3333": {
     "id": "P002",
@@ -75,9 +74,22 @@
         "symptom": "허리 물리치료",
         "pharmacy": false
       }
-    ],
-    "care_program": "일반돌봄군",
-    "address": "전남 신안군 ○○면(섬) ○○길 41"
+    ]
+  },
+  "010-4444-5555": {
+    "id": "P004",
+    "name": "",
+    "age": null,
+    "region": "전남 여수시",
+    "address": "여서로",
+    "guardian": null,
+    "caregiver": null,
+    "mobility": null,
+    "fall_risk": false,
+    "lives_alone": true,
+    "preferred_time": null,
+    "notes": "성함 미확인 — 확인 전화 필요",
+    "history": []
   },
   "010-7777-8888": {
     "id": "P003",
@@ -91,723 +103,130 @@
     "lives_alone": true,
     "preferred_time": "오전",
     "notes": "보호자 없음 — 동행 매니저 필수",
-    "history": [],
-    "ltci_grade": "1",
-    "address": "전남 보성군 ○○리 ○○길 8"
+    "history": []
   },
-  "010-3562-3157": {
+  "010-3205-2483": {
     "id": "P004",
-    "name": "이옥자",
-    "age": 77,
-    "region": "광주광역시 동구 ○○동",
-    "guardian": null,
-    "caregiver": "김복지 생활지원사",
-    "mobility": "거동 불편(보행기 사용)",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "큰 소리로 천천히 안내 필요",
-    "history": [],
-    "care_program": "중점돌봄군",
-    "address": "광주광역시 동구 ○○동 ○○길 40"
-  },
-  "010-8736-7732": {
-    "id": "P005",
-    "name": "강덕례",
-    "age": 87,
-    "region": "전남 강진군 ○○면",
-    "guardian": {
-      "name": "윤민준",
-      "relation": "딸",
-      "phone": "010-9012-3348",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "이돌봄 생활지원사",
-    "mobility": "지팡이 사용",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [],
-    "address": "전남 강진군 ○○면 ○○길 10"
-  },
-  "010-4218-8885": {
-    "id": "P006",
-    "name": "권덕례",
-    "age": 90,
-    "region": "광주광역시 동구 ○○동",
-    "guardian": {
-      "name": "최민준",
-      "relation": "딸",
-      "phone": "010-6975-2363",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "김복지 생활지원사",
-    "mobility": "지팡이 사용",
-    "fall_risk": false,
-    "lives_alone": true,
-    "preferred_time": "오후",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-03-31",
-        "hospital": "☆☆피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-06-06",
-        "hospital": "☆☆피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-06-19",
-        "hospital": "☆☆피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-06-21",
-        "hospital": "☆☆피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-07-16",
-        "hospital": "☆☆피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      }
-    ],
-    "address": "광주광역시 동구 ○○동 ○○길 13"
-  },
-  "010-6585-4286": {
-    "id": "P007",
-    "name": "김덕례",
-    "age": 73,
-    "region": "전남 장성군 ○○면",
-    "guardian": {
-      "name": "이서연",
-      "relation": "딸",
-      "phone": "010-9380-1119",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "박돌봄 생활지원사",
-    "mobility": "휠체어 필요",
-    "fall_risk": true,
-    "lives_alone": false,
-    "preferred_time": "오후",
-    "notes": "큰 소리로 천천히 안내 필요",
-    "history": [
-      {
-        "date": "2026-02-21",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-03-06",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-04-11",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-04-26",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-05-14",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      }
-    ],
-    "ltci_grade": "1",
-    "address": "전남 장성군 ○○면 ○○길 36"
-  },
-  "010-5352-2398": {
-    "id": "P008",
-    "name": "임춘자",
-    "age": 85,
-    "region": "광주광역시 북구 ○○동",
-    "guardian": {
-      "name": "이서연",
-      "relation": "딸",
-      "phone": "010-7299-8624",
-      "available": "주말"
-    },
-    "caregiver": "정복지 생활지원사",
-    "mobility": "거동 불편(보행기 사용)",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-02-22",
-        "hospital": "☆☆정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-03-29",
-        "hospital": "☆☆정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-06-18",
-        "hospital": "☆☆정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": true
-      }
-    ],
-    "care_program": "중점돌봄군",
-    "address": "광주광역시 북구 ○○동 ○○길 8"
-  },
-  "010-8321-5932": {
-    "id": "P009",
-    "name": "장영자",
-    "age": 79,
-    "region": "전남 장성군 ○○면",
-    "guardian": null,
-    "caregiver": "최돌봄 생활지원사",
-    "mobility": "지팡이 사용",
-    "fall_risk": false,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "계단 이동 곤란",
-    "history": [
-      {
-        "date": "2026-04-09",
-        "hospital": "◎◎신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      }
-    ],
-    "address": "전남 장성군 ○○면 ○○길 42"
-  },
-  "010-4565-6845": {
-    "id": "P010",
-    "name": "이귀남",
-    "age": 83,
-    "region": "광주광역시 동구 ○○동",
-    "guardian": {
-      "name": "윤영호",
-      "relation": "딸",
-      "phone": "010-9610-5566",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "박돌봄 생활지원사",
-    "mobility": "보행 가능",
-    "fall_risk": false,
-    "lives_alone": true,
-    "preferred_time": "오후",
-    "notes": "청력 약함",
-    "history": [
-      {
-        "date": "2026-07-28",
-        "hospital": "□□치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      }
-    ],
-    "address": "광주광역시 동구 ○○동 ○○길 6"
-  },
-  "010-3855-9490": {
-    "id": "P011",
-    "name": "한귀남",
-    "age": 83,
-    "region": "전남 강진군 ○○면",
-    "guardian": null,
-    "caregiver": "정복지 생활지원사",
-    "mobility": "휠체어 필요",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-01-28",
-        "hospital": "◇◇치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-03-15",
-        "hospital": "◇◇치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-03-23",
-        "hospital": "◇◇치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-06-19",
-        "hospital": "◇◇치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-07-15",
-        "hospital": "◇◇치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      }
-    ],
-    "ltci_grade": "1",
-    "address": "전남 강진군 ○○면 ○○길 6"
-  },
-  "010-7426-1577": {
-    "id": "P012",
-    "name": "장종수",
-    "age": 83,
-    "region": "광주광역시 서구 ○○동",
-    "guardian": null,
-    "caregiver": "이돌봄 생활지원사",
-    "mobility": "거동 불편(보행기 사용)",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오후",
-    "notes": null,
-    "history": [
-      {
-        "date": "2026-03-12",
-        "hospital": "☆☆정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-04-15",
-        "hospital": "△△안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-04-18",
-        "hospital": "△△안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-04-20",
-        "hospital": "△△안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-06-15",
-        "hospital": "△△안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": false
-      }
-    ],
-    "care_program": "중점돌봄군",
-    "address": "광주광역시 서구 ○○동 ○○길 6"
-  },
-  "010-3478-7237": {
-    "id": "P013",
-    "name": "임정례",
-    "age": 81,
-    "region": "전남 담양군 ○○면",
-    "guardian": null,
-    "caregiver": "김복지 생활지원사",
-    "mobility": "휠체어 필요",
-    "fall_risk": true,
-    "lives_alone": false,
-    "preferred_time": "오후",
-    "notes": null,
-    "history": [
-      {
-        "date": "2026-02-04",
-        "hospital": "○○안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-03-02",
-        "hospital": "△△정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-04-10",
-        "hospital": "△△정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-07-02",
-        "hospital": "△△정형외과의원",
-        "dept": "정형외과",
-        "symptom": "무릎 통증",
-        "pharmacy": false
-      }
-    ],
-    "ltci_grade": "1",
-    "address": "전남 담양군 ○○면 ○○길 4"
-  },
-  "010-5457-5765": {
-    "id": "P014",
-    "name": "최명자",
-    "age": 74,
-    "region": "광주광역시 동구 ○○동",
-    "guardian": {
-      "name": "장지현",
-      "relation": "딸",
-      "phone": "010-2167-1749",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "최돌봄 생활지원사",
-    "mobility": "지팡이 사용",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": null,
-    "history": [
-      {
-        "date": "2026-02-08",
-        "hospital": "△△치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-03-02",
-        "hospital": "△△치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-03-19",
-        "hospital": "△△치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-05-20",
-        "hospital": "△△치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-07-10",
-        "hospital": "△△치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      }
-    ],
-    "address": "광주광역시 동구 ○○동 ○○길 37"
-  },
-  "010-5945-5332": {
-    "id": "P015",
-    "name": "정금순",
-    "age": 80,
-    "region": "전남 함평군 ○○면",
-    "guardian": {
-      "name": "권지현",
-      "relation": "아들",
-      "phone": "010-6578-4114",
-      "available": "상시"
-    },
-    "caregiver": "이돌봄 생활지원사",
-    "mobility": "휠체어 필요",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-04-03",
-        "hospital": "△△피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-04-15",
-        "hospital": "☆☆치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-07-15",
-        "hospital": "△△피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      }
-    ],
-    "ltci_grade": "1",
-    "address": "전남 함평군 ○○면 ○○길 3"
-  },
-  "010-6015-6195": {
-    "id": "P016",
-    "name": "윤명자",
+    "name": "장삼순",
     "age": 89,
-    "region": "광주광역시 동구 ○○동",
-    "guardian": {
-      "name": "최서연",
-      "relation": "딸",
-      "phone": "010-7740-5242",
-      "available": "상시"
-    },
-    "caregiver": "정복지 생활지원사",
-    "mobility": "휠체어 필요",
-    "fall_risk": true,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-01-27",
-        "hospital": "○○치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-02-26",
-        "hospital": "○○치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-06-06",
-        "hospital": "○○치과",
-        "dept": "치과",
-        "symptom": "잇몸 치료",
-        "pharmacy": false
-      }
-    ],
-    "ltci_grade": "1",
-    "address": "광주광역시 동구 ○○동 ○○길 12"
-  },
-  "010-5018-8226": {
-    "id": "P017",
-    "name": "김영자",
-    "age": 85,
-    "region": "전남 곡성군 ○○면",
-    "guardian": {
-      "name": "정영호",
-      "relation": "딸",
-      "phone": "010-4214-6383",
-      "available": "상시"
-    },
-    "caregiver": "박돌봄 생활지원사",
-    "mobility": "거동 불편(보행기 사용)",
-    "fall_risk": false,
-    "lives_alone": true,
-    "preferred_time": "오전",
-    "notes": "계단 이동 곤란",
-    "history": [
-      {
-        "date": "2026-04-07",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-05-30",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-06-21",
-        "hospital": "□□신경과",
-        "dept": "신경과",
-        "symptom": "어지럼 경과",
-        "pharmacy": false
-      }
-    ],
-    "care_program": "중점돌봄군",
-    "address": "전남 곡성군 ○○면 ○○길 8"
-  },
-  "010-2757-9322": {
-    "id": "P018",
-    "name": "강판례",
-    "age": 78,
     "region": "광주광역시 광산구 ○○동",
     "guardian": null,
     "caregiver": "정복지 생활지원사",
     "mobility": "지팡이 사용",
     "fall_risk": false,
-    "lives_alone": false,
-    "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
-    "history": [
-      {
-        "date": "2026-02-10",
-        "hospital": "△△피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-05-06",
-        "hospital": "△△피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": true
-      },
-      {
-        "date": "2026-06-30",
-        "hospital": "△△피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": true
-      }
-    ],
-    "address": "광주광역시 광산구 ○○동 ○○길 41"
-  },
-  "010-6177-2510": {
-    "id": "P019",
-    "name": "신일남",
-    "age": 84,
-    "region": "전남 곡성군 ○○면",
-    "guardian": {
-      "name": "권서연",
-      "relation": "아들",
-      "phone": "010-5860-3381",
-      "available": "평일 18시 이후"
-    },
-    "caregiver": "최돌봄 생활지원사",
-    "mobility": "보행 가능",
-    "fall_risk": true,
     "lives_alone": true,
     "preferred_time": "오전",
-    "notes": "당뇨 관리 중",
+    "notes": "큰 소리로 천천히 안내 필요",
+    "history": []
+  },
+  "010-7984-3608": {
+    "id": "P005",
+    "name": "권종수",
+    "age": 79,
+    "region": "전남 함평군 ○○면",
+    "guardian": {
+      "name": "신서연",
+      "relation": "딸",
+      "phone": "010-8219-5200",
+      "available": "평일 18시 이후"
+    },
+    "caregiver": "박돌봄 생활지원사",
+    "mobility": "지팡이 사용",
+    "fall_risk": false,
+    "lives_alone": true,
+    "preferred_time": "오후",
+    "notes": null,
     "history": [
       {
-        "date": "2026-01-31",
-        "hospital": "○○피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-02-17",
-        "hospital": "○○피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-02-26",
-        "hospital": "○○피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
+        "date": "2026-02-01",
+        "hospital": "◎◎신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
         "pharmacy": true
       },
       {
-        "date": "2026-07-07",
-        "hospital": "○○피부과",
-        "dept": "피부과",
-        "symptom": "가려움",
+        "date": "2026-02-01",
+        "hospital": "◎◎신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
+        "pharmacy": true
+      },
+      {
+        "date": "2026-06-10",
+        "hospital": "◎◎신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
+        "pharmacy": true
+      },
+      {
+        "date": "2026-06-11",
+        "hospital": "◎◎신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
+        "pharmacy": false
+      },
+      {
+        "date": "2026-07-08",
+        "hospital": "◎◎신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
         "pharmacy": true
       }
-    ],
-    "address": "전남 곡성군 ○○면 ○○길 7"
+    ]
   },
-  "010-9085-9283": {
-    "id": "P020",
-    "name": "최일남",
-    "age": 87,
+  "010-2462-4784": {
+    "id": "P006",
+    "name": "정정례",
+    "age": 88,
     "region": "광주광역시 서구 ○○동",
-    "guardian": null,
+    "guardian": {
+      "name": "임영호",
+      "relation": "딸",
+      "phone": "010-7964-6569",
+      "available": "주말"
+    },
     "caregiver": "이돌봄 생활지원사",
     "mobility": "휠체어 필요",
     "fall_risk": true,
     "lives_alone": true,
-    "preferred_time": "오후",
-    "notes": "계단 이동 곤란",
+    "preferred_time": "오전",
+    "notes": "청력 약함",
     "history": [
       {
-        "date": "2026-01-22",
-        "hospital": "◇◇신경과",
+        "date": "2026-01-20",
+        "hospital": "□□신경과",
         "dept": "신경과",
         "symptom": "어지럼 경과",
         "pharmacy": true
       },
       {
-        "date": "2026-04-20",
-        "hospital": "◇◇신경과",
+        "date": "2026-04-06",
+        "hospital": "□□신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
+        "pharmacy": false
+      },
+      {
+        "date": "2026-04-07",
+        "hospital": "□□신경과",
         "dept": "신경과",
         "symptom": "어지럼 경과",
         "pharmacy": true
       },
       {
-        "date": "2026-06-06",
-        "hospital": "◇◇신경과",
+        "date": "2026-04-15",
+        "hospital": "□□신경과",
         "dept": "신경과",
         "symptom": "어지럼 경과",
         "pharmacy": false
       },
       {
-        "date": "2026-07-06",
-        "hospital": "◎◎안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": false
-      },
-      {
-        "date": "2026-07-11",
-        "hospital": "◎◎안과",
-        "dept": "안과",
-        "symptom": "백내장 경과",
-        "pharmacy": false
+        "date": "2026-07-10",
+        "hospital": "□□신경과",
+        "dept": "신경과",
+        "symptom": "어지럼 경과",
+        "pharmacy": true
       }
-    ],
-    "ltci_grade": "1",
-    "address": "광주광역시 서구 ○○동 ○○길 10"
+    ]
   }
 }
