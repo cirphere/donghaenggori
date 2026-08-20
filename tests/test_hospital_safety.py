@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 import sys
 
-from donghaenggori.core import db, hospital, pipeline
+from donghaenggori.core import db, hospital, nlu, pipeline
 from donghaenggori.web import voice
 
 BASE_DATE = datetime.date(2026, 7, 7)      # 문서 기준 접수일 (화)
@@ -226,10 +226,51 @@ def case09() -> None:
         weather.checklist, airquality.checklist = 원래w, 원래a
 
 
+# ── HOSPITAL-SAFE-10 : 아니라고 말한 병원은 이름이 아니다 ───────
+def case10() -> None:
+    """부정 문맥의 병원명을 직접 언급으로 먹으면 안 된다.
+
+    실통화에서 이렇게 깨졌다 — "백병원에는 피부과가 없으니 다른 병원을
+    추천해 주세요" 의 백병원을 '확인됨' 으로 올려, 통화 마지막에 "백병원으로
+    접수했습니다" 를 들려줬다. 어르신은 그 병원이 **아니라고** 말한 것이다.
+    """
+    cases = [
+        ("백병원에는 피부과가 없으니 다른 병원을 추천해 주세요", None),
+        ("백병원 말고 다른 데로 가고 싶어요", None),
+        ("송정병원은 아니에요", None),
+        # 부정이 아니면 그대로 잡아야 한다 — 넓게 막으면 정상 접수가 깨진다
+        ("허리 아파서 내일 송정병원으로 10시에 가야 될 것 같아", "송정병원"),
+        ("송정병원으로 가야 하는데 시간이 없어요", "송정병원"),
+        ("송정병원 말고 목포한국병원으로 가야 해", "목포한국병원"),
+    ]
+    for text, want in cases:
+        got = nlu.detect_hospital(text)
+        check(f"10 {'이름 없음' if want is None else want} — {text[:18]}…",
+              got == want, f"→ {got}")
+
+
+# ── HOSPITAL-SAFE-11 : 진료과가 없는 병원을 되묻지 않는다 ────────
+def case11() -> None:
+    """이력의 진료과와 다른 요청이면 그 병원을 후보로 되묻지 않는다.
+
+    "지난번 가셨던 백병원 맞으실까요?" 를 피부과 요청에 물으면, 그 병원에
+    피부과가 있는지 우리가 모르는 채로 어르신에게 확인을 구하는 셈이다.
+    """
+    p = db.get_profile(PHONE_MAIN)
+    res = hospital.suggest(p, "피부과", today=BASE_DATE)
+    check("11 진료과 불일치 표시", res.dept_mismatch and res.status == "확인 필요",
+          f"{res.status} mismatch={res.dept_mismatch}")
+
+    r = pipeline.run(PHONE_MAIN, "다음주에 피부과 좀 가야 해요")
+    qs = " ".join(r.card.confirm_questions if r.card else [])
+    check("11b 이력 병원을 되묻지 않는다", "맞으실까요" not in qs, qs[:80])
+    check("11c 어느 병원인지 묻는다", "어느 병원" in qs, qs[:80])
+
+
 def main() -> int:
     db.init_db()
     for fn in (case01, case02, case03, case04, case05, case06, case07, case08,
-               case09):
+               case09, case10, case11):
         try:
             fn()
         except Exception as e:

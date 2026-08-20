@@ -169,6 +169,18 @@ def test_reextract() -> None:
                             None, "어느 병원으로 모실지 말씀해 주세요.")
     check("가리킬 후보가 없으면 '네'로 채우지 않는다", r8.value is None, str(r8.value))
 
+    # **부정을 이름 추출보다 먼저 본다.** 실통화에서 이 순서가 뒤집혀 있어
+    # "백병원에는 피부과가 없으니…" 의 백병원이 '확인됨' 으로 올라갔다.
+    r_neg = fu.reextract_field("hospital", "피부과 가야 해요",
+                               "백병원에는 피부과가 없으니 다른 병원을 추천해 주세요", None,
+                               "말씀하신 피부과는 어느 병원으로 모실까요?")
+    check("없다고 한 병원을 채우지 않는다",
+          r_neg.value is None and r_neg.status == "확인 필요", f"{r_neg.value} [{r_neg.status}]")
+    check("추천 요청임을 근거에 남긴다",
+          any("추천하지 않는다" in e for e in r_neg.evidence), str(r_neg.evidence))
+    check("추천 요청은 사람 연결 신호다",
+          fu.detect_handoff_signal("다른 병원을 추천해 주세요").needed)
+
     # 다른 칸은 건드리지 않는다
     r9 = fu.reextract_field("date", "병원 가야 해", "송정병원이요", None)
     check("날짜를 물었으면 날짜만 본다", r9.field == "date" and r9.value is None,
@@ -350,6 +362,46 @@ def test_call_flow() -> None:
     row = db.list_intakes(limit=1)[0]
     check("상태가 없어도 답을 접수에 반영한다", row["time_value"] == "15:00",
           str(row["time_value"]))
+
+    # ── 실통화 회귀: 백병원(정형외과 이력)에 피부과를 요청했을 때 ──────
+    #
+    # 실제로 이렇게 깨졌다.
+    #   이력 백병원 정형외과 · 이번엔 피부과 → "지난번 가셨던 백병원 맞으실까요?"
+    #   → "백병원에는 피부과가 없으니 다른 병원을 추천해 주세요"
+    #   → 백병원을 '확인됨' 으로 채우고 "백병원으로 접수했습니다" 를 들려줬다
+    HIST = "010-5555-1234"
+    conn = db.get_conn()
+    db.upsert_profile(conn, HIST, {"id": "PX", "name": "김테스트", "age": 80,
+                                   "region": "전남 고흥군 ○○면"})
+    conn.commit()
+    conn.close()
+    db.add_history(HIST, "2026-07-01", "백병원", "정형외과", "무릎")
+
+    said["text"] = "다음주에 피부과 좀 가야 해요"
+    xml = post("/api/voice/recording", CallId="C7", From=HIST,
+               RecordingUrl="http://x/rec7.wav", RecordingDuration="7")
+    check("진료과가 없는 병원을 되묻지 않는다", "백병원" not in xml, xml[:240])
+    check("어느 병원인지를 묻는다", "어느 병원" in xml, xml[:240])
+
+    said["text"] = "백병원에는 피부과가 없으니 다른 병원을 추천해 주세요"
+    nxt = action_of(xml)
+    xml = post(nxt, CallId="C7", From=HIST,
+               RecordingUrl="http://x/a7.wav", RecordingDuration="3")
+    check("그 답을 병원 확정으로 먹지 않는다", "백병원" not in xml, xml[:240])
+    check("추천 요청은 사람에게 넘긴다", "<Hangup/>" in xml and "<Dial" not in xml, xml[:240])
+    iid = db.list_intakes(limit=1)[0]["id"]
+    row = db.get_intake(iid)
+    check("접수의 병원 칸이 비어 있다", not row["hospital"], str(row["hospital"]))
+    card = row["card"]
+    check("병원 상태가 확인 필요로 남는다",
+          card["fields"]["hospital"]["status"] == "확인 필요",
+          str(card["fields"]["hospital"]["status"]))
+    check("그만둔 이유가 남는다",
+          "다른 병원" in (card.get("followup_stopped") or ""),
+          str(card.get("followup_stopped")))
+    check("어르신 답변은 그대로 기록된다",
+          any("추천" in (f.get("answer") or "") for f in card.get("followups") or []),
+          str(card.get("followups")))
 
     # ── 신규 유형에는 되묻지 않는다 ──────────────────────────────
     said["text"] = "허리가 아픈데 주변에 어떤 병원이 있는지를 모르겠어"
