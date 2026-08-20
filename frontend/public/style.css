@@ -230,9 +230,15 @@ button.danger { border-color: var(--need); color: var(--need); }
   padding: 8px 0 8px 12px;
   margin: 10px 0;
 }
-.followup .fq { font-weight: 600; }
+.followup .fq, .followup .fa { display: flex; gap: 8px; align-items: baseline; }
 .followup .fa { margin-top: 4px; }
-.followup .badge { margin-top: 6px; display: inline-block; }
-.followup .src { margin-left: 8px; font-size: 12px; opacity: .7; }
+/* 누가 한 말인지를 라벨로 고정한다 — 통화 기록은 질문과 답이 섞이면 못 읽는다 */
+.followup .who {
+  flex: 0 0 68px; font-size: 12px; font-weight: 700;
+  color: var(--muted); padding-top: 2px;
+}
+.followup .fq > span:last-child { font-weight: 600; }
+.followup .fmeta { margin: 6px 0 0 76px; }
+.followup .src { margin-left: 8px; font-size: 12px; color: var(--muted); }
 .stopped { padding: 8px 12px; border-left: 3px solid var(--need);
            background: var(--need-bg); border-radius: 4px; }
