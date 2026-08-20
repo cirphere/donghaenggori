@@ -363,7 +363,13 @@ def test_call_flow() -> None:
     # 답을 하면 값이 채워지고 통화가 끝난다(남은 칸이 없으므로)
     said["text"] = "오후요"
     nxt = action_of(xml)
-    check("다음 주소에 상태 열쇠가 실린다", nxt and "fu=" in nxt and "intake=" in nxt, str(nxt))
+    check("다음 주소에 상태 열쇠가 실린다", nxt and "fu=" in nxt, str(nxt))
+    # **콜백 주소에 & 를 쓰지 않는다.** XML 속성에서 &amp; 로 나가는데, 통신사
+    # 파서가 엔티티를 풀지 않으면 주소가 통째로 어긋나 2턴이 조용히 깨진다.
+    # 기존 콜백들은 모두 파라미터가 하나였다(?who=self, ?intake=7).
+    check("콜백 주소에 & 가 없다", "&" not in xml, xml[:240])
+    check("한 파라미터에 접수번호·항목이 함께 실린다",
+          nxt.count("fu=") == 1 and nxt.split("fu=")[1].count(".") >= 2, str(nxt))
     xml = post(nxt, CallId="C1", From=PHONE,
                RecordingUrl="http://x/a1.wav", RecordingDuration="2")
     row = db.list_intakes(limit=1)[0]

@@ -746,16 +746,45 @@ def _get_followup(key: str) -> dict | None:
     return data
 
 
+# 콜백에 실어 보내는 값들의 구분자. **파라미터를 하나만 쓰기 위한 것이다.**
+#
+# 처음에는 `?n=1&fu=..&intake=..&field=..` 로 넷을 나눠 실었다. XML 속성에
+# 들어가면서 `&` 가 `&amp;` 로 이스케이프되는데(맞는 XML 이다), 통신사 파서가
+# 엔티티를 풀지 않으면 그 주소가 통째로 어긋나 **2턴이 조용히 깨진다.**
+# 확인할 방법이 우리에게 없고, 기존 콜백들은 모두 파라미터가 하나였다
+# (`?who=self`, `?intake=7`) — 새로 만든 이 경로만 `&` 를 요구할 이유가 없다.
+#
+# 열쇠(token_urlsafe)는 A-Za-z0-9_- 만 쓰므로 '.' 은 섞이지 않는다.
+_FU_SEP = "."
+
+
 def _ask(request: Request, q, n: int, key: str, intake_id: int) -> Response:
     """질문 하나를 읽어주고 답을 녹음한다. **한 번에 한 칸만 묻는다.**
 
-    주소에 열쇠·접수번호·항목을 함께 싣는다. 메모리 상태가 사라져도(서버 재시작)
-    이것만으로 답을 그 접수에 반영할 수 있다 — 어르신이 답한 것을 잃지 않는다.
+    주소에 열쇠·접수번호·항목·회차를 **한 파라미터로** 싣는다. 메모리 상태가
+    사라져도(서버 재시작) 이것만으로 답을 그 접수에 반영할 수 있다 — 어르신이
+    답한 것을 잃지 않는다.
     """
-    action = (_callback(request, "voice_followup")
-              + f"?n={n}&fu={key}&intake={intake_id}&field={q.field}")
+    token = _FU_SEP.join((key, str(intake_id), q.field, str(n)))
+    action = _callback(request, "voice_followup") + f"?fu={token}"
+    # 실제로 내려보낸 주소를 남긴다. 2턴이 안 돌아왔을 때 우리가 뭘 보냈는지
+    # 모르면 통신사 쪽 문제인지 우리 쪽 문제인지 가릴 수가 없다.
+    _log.info("후속질문 콜백 주소 — %s", action)
     return _xml(_say(_with_done_hint(q.question))
                 + _record(action, FOLLOWUP_SECONDS))
+
+
+def _fu_parts(request: Request) -> tuple[str, int, str]:
+    """콜백에 실어 보낸 값을 되읽는다. 못 읽으면 ('', 0, '')."""
+    raw = (request.query_params.get("fu") or "").strip()
+    parts = raw.split(_FU_SEP)
+    if len(parts) < 3:
+        return "", 0, ""
+    try:
+        intake_id = int(parts[1])
+    except ValueError:
+        return parts[0], 0, ""
+    return parts[0], intake_id, parts[2]
 
 
 def _start_followup(request: Request, form: dict, res, intake_id: int | None,
@@ -807,11 +836,7 @@ def _recover_followup(request: Request) -> dict | None:
     반영하는 데 지장이 없다. 질문은 저장된 카드에서 다시 만든다 — 그 카드가
     바로 우리가 방금 물어본 근거다.
     """
-    try:
-        intake_id = int(request.query_params.get("intake") or 0)
-    except ValueError:
-        return None
-    field = (request.query_params.get("field") or "").strip()
+    _, intake_id, field = _fu_parts(request)
     if not intake_id or field not in fu_mod.ASKABLE:
         return None
     row = db.get_intake(intake_id)
@@ -838,7 +863,10 @@ async def followup(request: Request) -> Response:
     """
     t0 = time.monotonic()
     form = await _verify(request)
-    key = (request.query_params.get("fu") or "").strip()
+    # 받은 쿼리를 그대로 남긴다 — 주소가 어긋나서 안 돌아오는 경우와 값이 비어
+    # 오는 경우를 구분할 수 있어야 한다.
+    _log.info("후속답변 수신 — query=%r", str(request.url.query))
+    key, url_intake, url_field = _fu_parts(request)
     data = _get_followup(key)
 
     if data is None:
@@ -847,8 +875,8 @@ async def followup(request: Request) -> Response:
         # 만들 수 있다. 어르신이 이미 답한 것을 우리 사정으로 버리지 않는다.
         data = _recover_followup(request)
         if data is None:
-            _log.warning("후속질문 상태를 복구하지 못했다 — fu=%s intake=%s",
-                         key or "(없음)", request.query_params.get("intake"))
+            _log.warning("후속질문 상태를 복구하지 못했다 — fu=%s intake=%s field=%s",
+                         key or "(없음)", url_intake or "(없음)", url_field or "(없음)")
             return _hangup(f"접수했습니다. {BYE}")
         _log.info("후속질문 상태 복구 — 접수 %s · %s",
                   data["intake_id"], data["pending"].field)
